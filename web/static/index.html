@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Expense Log</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main>
+    <h1>Expense Log</h1>
+
+    <section class="card">
+      <h2 id="form-title">Log an expense</h2>
+      <form id="expense-form" novalidate>
+        <div class="grid">
+          <label>Amount
+            <input id="amount" name="amount" type="text" inputmode="decimal" placeholder="120.50" autocomplete="off" required>
+            <small class="err" data-for="amount"></small>
+          </label>
+          <label>Currency
+            <input id="currency" name="currency" type="text" list="currency-list" maxlength="3" placeholder="THB" autocomplete="off" required>
+            <datalist id="currency-list">
+              <option value="THB"><option value="SGD"><option value="USD"><option value="EUR">
+              <option value="JPY"><option value="MYR"><option value="GBP"><option value="AUD">
+            </datalist>
+            <small class="err" data-for="currency"></small>
+          </label>
+          <label>Payment account
+            <input id="account" name="account" type="text" list="account-list" maxlength="100" placeholder="KBank debit" autocomplete="off" required>
+            <datalist id="account-list"></datalist>
+            <small class="err" data-for="account"></small>
+          </label>
+          <div class="field">
+            <span class="field-label">Spent at <span class="muted" id="tz-label"></span></span>
+            <div class="datetime-row">
+              <input id="spent_at" name="spent_at" type="datetime-local" step="1" required aria-label="Spent at (local date and time)">
+              <input id="spent_offset" name="spent_offset" type="text" maxlength="6" placeholder="+08:00" autocomplete="off" aria-label="UTC offset" title="UTC offset, e.g. +08:00, -05:00 or Z">
+            </div>
+            <small class="muted" id="spent-at-preview"></small>
+            <small class="err" data-for="spent_at"></small>
+          </div>
+        </div>
+        <label>Note (optional)
+          <input id="note" name="note" type="text" maxlength="1000" placeholder="Lunch with team">
+          <small class="err" data-for="note"></small>
+        </label>
+        <div class="actions">
+          <button type="submit" id="submit-btn">Save expense</button>
+          <button type="button" id="now-btn" class="secondary">Set time to now</button>
+          <button type="button" id="cancel-btn" class="secondary" hidden>Cancel edit</button>
+          <span id="form-status" role="status"></span>
+        </div>
+      </form>
+    </section>
+
+    <section class="card">
+      <div class="list-header">
+        <h2>Expenses</h2>
+        <form id="filter-form" class="filters">
+          <label>From <input type="date" id="filter-from"></label>
+          <label>To <input type="date" id="filter-to"></label>
+          <button type="submit" class="secondary">Filter</button>
+          <button type="button" id="filter-clear" class="secondary">Clear</button>
+        </form>
+      </div>
+      <p id="list-status" class="muted"></p>
+      <div class="table-wrap">
+        <table id="expense-table">
+          <thead>
+            <tr>
+              <th>Spent at</th>
+              <th class="num">Amount</th>
+              <th>Currency</th>
+              <th>Account</th>
+              <th>Note</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="totals" class="muted"></div>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
