@@ -86,6 +86,15 @@ A **balance** records the current state of an account. There are four types:
 | `credit_card`     | liability | `debt`, `limit`    | both required, both ≥ 0; debt **may exceed** the limit (flagged `over_limit: true`) |
 | `other_liability` | liability | `debt`, `limit`    | same as above (for a loan, `limit` could be the credit line or the original principal; it's up to you) |
 
+The **type is fixed at creation**: a `credit_card` can never become a
+`payment_account`, etc. PUT still requires `type`, and both PUT and PATCH accept
+it only when it equals the stored type (case-insensitive), so sending back a
+GET response works. A different type is rejected with **422** and
+`"fields":{"type":"balance type cannot be changed after creation"}`. Other
+fields are still checked against the stored type in the same response, and
+nothing is changed. To change the type, create a new balance and delete the
+old one.
+
 Every balance also has:
 
 - a **`uid`**: server-assigned UUID v4 (`xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx`,
@@ -278,8 +287,8 @@ only on validation and duplicate-name errors.
 | POST   | `/api/balances`      | 201 + balance, `Location` header | 422 on validation errors (incl. per-type amount rules), 409 if the name is already used (case-insensitive), 400 on malformed JSON or unknown fields |
 | GET    | `/api/balances`      | 200 `{"balances":[...],"count":n,"totals":[...]}` | Grouped by type, then by name. Optional `type=` filter (400 if invalid). Optional `payable=1` / `payable=true` returns only `payment_account` and `credit_card` (cannot combine with `type=`). `totals` covers the returned rows, per currency |
 | GET    | `/api/balances/:uid`  | 200 + balance | `:uid` is the balance UUID. 400 if not UUID-shaped (numeric ids are no longer accepted), 404 if missing. Same for PUT/PATCH/DELETE |
-| PUT    | `/api/balances/:uid`  | 200 + updated balance | Full replace. A type change must include the new type's amounts and leave out the old ones. `uid` in the body is ignored. Returns 404, 409, 422 or 400 as for POST |
-| PATCH  | `/api/balances/:uid`  | 200 + updated balance | Partial update. When `type` changes, amounts the new type doesn't use are dropped automatically and the new type's amounts must be in the same PATCH. `"description": null` clears it; `"balance"`/`"debt"`/`"limit": null` removes that amount. A currency change re-reads the amounts using the new currency's decimals. `uid` in the body is ignored |
+| PUT    | `/api/balances/:uid`  | 200 + updated balance | Full replace. `type` is required and must equal the stored type (422 on `type` otherwise). `uid` in the body is ignored. Returns 404, 409, 422 or 400 as for POST |
+| PATCH  | `/api/balances/:uid`  | 200 + updated balance | Partial update. `type` may be sent only with the stored value (422 on `type` otherwise). `"description": null` clears it; `"balance"`/`"debt"`/`"limit": null` removes that amount. A currency change re-reads the amounts using the new currency's decimals. `uid` in the body is ignored |
 | DELETE | `/api/balances/:uid`  | 204 | 404 if missing |
 | POST   | `/api/categories`      | 201 + category, `Location: /api/categories/<uid>` | 422 on validation errors, 409 duplicate name within the type, 400 malformed JSON / unknown fields |
 | GET    | `/api/categories`      | 200 `{"categories":[...],"count":n}` | Expense first, then income, by name. Optional `type=expense\|income` (400 if invalid) |
@@ -403,7 +412,11 @@ curl -s 'http://127.0.0.1:8080/api/balances'
 #    "credit_limit":"550000.00","available_credit":"198000.00"}, ...]}
 
 curl -s -X PATCH http://127.0.0.1:8080/api/balances/$BAL_UID -H 'Content-Type: application/json' \
-  -d '{"type":"credit_card","debt":"0","limit":"20000"}'      # asset -> liability: balance dropped
+  -d '{"balance":"1200.50"}'                                    # partial update
+
+curl -s -X PATCH http://127.0.0.1:8080/api/balances/$BAL_UID -H 'Content-Type: application/json' \
+  -d '{"type":"credit_card"}'
+# 422 {"error":"validation failed","fields":{"type":"balance type cannot be changed after creation"}}
 ```
 
 Per-currency totals: `assets` = sum of balances, `liabilities` = sum of debts,
@@ -470,8 +483,9 @@ Balances tab:
   "over limit" badge marks debt above the limit, and negative amounts are red.
   Each row shows the balance's `uid` in small muted monospace text (for
   debugging; the edit form does not expose it).
-- **Edit** loads the balance into the form (saving sends a PUT); **Cancel edit**
-  or Esc leaves edit mode. **Delete** asks for confirmation.
+- **Edit** loads the balance into the form (saving sends a PUT); the **Type**
+  selector is disabled while editing (types can't change after creation).
+  **Cancel edit** or Esc leaves edit mode. **Delete** asks for confirmation.
 - A per-currency totals table shows assets, liabilities, net, credit limit and
   available credit.
 

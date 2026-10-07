@@ -159,16 +159,24 @@ func TestBalanceCRUDAndConstraints(t *testing.T) {
 	}); !errors.Is(err, ErrDuplicateName) {
 		t.Errorf("rename to duplicate: got %v", err)
 	}
-	// Type change asset -> liability via update.
-	upd, err := st.UpdateBalance(ctx, cash.ID, func(cur balance.Balance) (balance.Balance, error) {
+	// The type is immutable: even a callback that returns another type is refused
+	// and nothing is written.
+	if _, err := st.UpdateBalance(ctx, cash.ID, func(cur balance.Balance) (balance.Balance, error) {
 		return balance.Input{Name: "Cash", Type: "other_liability", Currency: "THB", Debt: dec("10"), Limit: dec("0")}.Validate()
+	}); err == nil {
+		t.Errorf("type change via store: expected error")
+	}
+	upd, err := st.UpdateBalance(ctx, cash.ID, func(cur balance.Balance) (balance.Balance, error) {
+		in := cur.Input()
+		in.Balance = dec("12")
+		return in.ValidateUpdate(cur.Type)
 	})
-	if err != nil || upd.Balance != nil || *upd.Debt != "10.00" || upd.UpdatedAt == nil {
-		t.Errorf("type change: %+v %v", upd, err)
+	if err != nil || *upd.Balance != "12.00" || upd.Type != balance.PaymentAccount || upd.UpdatedAt == nil {
+		t.Errorf("same-type update: %+v %v", upd, err)
 	}
 
 	list, _ := st.ListBalances(ctx, "")
-	if len(list) != 2 || list[0].Type != balance.CreditCard || list[1].Type != balance.OtherLiability {
+	if len(list) != 2 || list[0].Type != balance.PaymentAccount || list[1].Type != balance.CreditCard {
 		t.Errorf("list order: %+v", list)
 	}
 	if only, _ := st.ListBalances(ctx, balance.CreditCard); len(only) != 1 {

@@ -138,16 +138,30 @@ func TestBalancePutAndPatch(t *testing.T) {
 	path, orig := createBal(t, h, `{"name":"KBank","type":"payment_account","currency":"THB","balance":"100.50","description":"main"}`)
 	createBal(t, h, `{"name":"Other","type":"other_asset","currency":"THB","balance":"1"}`)
 
-	// PUT changing type must satisfy the new type: missing debt/limit -> 422.
-	rec, body := do(t, h, "PUT", path, `{"name":"KBank","type":"credit_card","currency":"THB","balance":"100.50"}`)
-	if rec.Code != 422 || fieldsOf(body)["debt"] == nil || fieldsOf(body)["limit"] == nil || fieldsOf(body)["balance"] == nil {
-		t.Errorf("PUT type change w/o new fields: %d %v", rec.Code, body)
+	// The type is immutable: PUT with another type is 422 on "type" (even when
+	// the amounts would suit the new type), and nothing changes.
+	for _, b := range []string{
+		`{"name":"KBank","type":"credit_card","currency":"THB","balance":"100.50"}`,
+		`{"name":"KBank Visa","type":"credit_card","currency":"THB","debt":"2500","limit":"50000"}`,
+		`{"name":"KBank","type":"other_asset","currency":"THB","balance":"1"}`,
+	} {
+		rec, body := do(t, h, "PUT", path, b)
+		if rec.Code != 422 || fieldsOf(body)["type"] != "balance type cannot be changed after creation" {
+			t.Errorf("PUT type change %s: %d %v", b, rec.Code, body)
+		}
 	}
-	// Correct PUT type change.
-	rec, body = do(t, h, "PUT", path, `{"name":"KBank Visa","type":"credit_card","currency":"THB","debt":"2500","limit":"50000"}`)
-	if rec.Code != 200 || body["balance"] != nil || body["available"] != "47500.00" || body["description"] != "" ||
+	// PUT still requires type.
+	if rec, body := do(t, h, "PUT", path, `{"name":"KBank","currency":"THB","balance":"1"}`); rec.Code != 422 || fieldsOf(body)["type"] == nil {
+		t.Errorf("PUT without type: %d %v", rec.Code, body)
+	}
+	if _, body := do(t, h, "GET", path, ""); body["type"] != "payment_account" || body["balance"] != "100.50" || body["updated_at"] != nil {
+		t.Errorf("after rejected PUTs: %v", body)
+	}
+	// PUT with the same type (round-trip of a GET response, any case) works.
+	rec, body := do(t, h, "PUT", path, `{"uid":"`+orig["uid"].(string)+`","name":"KBank Main","type":"Payment_Account","currency":"THB","balance":"99"}`)
+	if rec.Code != 200 || body["type"] != "payment_account" || body["balance"] != "99.00" || body["description"] != "" ||
 		body["uid"] != orig["uid"] || body["created_at"] != orig["created_at"] || body["updated_at"] == nil {
-		t.Errorf("PUT type change: %d %v", rec.Code, body)
+		t.Errorf("PUT same type: %d %v", rec.Code, body)
 	}
 	// PUT errors.
 	if rec, _ := do(t, h, "PUT", "/api/balances/00000000-0000-4000-8000-000000009999", `{"name":"x","type":"payment_account","currency":"THB","balance":"1"}`); rec.Code != 404 {
@@ -160,19 +174,17 @@ func TestBalancePutAndPatch(t *testing.T) {
 		t.Errorf("PUT duplicate name: %d", rec.Code)
 	}
 
-	// PATCH partial.
-	rec, body = do(t, h, "PATCH", path, `{"debt":"3000.75"}`)
-	if rec.Code != 200 || body["debt"] != "3000.75" || body["limit"] != "50000.00" || body["name"] != "KBank Visa" {
-		t.Errorf("PATCH debt: %d %v", rec.Code, body)
-	}
-	// PATCH type liability -> asset needs balance; then works with it.
-	rec, body = do(t, h, "PATCH", path, `{"type":"payment_account"}`)
-	if rec.Code != 422 || fieldsOf(body)["balance"] == nil {
-		t.Errorf("PATCH type w/o balance: %d %v", rec.Code, body)
-	}
+	// PATCH partial; sending the stored type is allowed.
 	rec, body = do(t, h, "PATCH", path, `{"type":"payment_account","balance":"-12"}`)
-	if rec.Code != 200 || body["balance"] != "-12.00" || body["debt"] != nil || body["limit"] != nil || body["over_limit"] != nil {
-		t.Errorf("PATCH type with balance: %d %v", rec.Code, body)
+	if rec.Code != 200 || body["balance"] != "-12.00" || body["name"] != "KBank Main" || body["type"] != "payment_account" {
+		t.Errorf("PATCH same type: %d %v", rec.Code, body)
+	}
+	// PATCH with another type is 422 on "type", with or without amounts.
+	for _, b := range []string{`{"type":"credit_card"}`, `{"type":"credit_card","debt":"1","limit":"2"}`, `{"type":"other_asset"}`} {
+		rec, body := do(t, h, "PATCH", path, b)
+		if rec.Code != 422 || fieldsOf(body)["type"] != "balance type cannot be changed after creation" {
+			t.Errorf("PATCH type change %s: %d %v", b, rec.Code, body)
+		}
 	}
 	// PATCH currency re-scale / rejection.
 	rec, body = do(t, h, "PATCH", path, `{"currency":"KWD"}`)
