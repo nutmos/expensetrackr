@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"expense-service/internal/balance"
 	"expense-service/internal/store"
@@ -36,6 +38,48 @@ func writeBalanceError(c *gin.Context, err error) {
 	default:
 		writeInputError(c, err)
 	}
+}
+
+// resolveBalance looks up /api/balances/:id. If the path segment is all digits
+// it is treated as the numeric id; otherwise as the UUID uid. Returns the
+// balance and true, or writes an error response and returns false.
+func (s *Server) resolveBalance(c *gin.Context) (balance.Balance, bool) {
+	raw := strings.TrimSpace(c.Param("id"))
+	if raw == "" {
+		c.JSON(http.StatusBadRequest, errorBody{Error: "id or uid is required"})
+		return balance.Balance{}, false
+	}
+	var (
+		b   balance.Balance
+		err error
+	)
+	if isAllDigits(raw) {
+		id, perr := strconv.ParseInt(raw, 10, 64)
+		if perr != nil || id < 1 {
+			c.JSON(http.StatusBadRequest, errorBody{Error: "id must be a positive integer"})
+			return balance.Balance{}, false
+		}
+		b, err = s.Store.GetBalance(c.Request.Context(), id)
+	} else {
+		b, err = s.Store.GetBalanceByUID(c.Request.Context(), raw)
+	}
+	if err != nil {
+		writeBalanceError(c, err)
+		return balance.Balance{}, false
+	}
+	return b, true
+}
+
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if !unicode.IsDigit(r) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) createBalance(c *gin.Context) {
@@ -76,13 +120,8 @@ func (s *Server) listBalances(c *gin.Context) {
 }
 
 func (s *Server) getBalance(c *gin.Context) {
-	id, ok := parseID(c)
+	b, ok := s.resolveBalance(c)
 	if !ok {
-		return
-	}
-	b, err := s.Store.GetBalance(c.Request.Context(), id)
-	if err != nil {
-		writeBalanceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, b)
@@ -90,8 +129,9 @@ func (s *Server) getBalance(c *gin.Context) {
 
 // replaceBalance handles PUT: full replace with the same rules as create. A
 // type change must come with the new type's amounts (and without the old ones).
+// uid in the body is ignored; the existing uid is kept.
 func (s *Server) replaceBalance(c *gin.Context) {
-	id, ok := parseID(c)
+	cur, ok := s.resolveBalance(c)
 	if !ok {
 		return
 	}
@@ -101,14 +141,10 @@ func (s *Server) replaceBalance(c *gin.Context) {
 	}
 	next, err := in.Validate()
 	if err != nil {
-		if _, gerr := s.Store.GetBalance(c.Request.Context(), id); errors.Is(gerr, store.ErrNotFound) {
-			writeBalanceError(c, gerr)
-			return
-		}
 		writeBalanceError(c, err)
 		return
 	}
-	updated, err := s.Store.UpdateBalance(c.Request.Context(), id, func(balance.Balance) (balance.Balance, error) {
+	updated, err := s.Store.UpdateBalance(c.Request.Context(), cur.ID, func(balance.Balance) (balance.Balance, error) {
 		return next, nil
 	})
 	if err != nil {
@@ -120,8 +156,9 @@ func (s *Server) replaceBalance(c *gin.Context) {
 
 // patchBalance handles PATCH: only fields present change; the merged result is
 // validated as a whole (see balance.Input.ApplyPatch for type changes).
+// A "uid" field in the body is ignored.
 func (s *Server) patchBalance(c *gin.Context) {
-	id, ok := parseID(c)
+	cur, ok := s.resolveBalance(c)
 	if !ok {
 		return
 	}
@@ -133,8 +170,8 @@ func (s *Server) patchBalance(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, errorBody{Error: "request body must be a JSON object"})
 		return
 	}
-	updated, err := s.Store.UpdateBalance(c.Request.Context(), id, func(cur balance.Balance) (balance.Balance, error) {
-		in := cur.Input()
+	updated, err := s.Store.UpdateBalance(c.Request.Context(), cur.ID, func(existing balance.Balance) (balance.Balance, error) {
+		in := existing.Input()
 		if err := in.ApplyPatch(patch); err != nil {
 			return balance.Balance{}, err
 		}
@@ -148,11 +185,11 @@ func (s *Server) patchBalance(c *gin.Context) {
 }
 
 func (s *Server) deleteBalance(c *gin.Context) {
-	id, ok := parseID(c)
+	cur, ok := s.resolveBalance(c)
 	if !ok {
 		return
 	}
-	if err := s.Store.DeleteBalance(c.Request.Context(), id); err != nil {
+	if err := s.Store.DeleteBalance(c.Request.Context(), cur.ID); err != nil {
 		writeBalanceError(c, err)
 		return
 	}

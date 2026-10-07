@@ -66,6 +66,7 @@ const (
 // and over_limit.
 type Balance struct {
 	ID             int64   `json:"id"`
+	UID            string  `json:"uid"` // server-assigned UUID v4; immutable
 	Name           string  `json:"name"`
 	Type           Type    `json:"type"`
 	Kind           string  `json:"kind"`     // "asset" or "liability" (derived from type)
@@ -115,7 +116,10 @@ func (b *Balance) SetAmounts(scale int, bal, debt, limit *int64) {
 
 // Input is the payload for POST and PUT /api/balances (and the merge target
 // for PATCH). An amount that is absent, null or "" counts as not provided.
+// UID is accepted so clients can round-trip a previous response; it is
+// ignored (the server assigns and never changes it).
 type Input struct {
+	UID         string              `json:"uid"` // ignored; server-assigned
 	Name        string              `json:"name"`
 	Type        string              `json:"type"`
 	Currency    string              `json:"currency"`
@@ -242,6 +246,8 @@ func isNull(raw json.RawMessage) bool { return bytes.Equal(bytes.TrimSpace(raw),
 // explicitly (in which case Validate rejects them). The caller must run
 // Validate on the result.
 func (in *Input) ApplyPatch(patch map[string]json.RawMessage) error {
+	// uid is immutable; drop it so round-tripping a previous response is fine.
+	delete(patch, "uid")
 	if len(patch) == 0 {
 		return &validate.RequestError{Msg: "patch must contain at least one of: name, type, currency, description, balance, debt, limit"}
 	}

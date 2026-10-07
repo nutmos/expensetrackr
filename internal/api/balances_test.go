@@ -26,7 +26,7 @@ func TestBalanceCreateGetListDelete(t *testing.T) {
 	acctPath, acct := createBal(t, h, `{"name":"KBank debit","type":"payment_account","currency":"thb","balance":"-35.5","description":"salary account"}`)
 	if acct["balance"] != "-35.50" || acct["balance_minor"].(float64) != -3550 || acct["kind"] != "asset" ||
 		acct["debt"] != nil || acct["limit"] != nil || acct["available"] != nil || acct["over_limit"] != nil ||
-		acct["currency"] != "THB" || acct["updated_at"] != nil {
+		acct["currency"] != "THB" || acct["updated_at"] != nil || !looksLikeUID(acct["uid"]) {
 		t.Errorf("asset response: %v", acct)
 	}
 	_, card := createBal(t, h, `{"name":"UOB One","type":"credit_card","currency":"SGD","debt":1200,"limit":"1000"}`)
@@ -191,7 +191,7 @@ func TestBalancePutAndPatch(t *testing.T) {
 		status     int
 	}{
 		{"/api/balances/999", `{"name":"x"}`, 404},
-		{"/api/balances/abc", `{"name":"x"}`, 400},
+		{"/api/balances/abc", `{"name":"x"}`, 404}, // non-numeric path is treated as uid
 		{path, `{}`, 400},
 		{path, `null`, 400},
 		{path, `{"colour":"red"}`, 400},
@@ -207,5 +207,73 @@ func TestBalancePutAndPatch(t *testing.T) {
 	_, got := do(t, h, "GET", path, "")
 	if got["balance"] != "-12.50" || got["currency"] != "THB" {
 		t.Errorf("failed PATCHes changed the record: %v", got)
+	}
+}
+
+func looksLikeUID(v any) bool {
+	s, _ := v.(string)
+	if len(s) != 36 {
+		return false
+	}
+	for i, c := range s {
+		switch i {
+		case 8, 13, 18, 23:
+			if c != '-' {
+				return false
+			}
+		case 14:
+			if c != '4' {
+				return false
+			}
+		default:
+			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func TestBalanceUIDAssignedAndLookup(t *testing.T) {
+	h := newTestServer(t)
+	path, created := createBal(t, h, `{"name":"Cash","type":"payment_account","currency":"THB","balance":"100","uid":"00000000-0000-4000-8000-000000000099"}`)
+	uid, _ := created["uid"].(string)
+	if !looksLikeUID(uid) || uid == "00000000-0000-4000-8000-000000000099" {
+		t.Fatalf("create ignored client uid incorrectly: %v", created["uid"])
+	}
+	// GET by numeric id and by uid.
+	rec, byID := do(t, h, "GET", path, "")
+	if rec.Code != 200 || byID["uid"] != uid {
+		t.Fatalf("get by id: %d %v", rec.Code, byID)
+	}
+	rec, byUID := do(t, h, "GET", "/api/balances/"+uid, "")
+	if rec.Code != 200 || byUID["id"] != created["id"] || byUID["uid"] != uid {
+		t.Fatalf("get by uid: %d %v", rec.Code, byUID)
+	}
+	if rec, _ := do(t, h, "GET", "/api/balances/00000000-0000-4000-8000-000000000001", ""); rec.Code != 404 {
+		t.Errorf("missing uid: %d", rec.Code)
+	}
+	// PUT with uid in body: ignored; uid unchanged.
+	rec, body := do(t, h, "PUT", "/api/balances/"+uid,
+		`{"uid":"11111111-1111-4111-8111-111111111111","name":"Cash","type":"payment_account","currency":"THB","balance":"200"}`)
+	if rec.Code != 200 || body["uid"] != uid || body["balance"] != "200.00" {
+		t.Errorf("PUT by uid: %d %v", rec.Code, body)
+	}
+	// PATCH with only uid: empty after ignore -> 400.
+	rec, body = do(t, h, "PATCH", path, `{"uid":"11111111-1111-4111-8111-111111111111"}`)
+	if rec.Code != 400 {
+		t.Errorf("PATCH uid-only: %d %v", rec.Code, body)
+	}
+	// PATCH with uid + real field: uid ignored, field applied.
+	rec, body = do(t, h, "PATCH", "/api/balances/"+uid, `{"uid":"11111111-1111-4111-8111-111111111111","balance":"-5"}`)
+	if rec.Code != 200 || body["uid"] != uid || body["balance"] != "-5.00" {
+		t.Errorf("PATCH with uid: %d %v", rec.Code, body)
+	}
+	// DELETE by uid.
+	if rec, _ := do(t, h, "DELETE", "/api/balances/"+uid, ""); rec.Code != http.StatusNoContent {
+		t.Errorf("delete by uid: %d", rec.Code)
+	}
+	if rec, _ := do(t, h, "GET", path, ""); rec.Code != 404 {
+		t.Errorf("get after delete: %d", rec.Code)
 	}
 }

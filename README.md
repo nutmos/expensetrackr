@@ -79,12 +79,20 @@ A **balance** records the current state of an account. There are four types:
 | `credit_card`     | liability | `debt`, `limit`    | both required, both ≥ 0; debt **may exceed** the limit (flagged `over_limit: true`) |
 | `other_liability` | liability | `debt`, `limit`    | same as above (for a loan, `limit` could be the credit line or the original principal; it's up to you) |
 
-Every balance also has a **`name`** (required, up to 100 characters, unique
-case-insensitively), a **base `currency`** (ISO 4217) and an optional
-`description` (up to 1000 characters). The name is a short label like
-"KBank debit". It is meant to match an expense's free-text payment `account`, so
-expenses can be linked to balances later. There is **no link yet**: no foreign
-key, and logging an expense does not change any balance.
+Every balance also has:
+
+- a **`uid`**: server-assigned UUID v4 (`xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx`,
+  lowercase), unique and **immutable**. Generated on create; clients never set
+  it (a `uid` in a POST/PUT/PATCH body is ignored so round-tripping a previous
+  response is fine). Included in every JSON response.
+- a **`name`** (required, up to 100 characters, unique case-insensitively)
+- a **base `currency`** (ISO 4217)
+- an optional **`description`** (up to 1000 characters)
+
+The name is a short label like "KBank debit". It is meant to match an expense's
+free-text payment `account`, so expenses can be linked to balances later. There
+is **no link yet**: no foreign key, and logging an expense does not change any
+balance.
 
 - Amounts use the same integer minor units + `amount_scale` scheme as expenses.
 - Sending an amount that the type does not use returns 422. Absent, `null` or
@@ -147,6 +155,7 @@ The schema version is tracked in SQLite's `PRAGMA user_version`. The code is in
 | 1       | `ALTER TABLE expenses ADD COLUMN updated_at TEXT` (NULL for existing rows) |
 | 2       | `ALTER TABLE expenses RENAME TO transactions`, then `DROP INDEX IF EXISTS idx_expenses_spent_at_unix` and `CREATE INDEX IF NOT EXISTS idx_transactions_spent_at_unix ON transactions (spent_at_unix DESC, id DESC)` |
 | 3       | `CREATE TABLE IF NOT EXISTS balances (...)` with per-type CHECK constraints and `name COLLATE NOCASE UNIQUE`, plus `CREATE INDEX IF NOT EXISTS idx_balances_type ON balances (type, name)`. `transactions` is not touched. |
+| 4       | `ALTER TABLE balances ADD COLUMN uid TEXT` (if missing), backfill every empty uid with a new UUID v4, then `CREATE UNIQUE INDEX IF NOT EXISTS idx_balances_uid ON balances (uid)`. `transactions` is not touched. New databases create `uid TEXT NOT NULL UNIQUE` from the start. |
 
 Notes on version 2:
 
@@ -161,7 +170,8 @@ Notes on version 2:
 
 Version 3 is idempotent thanks to `IF NOT EXISTS`. If a `balances` table
 already exists without the expected columns, startup fails and nothing is
-changed.
+changed. Version 4 is idempotent: existing uids are kept, only empty ones are
+filled, and the unique index is created with `IF NOT EXISTS`.
 
 Version 1 checks `pragma_table_info` before adding the column. A database with a
 newer version than the binary supports is refused rather than modified. Each
@@ -186,10 +196,10 @@ only on validation and duplicate-name errors.
 | DELETE | `/api/expenses/:id`  | 204 | 404 if missing |
 | POST   | `/api/balances`      | 201 + balance, `Location` header | 422 on validation errors (incl. per-type amount rules), 409 if the name is already used (case-insensitive), 400 on malformed JSON or unknown fields |
 | GET    | `/api/balances`      | 200 `{"balances":[...],"count":n,"totals":[...]}` | Grouped by type (payment accounts, credit cards, other assets, other liabilities), then by name. Optional `type=` filter (400 if invalid). `totals` covers the returned rows, per currency |
-| GET    | `/api/balances/:id`  | 200 + balance | 404 if missing |
-| PUT    | `/api/balances/:id`  | 200 + updated balance | Full replace. A type change must include the new type's amounts and leave out the old ones. Returns 404, 409, 422 or 400 as for POST |
-| PATCH  | `/api/balances/:id`  | 200 + updated balance | Partial update. When `type` changes, amounts the new type doesn't use are dropped automatically and the new type's amounts must be in the same PATCH. `"description": null` clears it; `"balance"`/`"debt"`/`"limit": null` removes that amount. A currency change re-reads the amounts using the new currency's decimals |
-| DELETE | `/api/balances/:id`  | 204 | 404 if missing |
+| GET    | `/api/balances/:id`  | 200 + balance | `:id` may be the numeric id **or** the UUID `uid` (all-digit paths are treated as numeric ids; anything else as uid). 404 if missing |
+| PUT    | `/api/balances/:id`  | 200 + updated balance | Full replace (id or uid). A type change must include the new type's amounts and leave out the old ones. `uid` in the body is ignored. Returns 404, 409, 422 or 400 as for POST |
+| PATCH  | `/api/balances/:id`  | 200 + updated balance | Partial update (id or uid). When `type` changes, amounts the new type doesn't use are dropped automatically and the new type's amounts must be in the same PATCH. `"description": null` clears it; `"balance"`/`"debt"`/`"limit": null` removes that amount. A currency change re-reads the amounts using the new currency's decimals. `uid` in the body is ignored |
+| DELETE | `/api/balances/:id`  | 204 | id or uid; 404 if missing |
 | GET    | `/api/healthz`       | 200 `{"status":"ok"}` | |
 | GET    | `/`                  | HTML page | Static assets under `/static/` |
 
@@ -245,7 +255,7 @@ curl -s -X POST http://127.0.0.1:8080/api/balances -H 'Content-Type: application
 ```
 
 ```json
-{"id":2,"name":"KBank Visa","type":"credit_card","kind":"liability","currency":"THB","description":"",
+{"id":2,"uid":"a1b2c3d4-e5f6-4789-a012-3456789abcde","name":"KBank Visa","type":"credit_card","kind":"liability","currency":"THB","description":"",
  "balance":null,"balance_minor":null,"debt":"52000.00","debt_minor":5200000,"limit":"50000.00","limit_minor":5000000,
  "available":"-2000.00","available_minor":-200000,"over_limit":true,"created_at":"2026-10-07T00:21:55Z","updated_at":null}
 ```
@@ -288,7 +298,7 @@ internal/balance/            balance domain model + per-type validation (no I/O)
 internal/store/              persistence (modernc.org/sqlite)
   store.go                   expenses in table "transactions": Open, Create, List, Get, Update, Delete
   balances.go                table "balances": CreateBalance, ListBalances, GetBalance, UpdateBalance, DeleteBalance
-  migrate.go                 current schema, versioned migrations (v0 -> v1 -> v2 -> v3)
+  migrate.go                 current schema, versioned migrations (v0 -> v1 -> v2 -> v3 -> v4)
   store_test.go, balances_test.go   fresh DB, upgrades from v0/v1/v2, partial/ambiguous states
 internal/api/                Gin routes and handlers
   api.go                     expenses routes + shared helpers
@@ -314,6 +324,8 @@ Balances tab:
 - The list is grouped by type, with a count in each heading. Assets show their
   balance; liabilities show debt, limit and available (limit − debt). A red
   "over limit" badge marks debt above the limit, and negative amounts are red.
+  Each row shows the balance's `uid` in small muted monospace text (for
+  debugging; the edit form does not expose it).
 - **Edit** loads the balance into the form (saving sends a PUT); **Cancel edit**
   or Esc leaves edit mode. **Delete** asks for confirmation.
 - A per-currency totals table shows assets, liabilities, net, credit limit and

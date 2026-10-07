@@ -17,10 +17,10 @@ import (
 //     from/to filtering regardless of the offset each row was entered with.
 //   - created_at / updated_at: RFC 3339 UTC; updated_at is NULL until edited.
 //
-// Table "balances" (see balancesSchemaV3): one row per payment account,
+// Table "balances" (see balancesSchemaCurrent): one row per payment account,
 // credit card, other asset or other liability. CHECK constraints enforce the
 // per-type amount columns; name is unique case-insensitively (ASCII folding,
-// SQLite NOCASE).
+// SQLite NOCASE); uid is a server-assigned UUID v4, immutable and unique.
 //
 // Schema history, tracked in SQLite's PRAGMA user_version:
 //
@@ -28,6 +28,7 @@ import (
 //	v1  expenses.updated_at TEXT added
 //	v2  table renamed to "transactions", index to idx_transactions_spent_at_unix
 //	v3  table "balances" + index idx_balances_type added
+//	v4  balances.uid TEXT (UUID v4) added, backfilled, unique index idx_balances_uid
 //
 // A brand-new database is created directly at the latest version from
 // currentSchema. An existing database is upgraded by running the pending
@@ -51,17 +52,10 @@ CREATE TABLE transactions (
     updated_at    TEXT
 );
 CREATE INDEX idx_transactions_spent_at_unix ON transactions (spent_at_unix DESC, id DESC);
-` + balancesSchemaV3
+` + balancesSchemaCurrent
 
-// balancesSchemaV3 creates the balances table (migration v3, also part of
-// currentSchema). It is idempotent. Do not edit it once shipped; add a new
-// migration instead (and stop reusing it in currentSchema).
-//
-//   - type: payment_account | credit_card | other_asset | other_liability
-//   - amount_scale: minor-unit digits of currency for the *_minor columns
-//   - balance_minor: asset types only (required), may be negative (overdraft)
-//   - debt_minor, limit_minor: liability types only (both required), >= 0;
-//     debt may exceed limit (reported as over_limit by the API)
+// balancesSchemaV3 creates the balances table as shipped at version 3
+// (no uid yet). Used only by migration v2 -> v3. Do not edit once shipped.
 const balancesSchemaV3 = `
 CREATE TABLE IF NOT EXISTS balances (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -86,6 +80,42 @@ CREATE TABLE IF NOT EXISTS balances (
 CREATE INDEX IF NOT EXISTS idx_balances_type ON balances (type, name);
 `
 
+// balancesSchemaCurrent is the full balances schema for brand-new databases
+// (version 4+). Keep in sync with the result of applying every migration.
+//
+//   - uid: server-assigned UUID v4 (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx),
+//     immutable, unique; clients never set it
+//   - type: payment_account | credit_card | other_asset | other_liability
+//   - amount_scale: minor-unit digits of currency for the *_minor columns
+//   - balance_minor: asset types only (required), may be negative (overdraft)
+//   - debt_minor, limit_minor: liability types only (both required), >= 0;
+//     debt may exceed limit (reported as over_limit by the API)
+const balancesSchemaCurrent = `
+CREATE TABLE balances (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    uid           TEXT    NOT NULL UNIQUE CHECK (length(uid) = 36),
+    name          TEXT    NOT NULL COLLATE NOCASE UNIQUE CHECK (length(trim(name)) > 0),
+    type          TEXT    NOT NULL CHECK (type IN ('payment_account', 'credit_card', 'other_asset', 'other_liability')),
+    currency      TEXT    NOT NULL CHECK (length(currency) = 3),
+    description   TEXT    NOT NULL DEFAULT '',
+    amount_scale  INTEGER NOT NULL CHECK (amount_scale BETWEEN 0 AND 4),
+    balance_minor INTEGER,
+    debt_minor    INTEGER CHECK (debt_minor >= 0),
+    limit_minor   INTEGER CHECK (limit_minor >= 0),
+    created_at    TEXT    NOT NULL,
+    updated_at    TEXT,
+    CHECK (
+        (type IN ('payment_account', 'other_asset')
+            AND balance_minor IS NOT NULL AND debt_minor IS NULL AND limit_minor IS NULL)
+        OR
+        (type IN ('credit_card', 'other_liability')
+            AND balance_minor IS NULL AND debt_minor IS NOT NULL AND limit_minor IS NOT NULL)
+    )
+);
+CREATE INDEX idx_balances_type ON balances (type, name);
+CREATE UNIQUE INDEX idx_balances_uid ON balances (uid);
+`
+
 // migration upgrades the schema by one version inside a SQL transaction.
 type migration func(tx *sql.Tx) error
 
@@ -99,6 +129,8 @@ var migrations = []migration{
 	renameExpensesToTransactions,
 	// v2 -> v3: add the balances table.
 	createBalances,
+	// v3 -> v4: add balances.uid (UUID v4), backfill existing rows, unique index.
+	addBalanceUID,
 }
 
 // SchemaVersion is the user_version a fully migrated database has.
@@ -270,6 +302,55 @@ func requireColumns(tx *sql.Tx, table string, cols ...string) error {
 		if !have[c] {
 			return fmt.Errorf("existing table %q lacks column %q; refusing to continue", table, c)
 		}
+	}
+	return nil
+}
+
+// addBalanceUID is migration v3 -> v4. It adds a nullable uid column if
+// missing, fills every empty uid with a new UUID v4, then creates a unique
+// index. SQLite cannot add a NOT NULL column without a default when rows
+// already exist, so emptiness is enforced by the backfill + unique index and
+// by the application (CreateBalance always sets uid). Brand-new databases use
+// balancesSchemaCurrent, where uid is NOT NULL UNIQUE from the start.
+func addBalanceUID(tx *sql.Tx) error {
+	if err := addColumnIfMissing(tx, "balances", "uid", "TEXT"); err != nil {
+		return fmt.Errorf("add uid column: %w", err)
+	}
+	rows, err := tx.Query(`SELECT id FROM balances WHERE uid IS NULL OR uid = ''`)
+	if err != nil {
+		return fmt.Errorf("list balances missing uid: %w", err)
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		uid, err := newBalanceUID()
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE balances SET uid = ? WHERE id = ?`, uid, id); err != nil {
+			return fmt.Errorf("backfill uid for id %d: %w", id, err)
+		}
+	}
+	if _, err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_balances_uid ON balances (uid)`); err != nil {
+		return fmt.Errorf("create uid index: %w", err)
+	}
+	var missing int
+	if err := tx.QueryRow(`SELECT count(*) FROM balances WHERE uid IS NULL OR uid = ''`).Scan(&missing); err != nil {
+		return err
+	}
+	if missing > 0 {
+		return fmt.Errorf("%d balances still missing uid after backfill", missing)
 	}
 	return nil
 }
