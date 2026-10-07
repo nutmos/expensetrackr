@@ -10,6 +10,7 @@ import (
 	"expense-service/internal/balance"
 	"expense-service/internal/money"
 
+	"github.com/google/uuid"
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 )
@@ -18,7 +19,17 @@ import (
 // name (compared case-insensitively).
 var ErrDuplicateName = errors.New("a balance with this name already exists")
 
-const balanceCols = `id, name, type, currency, description, amount_scale, balance_minor, debt_minor, limit_minor, created_at, updated_at`
+const balanceCols = `id, uid, name, type, currency, description, amount_scale, balance_minor, debt_minor, limit_minor, created_at, updated_at`
+
+// newBalanceUID returns a random UUID v4 string
+// (xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx, lowercase).
+func newBalanceUID() (string, error) {
+	id, err := uuid.NewRandom()
+	if err != nil {
+		return "", fmt.Errorf("generate balance uid: %w", err)
+	}
+	return id.String(), nil
+}
 
 // mapBalanceErr turns a UNIQUE violation on balances.name into ErrDuplicateName.
 func mapBalanceErr(err error) error {
@@ -36,17 +47,23 @@ func nullInt(p *int64) any {
 	return *p
 }
 
-// CreateBalance inserts a validated balance and fills in ID and CreatedAt.
+// CreateBalance inserts a validated balance, assigns a new UUID v4 as UID,
+// and fills in ID and CreatedAt. Any UID already on b is overwritten.
 func (s *Store) CreateBalance(ctx context.Context, b *balance.Balance) error {
 	scale, ok := money.MinorUnits(b.Currency)
 	if !ok {
 		return fmt.Errorf("unknown currency %q", b.Currency)
 	}
+	uid, err := newBalanceUID()
+	if err != nil {
+		return err
+	}
+	b.UID = uid
 	b.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO balances (name, type, currency, description, amount_scale, balance_minor, debt_minor, limit_minor, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		b.Name, string(b.Type), b.Currency, b.Description, scale,
+		`INSERT INTO balances (uid, name, type, currency, description, amount_scale, balance_minor, debt_minor, limit_minor, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		b.UID, b.Name, string(b.Type), b.Currency, b.Description, scale,
 		nullInt(b.BalanceMinor), nullInt(b.DebtMinor), nullInt(b.LimitMinor), b.CreatedAt)
 	if err != nil {
 		if mapped := mapBalanceErr(err); mapped == ErrDuplicateName {
@@ -89,7 +106,7 @@ func (s *Store) ListBalances(ctx context.Context, typ balance.Type) ([]balance.B
 	return out, rows.Err()
 }
 
-// GetBalance returns one balance or ErrNotFound.
+// GetBalance returns one balance by numeric id or ErrNotFound.
 func (s *Store) GetBalance(ctx context.Context, id int64) (balance.Balance, error) {
 	b, err := scanBalance(s.db.QueryRowContext(ctx, `SELECT `+balanceCols+` FROM balances WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -98,9 +115,18 @@ func (s *Store) GetBalance(ctx context.Context, id int64) (balance.Balance, erro
 	return b, err
 }
 
+// GetBalanceByUID returns one balance by its UUID or ErrNotFound.
+func (s *Store) GetBalanceByUID(ctx context.Context, uid string) (balance.Balance, error) {
+	b, err := scanBalance(s.db.QueryRowContext(ctx, `SELECT `+balanceCols+` FROM balances WHERE uid = ?`, uid))
+	if errors.Is(err, sql.ErrNoRows) {
+		return balance.Balance{}, ErrNotFound
+	}
+	return b, err
+}
+
 // UpdateBalance loads balance id, passes it to fn and stores what fn returns,
-// in one database transaction. ID and CreatedAt are preserved and UpdatedAt
-// is set to now (UTC). Returns ErrNotFound, ErrDuplicateName, or fn's error.
+// in one database transaction. ID, UID and CreatedAt are preserved and
+// UpdatedAt is set to now (UTC). Returns ErrNotFound, ErrDuplicateName, or fn's error.
 func (s *Store) UpdateBalance(ctx context.Context, id int64, fn func(cur balance.Balance) (balance.Balance, error)) (balance.Balance, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -124,7 +150,7 @@ func (s *Store) UpdateBalance(ctx context.Context, id int64, fn func(cur balance
 		return balance.Balance{}, fmt.Errorf("unknown currency %q", next.Currency)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	next.ID, next.CreatedAt, next.UpdatedAt = cur.ID, cur.CreatedAt, &now
+	next.ID, next.UID, next.CreatedAt, next.UpdatedAt = cur.ID, cur.UID, cur.CreatedAt, &now
 
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE balances SET name = ?, type = ?, currency = ?, description = ?, amount_scale = ?,
@@ -165,7 +191,7 @@ func scanBalance(r scanner) (balance.Balance, error) {
 	var scale int
 	var bal, debt, limit sql.NullInt64
 	var updated sql.NullString
-	if err := r.Scan(&b.ID, &b.Name, &typ, &b.Currency, &b.Description, &scale,
+	if err := r.Scan(&b.ID, &b.UID, &b.Name, &typ, &b.Currency, &b.Description, &scale,
 		&bal, &debt, &limit, &b.CreatedAt, &updated); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return b, err

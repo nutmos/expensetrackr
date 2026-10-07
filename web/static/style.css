@@ -56,3 +56,4 @@ td.neg { color: var(--err); }
 .badge.over { background: #fee2e2; color: var(--err); }
 #b-totals td, #b-totals th { white-space: nowrap; }
 [hidden] { display: none !important; }
+.uid { font-size: 0.72rem; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin-top: 2px; word-break: break-all; }
