@@ -2,7 +2,6 @@ package api
 
 import (
 	"net/http"
-	"strconv"
 	"testing"
 )
 
@@ -12,7 +11,7 @@ func createBal(t *testing.T, h http.Handler, body string) (string, map[string]an
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create balance: %d %s", rec.Code, rec.Body)
 	}
-	return "/api/balances/" + strconv.Itoa(int(m["id"].(float64))), m
+	return "/api/balances/" + m["uid"].(string), m
 }
 
 func fieldsOf(body map[string]any) map[string]any {
@@ -147,14 +146,14 @@ func TestBalancePutAndPatch(t *testing.T) {
 	// Correct PUT type change.
 	rec, body = do(t, h, "PUT", path, `{"name":"KBank Visa","type":"credit_card","currency":"THB","debt":"2500","limit":"50000"}`)
 	if rec.Code != 200 || body["balance"] != nil || body["available"] != "47500.00" || body["description"] != "" ||
-		body["id"] != orig["id"] || body["created_at"] != orig["created_at"] || body["updated_at"] == nil {
+		body["uid"] != orig["uid"] || body["created_at"] != orig["created_at"] || body["updated_at"] == nil {
 		t.Errorf("PUT type change: %d %v", rec.Code, body)
 	}
 	// PUT errors.
-	if rec, _ := do(t, h, "PUT", "/api/balances/999", `{"name":"x","type":"payment_account","currency":"THB","balance":"1"}`); rec.Code != 404 {
+	if rec, _ := do(t, h, "PUT", "/api/balances/00000000-0000-4000-8000-000000009999", `{"name":"x","type":"payment_account","currency":"THB","balance":"1"}`); rec.Code != 404 {
 		t.Errorf("PUT missing: %d", rec.Code)
 	}
-	if rec, _ := do(t, h, "PUT", "/api/balances/999", `{"name":""}`); rec.Code != 404 {
+	if rec, _ := do(t, h, "PUT", "/api/balances/00000000-0000-4000-8000-000000009999", `{"name":""}`); rec.Code != 404 {
 		t.Errorf("PUT missing + invalid: %d", rec.Code)
 	}
 	if rec, _ := do(t, h, "PUT", path, `{"name":"other","type":"payment_account","currency":"THB","balance":"1"}`); rec.Code != 409 {
@@ -190,8 +189,8 @@ func TestBalancePutAndPatch(t *testing.T) {
 		path, body string
 		status     int
 	}{
-		{"/api/balances/999", `{"name":"x"}`, 404},
-		{"/api/balances/abc", `{"name":"x"}`, 404}, // non-numeric path is treated as uid
+		{"/api/balances/00000000-0000-4000-8000-000000009999", `{"name":"x"}`, 404},
+		{"/api/balances/abc", `{"name":"x"}`, 400}, // malformed uid
 		{path, `{}`, 400},
 		{path, `null`, 400},
 		{path, `{"colour":"red"}`, 400},
@@ -241,13 +240,11 @@ func TestBalanceUIDAssignedAndLookup(t *testing.T) {
 	if !looksLikeUID(uid) || uid == "00000000-0000-4000-8000-000000000099" {
 		t.Fatalf("create ignored client uid incorrectly: %v", created["uid"])
 	}
-	// GET by numeric id and by uid.
-	rec, byID := do(t, h, "GET", path, "")
-	if rec.Code != 200 || byID["uid"] != uid {
-		t.Fatalf("get by id: %d %v", rec.Code, byID)
+	if _, hasID := created["id"]; hasID {
+		t.Errorf("response must not include id: %v", created)
 	}
-	rec, byUID := do(t, h, "GET", "/api/balances/"+uid, "")
-	if rec.Code != 200 || byUID["id"] != created["id"] || byUID["uid"] != uid {
+	rec, byUID := do(t, h, "GET", path, "")
+	if rec.Code != 200 || byUID["uid"] != uid {
 		t.Fatalf("get by uid: %d %v", rec.Code, byUID)
 	}
 	if rec, _ := do(t, h, "GET", "/api/balances/00000000-0000-4000-8000-000000000001", ""); rec.Code != 404 {

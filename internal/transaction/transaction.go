@@ -20,7 +20,7 @@ const (
 
 // Transaction is a stored transaction record.
 type Transaction struct {
-	ID           int64     `json:"id"`
+	ID           int64     `json:"-"`              // internal row id; the API identifies transactions by UID
 	UID          string    `json:"uid"`            // server-assigned UUID v4, immutable
 	Amount       string    `json:"amount"`         // decimal string, e.g. "120.50"
 	AmountMinor  int64     `json:"amount_minor"`   // integer minor units, e.g. 12050

@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
@@ -26,21 +25,21 @@ func TestCreateGetDelete(t *testing.T) {
 	if body["spent_at"] != "2026-10-06T21:06:00+08:00" {
 		t.Errorf("spent_at not preserved: %v", body["spent_at"])
 	}
-	id := int(body["id"].(float64))
+	id := body["uid"].(string)
 	if loc := rec.Header().Get("Location"); loc == "" {
 		t.Errorf("missing Location header")
 	}
 
-	rec, body = do(t, h, "GET", "/api/transactions/"+itoa(id), "")
+	rec, body = do(t, h, "GET", "/api/transactions/"+id, "")
 	if rec.Code != http.StatusOK || body["account"] != "KBank debit" || body["balance_uid"] != uid || body["note"] != "lunch" {
 		t.Fatalf("get: status %d body %v", rec.Code, body)
 	}
 
-	rec, _ = do(t, h, "DELETE", "/api/transactions/"+itoa(id), "")
+	rec, _ = do(t, h, "DELETE", "/api/transactions/"+id, "")
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("delete: status %d", rec.Code)
 	}
-	rec, _ = do(t, h, "GET", "/api/transactions/"+itoa(id), "")
+	rec, _ = do(t, h, "GET", "/api/transactions/"+id, "")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("get after delete: status %d", rec.Code)
 	}
@@ -132,9 +131,4 @@ func amounts(body map[string]any) []string {
 		out = append(out, it.(map[string]any)["amount"].(string))
 	}
 	return out
-}
-
-func itoa(i int) string {
-	b, _ := json.Marshal(i)
-	return string(b)
 }

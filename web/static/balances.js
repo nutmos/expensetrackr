@@ -97,7 +97,7 @@
     const btn = $("#b-submit-btn");
     btn.disabled = true;
     try {
-      const res = await fetch(isEdit ? `/api/balances/${editing.id}` : "/api/balances", {
+      const res = await fetch(isEdit ? `/api/balances/${editing.uid}` : "/api/balances", {
         method: isEdit ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload()),
@@ -123,10 +123,10 @@
     }
   }
 
-  async function startEdit(id) {
+  async function startEdit(uid) {
     clearErrors();
     setStatus("");
-    const res = await fetch(`/api/balances/${id}`);
+    const res = await fetch(`/api/balances/${uid}`);
     const b = await res.json().catch(() => ({}));
     if (!res.ok) {
       setStatus(b.error || `Could not load balance (${res.status})`, "bad");
@@ -169,9 +169,9 @@
 
   async function remove(b) {
     if (!confirm(`Delete balance “${b.name}” (${b.currency})?`)) return;
-    const res = await fetch(`/api/balances/${b.id}`, { method: "DELETE" });
+    const res = await fetch(`/api/balances/${b.uid}`, { method: "DELETE" });
     if (!res.ok && res.status !== 404) alert("Delete failed (" + res.status + ")");
-    if (editing && editing.id === b.id) {
+    if (editing && editing.uid === b.uid) {
       exitEdit();
       resetForm();
       setStatus("The balance you were editing was deleted.");
@@ -205,7 +205,7 @@
 
   function highlightRow() {
     groupsEl.querySelectorAll("tr[data-id]").forEach((tr) => {
-      tr.classList.toggle("editing", !!editing && tr.dataset.id === String(editing.id));
+      tr.classList.toggle("editing", !!editing && tr.dataset.uid === String(editing.uid));
     });
   }
 
@@ -241,7 +241,7 @@
       const tbody = document.createElement("tbody");
       for (const b of rows) {
         const tr = document.createElement("tr");
-        tr.dataset.id = String(b.id);
+        tr.dataset.uid = String(b.uid);
         const nameTd = cell(b.name);
         if (b.over_limit) {
           const badge = document.createElement("span");
@@ -266,7 +266,7 @@
         tr.append(cell(b.description || "", "note"));
         const actions = document.createElement("td");
         actions.className = "actions-cell";
-        actions.append(button("Edit", "edit", () => startEdit(b.id)), button("Delete", "danger", () => remove(b)));
+        actions.append(button("Edit", "edit", () => startEdit(b.uid)), button("Delete", "danger", () => remove(b)));
         tr.append(actions);
         tbody.append(tr);
       }
