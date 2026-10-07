@@ -32,9 +32,11 @@
             <small class="err" data-for="currency"></small>
           </label>
           <label>Payment account
-            <input id="account" name="account" type="text" list="account-list" maxlength="100" placeholder="KBank debit" autocomplete="off" required>
-            <datalist id="account-list"></datalist>
-            <small class="err" data-for="account"></small>
+            <select id="balance_uid" name="balance_uid" required>
+              <option value="">Select a balance…</option>
+            </select>
+            <small class="muted">Payment accounts and credit cards only. <a href="#balances">Manage balances</a></small>
+            <small class="err" data-for="balance_uid"></small>
           </label>
           <div class="field">
             <span class="field-label">Spent at <span class="muted" id="tz-label"></span></span>

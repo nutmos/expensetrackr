@@ -109,6 +109,23 @@ func writeInputError(c *gin.Context, err error) {
 	}
 }
 
+// attachPaymentBalance loads the balance for e.BalanceUID, checks it is a
+// payable type (payment_account or credit_card), and sets e.Account to the
+// balance's current name. Returns a *validate.ValidationError on balance_uid
+// when the balance is missing or not payable.
+func (s *Server) attachPaymentBalance(c *gin.Context, e *expense.Expense) error {
+	b, err := s.Store.GetBalanceByUID(c.Request.Context(), e.BalanceUID)
+	if errors.Is(err, store.ErrNotFound) {
+		return &validate.ValidationError{Fields: map[string]string{
+			"balance_uid": "does not match any balance",
+		}}
+	}
+	if err != nil {
+		return err
+	}
+	return e.AttachPaymentBalance(b)
+}
+
 func (s *Server) createExpense(c *gin.Context) {
 	var in expense.CreateInput
 	if !decodeBody(c, &in, true) {
@@ -116,6 +133,10 @@ func (s *Server) createExpense(c *gin.Context) {
 	}
 	e, err := in.Validate()
 	if err != nil {
+		writeInputError(c, err)
+		return
+	}
+	if err := s.attachPaymentBalance(c, &e); err != nil {
 		writeInputError(c, err)
 		return
 	}
@@ -149,6 +170,14 @@ func (s *Server) replaceExpense(c *gin.Context) {
 		writeInputError(c, err)
 		return
 	}
+	if err := s.attachPaymentBalance(c, &next); err != nil {
+		if _, gerr := s.Store.Get(c.Request.Context(), id); errors.Is(gerr, store.ErrNotFound) {
+			writeInputError(c, gerr)
+			return
+		}
+		writeInputError(c, err)
+		return
+	}
 	updated, err := s.Store.Update(c.Request.Context(), id, func(expense.Expense) (expense.Expense, error) {
 		return next, nil
 	})
@@ -175,20 +204,38 @@ func (s *Server) patchExpense(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, errorBody{Error: "request body must be a JSON object"})
 		return
 	}
-	updated, err := s.Store.Update(c.Request.Context(), id, func(cur expense.Expense) (expense.Expense, error) {
-		in := cur.Input()
-		if err := in.ApplyPatch(patch); err != nil {
-			return expense.Expense{}, err
-		}
-		next, err := in.Validate()
-		var ve *validate.ValidationError
-		_, hasCur := patch["currency"]
-		_, hasAmt := patch["amount"]
-		if hasCur && !hasAmt && errors.As(err, &ve) && ve.Fields["amount"] != "" {
-			ve.Fields["amount"] = fmt.Sprintf("the current amount %s (%s) cannot be expressed in %s: %s; send a new amount together with the currency (no exchange-rate conversion is done)",
-				cur.Amount, cur.Currency, in.Currency, ve.Fields["amount"])
-		}
-		return next, err
+	// Resolve the patch outside the write transaction: attachPaymentBalance
+	// needs its own DB read, and the store uses a single SQLite connection.
+	cur, err := s.Store.Get(c.Request.Context(), id)
+	if err != nil {
+		writeInputError(c, err)
+		return
+	}
+	in := cur.Input()
+	if err := in.ApplyPatch(patch); err != nil {
+		writeInputError(c, err)
+		return
+	}
+	next, err := in.Validate()
+	var ve *validate.ValidationError
+	_, hasCur := patch["currency"]
+	_, hasAmt := patch["amount"]
+	if hasCur && !hasAmt && errors.As(err, &ve) && ve.Fields["amount"] != "" {
+		ve.Fields["amount"] = fmt.Sprintf("the current amount %s (%s) cannot be expressed in %s: %s; send a new amount together with the currency (no exchange-rate conversion is done)",
+			cur.Amount, cur.Currency, in.Currency, ve.Fields["amount"])
+		writeInputError(c, err)
+		return
+	}
+	if err != nil {
+		writeInputError(c, err)
+		return
+	}
+	if err := s.attachPaymentBalance(c, &next); err != nil {
+		writeInputError(c, err)
+		return
+	}
+	updated, err := s.Store.Update(c.Request.Context(), id, func(expense.Expense) (expense.Expense, error) {
+		return next, nil
 	})
 	if err != nil {
 		writeInputError(c, err)

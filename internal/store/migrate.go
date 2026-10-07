@@ -11,6 +11,10 @@ import (
 //   - amount_minor: integer minor units (e.g. 12050 = 120.50 THB). No floats.
 //   - amount_scale: number of decimal places used for amount_minor (ISO 4217
 //     exponent at the time of writing), so each row is self-describing.
+//   - balance_uid:  UUID of the paying balance (payment_account or credit_card).
+//     No FK: deleting a balance leaves the uid and the account name snapshot.
+//   - account:      denormalized balance name at write time (display if the
+//     balance is later renamed or deleted).
 //   - spent_at:     RFC 3339 text exactly as entered (offset preserved),
 //     e.g. 2026-10-06T21:06:00+08:00.
 //   - spent_at_unix: the same instant as Unix seconds, used for ordering and
@@ -29,6 +33,7 @@ import (
 //	v2  table renamed to "transactions", index to idx_transactions_spent_at_unix
 //	v3  table "balances" + index idx_balances_type added
 //	v4  balances.uid TEXT (UUID v4) added, backfilled, unique index idx_balances_uid
+//	v5  transactions.balance_uid added (matched from free-text account where possible)
 //
 // A brand-new database is created directly at the latest version from
 // currentSchema. An existing database is upgraded by running the pending
@@ -44,6 +49,7 @@ CREATE TABLE transactions (
     amount_minor  INTEGER NOT NULL CHECK (amount_minor > 0),
     amount_scale  INTEGER NOT NULL CHECK (amount_scale BETWEEN 0 AND 4),
     currency      TEXT    NOT NULL CHECK (length(currency) = 3),
+    balance_uid   TEXT    NOT NULL CHECK (length(balance_uid) = 36),
     account       TEXT    NOT NULL CHECK (length(account) > 0),
     spent_at      TEXT    NOT NULL,
     spent_at_unix INTEGER NOT NULL,
@@ -52,6 +58,7 @@ CREATE TABLE transactions (
     updated_at    TEXT
 );
 CREATE INDEX idx_transactions_spent_at_unix ON transactions (spent_at_unix DESC, id DESC);
+CREATE INDEX idx_transactions_balance_uid ON transactions (balance_uid);
 ` + balancesSchemaCurrent
 
 // balancesSchemaV3 creates the balances table as shipped at version 3
@@ -131,6 +138,8 @@ var migrations = []migration{
 	createBalances,
 	// v3 -> v4: add balances.uid (UUID v4), backfill existing rows, unique index.
 	addBalanceUID,
+	// v4 -> v5: add transactions.balance_uid, match free-text account to balances.
+	addTransactionBalanceUID,
 }
 
 // SchemaVersion is the user_version a fully migrated database has.
@@ -351,6 +360,45 @@ func addBalanceUID(tx *sql.Tx) error {
 	}
 	if missing > 0 {
 		return fmt.Errorf("%d balances still missing uid after backfill", missing)
+	}
+	return nil
+}
+
+// addTransactionBalanceUID is migration v4 -> v5. It adds balance_uid, fills it
+// by matching the free-text account column to a payable balance name
+// (payment_account / credit_card, case-insensitive), then indexes the column.
+// If any transaction cannot be matched the migration fails (nothing is
+// committed) so the operator can fix the data. An empty transactions table
+// succeeds. No foreign key is added: balances may still be deleted later; the
+// uid and account name snapshot remain on the transaction.
+func addTransactionBalanceUID(tx *sql.Tx) error {
+	if err := addColumnIfMissing(tx, "transactions", "balance_uid", "TEXT"); err != nil {
+		return fmt.Errorf("add balance_uid column: %w", err)
+	}
+	// Match free-text account to a payable balance by name (ASCII NOCASE).
+	if _, err := tx.Exec(`
+		UPDATE transactions
+		   SET balance_uid = (
+		     SELECT b.uid FROM balances b
+		      WHERE b.name = transactions.account COLLATE NOCASE
+		        AND b.type IN ('payment_account', 'credit_card')
+		      LIMIT 1
+		   )
+		 WHERE balance_uid IS NULL OR balance_uid = ''
+	`); err != nil {
+		return fmt.Errorf("match account names to balances: %w", err)
+	}
+	var unmatched int
+	if err := tx.QueryRow(`
+		SELECT count(*) FROM transactions WHERE balance_uid IS NULL OR balance_uid = ''
+	`).Scan(&unmatched); err != nil {
+		return err
+	}
+	if unmatched > 0 {
+		return fmt.Errorf("%d transaction(s) have an account name that does not match any payment_account or credit_card balance; create the missing balances (or delete the rows) and restart", unmatched)
+	}
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_transactions_balance_uid ON transactions (balance_uid)`); err != nil {
+		return fmt.Errorf("create balance_uid index: %w", err)
 	}
 	return nil
 }

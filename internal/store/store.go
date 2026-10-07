@@ -66,9 +66,9 @@ func (s *Store) Create(ctx context.Context, e *expense.Expense) error {
 	}
 	e.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO transactions (amount_minor, amount_scale, currency, account, spent_at, spent_at_unix, note, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.AmountMinor, scale, e.Currency, e.Account, e.SpentAt, e.SpentTime.Unix(), e.Note, e.CreatedAt)
+		`INSERT INTO transactions (amount_minor, amount_scale, currency, balance_uid, account, spent_at, spent_at_unix, note, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.AmountMinor, scale, e.Currency, e.BalanceUID, e.Account, e.SpentAt, e.SpentTime.Unix(), e.Note, e.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("insert transaction: %w", err)
 	}
@@ -87,7 +87,7 @@ type ListFilter struct {
 	Limit int
 }
 
-const selectCols = `id, amount_minor, amount_scale, currency, account, spent_at, note, created_at, updated_at`
+const selectCols = `id, amount_minor, amount_scale, currency, balance_uid, account, spent_at, note, created_at, updated_at`
 
 // List returns rows from transactions newest first (by spend time, then ID).
 func (s *Store) List(ctx context.Context, f ListFilter) ([]expense.Expense, error) {
@@ -165,10 +165,10 @@ func (s *Store) Update(ctx context.Context, id int64, fn func(cur expense.Expens
 	next.ID, next.CreatedAt, next.UpdatedAt = cur.ID, cur.CreatedAt, &now
 
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE transactions SET amount_minor = ?, amount_scale = ?, currency = ?, account = ?,
+		`UPDATE transactions SET amount_minor = ?, amount_scale = ?, currency = ?, balance_uid = ?, account = ?,
 		        spent_at = ?, spent_at_unix = ?, note = ?, updated_at = ?
 		 WHERE id = ?`,
-		next.AmountMinor, scale, next.Currency, next.Account,
+		next.AmountMinor, scale, next.Currency, next.BalanceUID, next.Account,
 		next.SpentAt, next.SpentTime.Unix(), next.Note, now, id); err != nil {
 		return expense.Expense{}, fmt.Errorf("update transaction: %w", err)
 	}
@@ -200,7 +200,7 @@ func scan(r scanner) (expense.Expense, error) {
 	var e expense.Expense
 	var scale int
 	var updated sql.NullString
-	if err := r.Scan(&e.ID, &e.AmountMinor, &scale, &e.Currency, &e.Account, &e.SpentAt, &e.Note, &e.CreatedAt, &updated); err != nil {
+	if err := r.Scan(&e.ID, &e.AmountMinor, &scale, &e.Currency, &e.BalanceUID, &e.Account, &e.SpentAt, &e.Note, &e.CreatedAt, &updated); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return e, err
 		}

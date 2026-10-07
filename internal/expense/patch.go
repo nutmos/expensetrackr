@@ -9,30 +9,37 @@ import (
 )
 
 // patchFields lists the fields a PATCH request may change.
-var patchFields = map[string]bool{"amount": true, "currency": true, "account": true, "spent_at": true, "note": true}
+var patchFields = map[string]bool{
+	"amount": true, "currency": true, "balance_uid": true, "spent_at": true, "note": true,
+}
 
 // Input returns the editable fields of a stored expense as a CreateInput, so
 // that a partial update can be applied on top and re-validated as a whole.
+// Account is not editable (it is a denormalized snapshot of the balance name).
 func (e Expense) Input() CreateInput {
 	return CreateInput{
-		Amount:   DecimalInput(e.Amount),
-		Currency: e.Currency,
-		Account:  e.Account,
-		SpentAt:  e.SpentAt,
-		Note:     e.Note,
+		Amount:     DecimalInput(e.Amount),
+		Currency:   e.Currency,
+		BalanceUID: e.BalanceUID,
+		SpentAt:    e.SpentAt,
+		Note:       e.Note,
 	}
 }
 
 // ApplyPatch overlays the fields present in a JSON-object patch (decoded as raw
 // messages) onto in. Fields that are absent are left unchanged. "note": null
-// clears the note; null for any other field is a validation error. The caller
+// clears the note; null for any other field is a validation error. A legacy
+// "account" field is rejected (payment account is now balance_uid). The caller
 // must run Validate on the result.
 func (in *CreateInput) ApplyPatch(patch map[string]json.RawMessage) error {
 	if len(patch) == 0 {
-		return &RequestError{Msg: "patch must contain at least one of: amount, currency, account, spent_at, note"}
+		return &RequestError{Msg: "patch must contain at least one of: amount, currency, balance_uid, spent_at, note"}
 	}
 	var unknown []string
 	for k := range patch {
+		if k == "account" {
+			return &RequestError{Msg: `unknown field "account" (use "balance_uid" to set the payment account)`}
+		}
 		if !patchFields[k] {
 			unknown = append(unknown, fmt.Sprintf("%q", k))
 		}
@@ -64,7 +71,7 @@ func (in *CreateInput) ApplyPatch(patch map[string]json.RawMessage) error {
 	for _, f := range []struct {
 		name string
 		dst  *string
-	}{{"currency", &in.Currency}, {"account", &in.Account}, {"spent_at", &in.SpentAt}, {"note", &in.Note}} {
+	}{{"currency", &in.Currency}, {"balance_uid", &in.BalanceUID}, {"spent_at", &in.SpentAt}, {"note", &in.Note}} {
 		if err := str(f.name, f.dst); err != nil {
 			return err
 		}
