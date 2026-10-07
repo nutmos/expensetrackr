@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"expense-service/internal/expense"
+	"expense-service/internal/transaction"
 )
 
 // oldSchemaV0 is the original schema (version 0: table "expenses", no updated_at).
@@ -125,7 +125,7 @@ func TestFreshDatabaseUsesCurrentSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := expense.CreateInput{Amount: "5", Currency: "SGD", BalanceUID: "11111111-1111-4111-8111-111111111111", SpentAt: "2026-10-07T08:00:00+08:00"}.Validate()
+	e, err := transaction.CreateInput{Amount: "5", Currency: "SGD", BalanceUID: "11111111-1111-4111-8111-111111111111", SpentAt: "2026-10-07T08:00:00+08:00"}.Validate()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +261,7 @@ func TestUpdateNotFound(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	_, err = st.Update(context.Background(), 42, func(cur expense.Expense) (expense.Expense, error) { return cur, nil })
+	_, err = st.Update(context.Background(), 42, func(cur transaction.Transaction) (transaction.Transaction, error) { return cur, nil })
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("got %v, want ErrNotFound", err)
 	}

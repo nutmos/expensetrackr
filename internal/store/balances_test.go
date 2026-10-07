@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"expense-service/internal/balance"
-	"expense-service/internal/expense"
 	"expense-service/internal/money"
+	"expense-service/internal/transaction"
 )
 
 // schemaV2 is the v2 schema (table "transactions", no balances) with rows,
@@ -65,7 +65,7 @@ func TestMigrationV2ToV3AddsBalances(t *testing.T) {
 	if !looksLikeUUID(b.UID) {
 		t.Fatalf("create balance uid = %q, want UUID v4", b.UID)
 	}
-	e, err := expense.CreateInput{Amount: "120.50", Currency: "THB", BalanceUID: b.UID, SpentAt: "2026-10-05T09:00:00+07:00"}.Validate()
+	e, err := transaction.CreateInput{Amount: "120.50", Currency: "THB", BalanceUID: b.UID, SpentAt: "2026-10-05T09:00:00+07:00"}.Validate()
 	if err != nil {
 		t.Fatal(err)
 	}

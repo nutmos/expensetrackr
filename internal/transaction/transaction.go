@@ -1,5 +1,5 @@
-// Package expense holds the domain model and input validation.
-package expense
+// Package transaction holds the domain model and input validation.
+package transaction
 
 import (
 	"errors"
@@ -18,8 +18,8 @@ const (
 	uidLen     = 36 // UUID v4 canonical form
 )
 
-// Expense is a stored expense record.
-type Expense struct {
+// Transaction is a stored transaction record.
+type Transaction struct {
 	ID          int64     `json:"id"`
 	UID         string    `json:"uid"`          // server-assigned UUID v4, immutable
 	Amount      string    `json:"amount"`       // decimal string, e.g. "120.50"
@@ -43,8 +43,8 @@ type (
 	RequestError    = validate.RequestError
 )
 
-// CreateInput is the payload accepted by POST /api/expenses and
-// PUT /api/expenses/:id (full replace). Payment account is identified by
+// CreateInput is the payload accepted by POST /api/transactions and
+// PUT /api/transactions/:id (full replace). Payment account is identified by
 // balance_uid (not free text). The read-only "account" name is filled in by
 // the API from the balance after validation.
 type CreateInput struct {
@@ -100,12 +100,12 @@ func IsPayableType(t balance.Type) bool {
 	return t == balance.PaymentAccount || t == balance.CreditCard
 }
 
-// Validate checks the input and returns a normalized Expense (without ID,
+// Validate checks the input and returns a normalized Transaction (without ID,
 // CreatedAt, or Account). Account is filled later by AttachPaymentBalance once
 // the balance_uid has been resolved against the store.
-func (in CreateInput) Validate() (Expense, error) {
+func (in CreateInput) Validate() (Transaction, error) {
 	fields := map[string]string{}
-	var exp Expense
+	var exp Transaction
 
 	cur := strings.ToUpper(strings.TrimSpace(in.Currency))
 	exponent, known := money.MinorUnits(cur)
@@ -152,7 +152,7 @@ func (in CreateInput) Validate() (Expense, error) {
 	exp.Note = note
 
 	if len(fields) > 0 {
-		return Expense{}, &ValidationError{Fields: fields}
+		return Transaction{}, &ValidationError{Fields: fields}
 	}
 	return exp, nil
 }
@@ -160,7 +160,7 @@ func (in CreateInput) Validate() (Expense, error) {
 // AttachPaymentBalance checks that b is a payable balance and copies its name
 // into Account as a denormalized snapshot. Call after Validate, once the uid
 // has been loaded from the store.
-func (e *Expense) AttachPaymentBalance(b balance.Balance) error {
+func (e *Transaction) AttachPaymentBalance(b balance.Balance) error {
 	if b.UID == "" || !IsPayableType(b.Type) {
 		return &ValidationError{Fields: map[string]string{
 			"balance_uid": "must refer to a payment_account or credit_card balance",

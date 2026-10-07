@@ -26,12 +26,12 @@
   // ---- Tabs ----------------------------------------------------------------
 
   function showView() {
-    const view = location.hash === "#balances" ? "balances" : "expenses";
-    $("#view-expenses").hidden = view !== "expenses";
+    const view = location.hash === "#balances" ? "balances" : "transactions";
+    $("#view-transactions").hidden = view !== "transactions";
     $("#view-balances").hidden = view !== "balances";
-    $("#tab-expenses").classList.toggle("active", view === "expenses");
+    $("#tab-transactions").classList.toggle("active", view === "transactions");
     $("#tab-balances").classList.toggle("active", view === "balances");
-    $("#tab-expenses").setAttribute("aria-selected", String(view === "expenses"));
+    $("#tab-transactions").setAttribute("aria-selected", String(view === "transactions"));
     $("#tab-balances").setAttribute("aria-selected", String(view === "balances"));
     document.title = view === "balances" ? "Balances · Expense Log" : "Expense Log";
     if (view === "balances" && !loaded) loadBalances();

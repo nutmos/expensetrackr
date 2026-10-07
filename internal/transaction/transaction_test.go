@@ -1,4 +1,4 @@
-package expense
+package transaction
 
 import (
 	"encoding/json"

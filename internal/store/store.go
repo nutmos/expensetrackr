@@ -1,4 +1,4 @@
-// Package store persists expense records in the SQLite table "transactions",
+// Package store persists transaction records in the SQLite table "transactions",
 // using the pure-Go modernc.org/sqlite driver (no CGO required). The schema and
 // its migrations live in migrate.go.
 package store
@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"expense-service/internal/expense"
 	"expense-service/internal/money"
+	"expense-service/internal/transaction"
 
 	_ "modernc.org/sqlite" // registers the "sqlite" driver
 )
@@ -58,9 +58,9 @@ func Open(path string) (*Store, error) {
 // Close closes the database.
 func (s *Store) Close() error { return s.db.Close() }
 
-// Create inserts a validated expense as a new row in transactions and fills in
+// Create inserts a validated transaction as a new row in transactions and fills in
 // ID and CreatedAt.
-func (s *Store) Create(ctx context.Context, e *expense.Expense) error {
+func (s *Store) Create(ctx context.Context, e *transaction.Transaction) error {
 	scale, ok := money.MinorUnits(e.Currency)
 	if !ok {
 		return fmt.Errorf("unknown currency %q", e.Currency)
@@ -96,7 +96,7 @@ type ListFilter struct {
 const selectCols = `id, uid, amount_minor, amount_scale, currency, balance_uid, account, spent_at, note, created_at, updated_at`
 
 // List returns rows from transactions newest first (by spend time, then ID).
-func (s *Store) List(ctx context.Context, f ListFilter) ([]expense.Expense, error) {
+func (s *Store) List(ctx context.Context, f ListFilter) ([]transaction.Transaction, error) {
 	query := `SELECT ` + selectCols + ` FROM transactions WHERE 1=1`
 	var args []any
 	if f.From != nil {
@@ -118,7 +118,7 @@ func (s *Store) List(ctx context.Context, f ListFilter) ([]expense.Expense, erro
 	}
 	defer rows.Close()
 
-	out := []expense.Expense{}
+	out := []transaction.Transaction{}
 	for rows.Next() {
 		e, err := scan(rows)
 		if err != nil {
@@ -130,52 +130,52 @@ func (s *Store) List(ctx context.Context, f ListFilter) ([]expense.Expense, erro
 }
 
 // Get returns one row from transactions or ErrNotFound.
-func (s *Store) Get(ctx context.Context, id int64) (expense.Expense, error) {
+func (s *Store) Get(ctx context.Context, id int64) (transaction.Transaction, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT `+selectCols+` FROM transactions WHERE id = ?`, id)
 	e, err := scan(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		return expense.Expense{}, ErrNotFound
+		return transaction.Transaction{}, ErrNotFound
 	}
 	return e, err
 }
 
 // GetByUID returns one row from transactions by its UUID or ErrNotFound.
-func (s *Store) GetByUID(ctx context.Context, uid string) (expense.Expense, error) {
+func (s *Store) GetByUID(ctx context.Context, uid string) (transaction.Transaction, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT `+selectCols+` FROM transactions WHERE uid = ?`, strings.ToLower(strings.TrimSpace(uid)))
 	e, err := scan(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		return expense.Expense{}, ErrNotFound
+		return transaction.Transaction{}, ErrNotFound
 	}
 	return e, err
 }
 
-// Update loads row id from transactions, passes it to fn and stores the expense
+// Update loads row id from transactions, passes it to fn and stores the transaction
 // fn returns, all inside one database transaction (so a PATCH's read-modify-write is atomic). fn
 // receives the current row and returns the new, already validated values; an
 // error from fn aborts the update and is returned unchanged. ID and CreatedAt
 // are preserved and UpdatedAt is set to now (UTC). Returns ErrNotFound if the
 // row does not exist.
-func (s *Store) Update(ctx context.Context, id int64, fn func(cur expense.Expense) (expense.Expense, error)) (expense.Expense, error) {
+func (s *Store) Update(ctx context.Context, id int64, fn func(cur transaction.Transaction) (transaction.Transaction, error)) (transaction.Transaction, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return expense.Expense{}, fmt.Errorf("update transaction: %w", err)
+		return transaction.Transaction{}, fmt.Errorf("update transaction: %w", err)
 	}
 	defer tx.Rollback() // no-op after Commit
 
 	cur, err := scan(tx.QueryRowContext(ctx, `SELECT `+selectCols+` FROM transactions WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
-		return expense.Expense{}, ErrNotFound
+		return transaction.Transaction{}, ErrNotFound
 	}
 	if err != nil {
-		return expense.Expense{}, err
+		return transaction.Transaction{}, err
 	}
 	next, err := fn(cur)
 	if err != nil {
-		return expense.Expense{}, err
+		return transaction.Transaction{}, err
 	}
 	scale, ok := money.MinorUnits(next.Currency)
 	if !ok {
-		return expense.Expense{}, fmt.Errorf("unknown currency %q", next.Currency)
+		return transaction.Transaction{}, fmt.Errorf("unknown currency %q", next.Currency)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	next.ID, next.UID, next.CreatedAt, next.UpdatedAt = cur.ID, cur.UID, cur.CreatedAt, &now
@@ -186,10 +186,10 @@ func (s *Store) Update(ctx context.Context, id int64, fn func(cur expense.Expens
 		 WHERE id = ?`,
 		next.AmountMinor, scale, next.Currency, next.BalanceUID, next.Account,
 		next.SpentAt, next.SpentTime.Unix(), next.Note, now, id); err != nil {
-		return expense.Expense{}, fmt.Errorf("update transaction: %w", err)
+		return transaction.Transaction{}, fmt.Errorf("update transaction: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return expense.Expense{}, fmt.Errorf("update transaction: %w", err)
+		return transaction.Transaction{}, fmt.Errorf("update transaction: %w", err)
 	}
 	return next, nil
 }
@@ -212,8 +212,8 @@ func (s *Store) Delete(ctx context.Context, id int64) error {
 
 type scanner interface{ Scan(dest ...any) error }
 
-func scan(r scanner) (expense.Expense, error) {
-	var e expense.Expense
+func scan(r scanner) (transaction.Transaction, error) {
+	var e transaction.Transaction
 	var scale int
 	var updated sql.NullString
 	if err := r.Scan(&e.ID, &e.UID, &e.AmountMinor, &scale, &e.Currency, &e.BalanceUID, &e.Account, &e.SpentAt, &e.Note, &e.CreatedAt, &updated); err != nil {

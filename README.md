@@ -51,10 +51,11 @@ touch the real database.
 
 ## Data model
 
-Expenses are stored in the SQLite table **`transactions`**, with index
+Transactions are stored in the SQLite table **`transactions`**, with index
 `idx_transactions_spent_at_unix` on `(spent_at_unix DESC, id DESC)`. Until schema
 version 2 the table was named `expenses`; see "Schema migrations". The HTTP API
-and JSON still use "expenses" (`/api/expenses`, `{"expenses": [...]}`).
+uses `/api/transactions` and the list key `transactions` (the old
+`/api/transactions` paths were removed, no alias).
 
 | Field         | JSON           | Stored as                                                              |
 |---------------|----------------|------------------------------------------------------------------------|
@@ -68,7 +69,7 @@ and JSON still use "expenses" (`/api/expenses`, `{"expenses": [...]}`).
 | spend time    | `spent_at`     | `TEXT` RFC 3339 with offset as entered + `spent_at_unix INTEGER`        |
 | note          | `note`         | `TEXT`, optional, up to 1000 chars                                     |
 | created       | `created_at`   | `TEXT` RFC 3339 in UTC (server clock)                                  |
-| last edited   | `updated_at`   | `TEXT` RFC 3339 in UTC, `NULL` (JSON `null`) until the expense is edited |
+| last edited   | `updated_at`   | `TEXT` RFC 3339 in UTC, `NULL` (JSON `null`) until the transaction is edited |
 
 ### Balances (table `balances`)
 
@@ -91,13 +92,13 @@ Every balance also has:
 - a **base `currency`** (ISO 4217)
 - an optional **`description`** (up to 1000 characters)
 
-The name is a short label like "KBank debit". Expenses identify the payment
+The name is a short label like "KBank debit". Transactions identify the payment
 account by the balance's immutable **`uid`** (`balance_uid` on the transaction).
 There is **no SQLite foreign key**: deleting a balance leaves the transaction's
 `balance_uid` and the denormalized `account` name snapshot intact. Logging an
-expense does **not** yet adjust the balance amount (see Open questions).
+transaction does **not** yet adjust the balance amount (see Open questions).
 
-- Amounts use the same integer minor units + `amount_scale` scheme as expenses.
+- Amounts use the same integer minor units + `amount_scale` scheme as transactions.
 - Sending an amount that the type does not use returns 422. Absent, `null` or
   `""` counts as not sent.
 - Fields that don't apply are `null` in responses.
@@ -113,7 +114,7 @@ The amount is parsed from its **decimal text** straight into an integer count of
 the currency's minor unit, with no floating point anywhere: `"120.50"` THB is
 stored as `12050`, `"1500"` JPY as `1500` (JPY has no minor unit), `"1.234"` KWD
 as `1234`. The number of decimals per currency comes from the ISO 4217 table in
-`internal/expense/currency.go`. Input with more decimals than the currency
+`internal/transaction/currency.go`. Input with more decimals than the currency
 allows is rejected rather than rounded. Extra trailing zeros are accepted
 because they carry no value (`"1500.00"` JPY is 1500, `"1.230"` USD is 1.23). `amount_scale` is stored on every row so
 a row still reads correctly if the currency table changes later. The API accepts
@@ -127,15 +128,15 @@ A number is read as its literal text, never as a float. Responses return both
 e.g. `2026-10-06T21:06:00+08:00` or `2026-10-06T13:06:00Z`. Values without an
 offset, date-only values and other formats are rejected. The value is stored at
 second precision with the **original offset kept** (so you can still see that a
-Bangkok expense was entered at +07:00). The derived `spent_at_unix` column holds
+Bangkok transaction was entered at +07:00). The derived `spent_at_unix` column holds
 the absolute instant and is used for ordering and filtering, so rows entered with
 different offsets compare correctly.
 
 The web form has a date-time field plus a separate UTC-offset field. For a new
-expense both default to the browser's current local time and offset, and the
+transaction both default to the browser's current local time and offset, and the
 offset follows the chosen date (DST-aware) until you type your own (for example
-`+07:00` for a purchase in Bangkok). When you edit an expense, the form shows the
-saved wall-clock time **in its original offset**, so an expense saved as
+`+07:00` for a purchase in Bangkok). When you edit a transaction, the form shows the
+saved wall-clock time **in its original offset**, so a transaction saved as
 `09:15+07:00` appears as 09:15 with `+07:00` and is not converted to your
 browser's zone.
 
@@ -205,12 +206,12 @@ only on validation and duplicate-name errors.
 
 | Method | Path                 | Success | Notes |
 |--------|----------------------|---------|-------|
-| POST   | `/api/expenses`      | 201 + expense, `Location` header | 422 on validation errors, 400 on malformed JSON or unknown fields |
-| GET    | `/api/expenses`      | 200 `{"expenses":[...],"count":n}` | Newest first by spend time. Optional `from`, `to` (RFC 3339 with offset, both inclusive), `limit` (1–5000, default 500) |
-| GET    | `/api/expenses/:id`  | 200 + expense | `:id` may be the numeric id **or** the transaction `uid` (all digits = id, otherwise uid; same for PUT/PATCH/DELETE). 404 if missing, 400 for a non-positive numeric id |
-| PUT    | `/api/expenses/:id`  | 200 + updated expense | Full replace with the same body and rules as POST. An omitted `note` clears it. 404 if missing, 422 for invalid values, 400 for malformed JSON or unknown fields |
-| PATCH  | `/api/expenses/:id`  | 200 + updated expense | Partial update: only the fields you send change, then the merged result is validated like a create. `"note": null` clears the note; `null` for any other field returns 422. Returns 400 for `{}`, unknown fields or wrong JSON types, and 404 if missing |
-| DELETE | `/api/expenses/:id`  | 204 | 404 if missing |
+| POST   | `/api/transactions`      | 201 + transaction, `Location` header | 422 on validation errors, 400 on malformed JSON or unknown fields |
+| GET    | `/api/transactions`      | 200 `{"transactions":[...],"count":n}` | Newest first by spend time. Optional `from`, `to` (RFC 3339 with offset, both inclusive), `limit` (1–5000, default 500) |
+| GET    | `/api/transactions/:id`  | 200 + transaction | `:id` may be the numeric id **or** the transaction `uid` (all digits = id, otherwise uid; same for PUT/PATCH/DELETE). 404 if missing, 400 for a non-positive numeric id |
+| PUT    | `/api/transactions/:id`  | 200 + updated transaction | Full replace with the same body and rules as POST. An omitted `note` clears it. 404 if missing, 422 for invalid values, 400 for malformed JSON or unknown fields |
+| PATCH  | `/api/transactions/:id`  | 200 + updated transaction | Partial update: only the fields you send change, then the merged result is validated like a create. `"note": null` clears the note; `null` for any other field returns 422. Returns 400 for `{}`, unknown fields or wrong JSON types, and 404 if missing |
+| DELETE | `/api/transactions/:id`  | 204 | 404 if missing |
 | POST   | `/api/balances`      | 201 + balance, `Location` header | 422 on validation errors (incl. per-type amount rules), 409 if the name is already used (case-insensitive), 400 on malformed JSON or unknown fields |
 | GET    | `/api/balances`      | 200 `{"balances":[...],"count":n,"totals":[...]}` | Grouped by type, then by name. Optional `type=` filter (400 if invalid). Optional `payable=1` / `payable=true` returns only `payment_account` and `credit_card` (cannot combine with `type=`). `totals` covers the returned rows, per currency |
 | GET    | `/api/balances/:id`  | 200 + balance | `:id` may be the numeric id **or** the UUID `uid` (all-digit paths are treated as numeric ids; anything else as uid). 404 if missing |
@@ -222,7 +223,7 @@ only on validation and duplicate-name errors.
 
 ### Examples
 
-Create a payable balance first (or use an existing `uid`), then log an expense
+Create a payable balance first (or use an existing `uid`), then log a transaction
 with `balance_uid`. The free-text `account` field is **not** accepted on write
 (unknown field → 400); responses still include `account` as the name snapshot.
 
@@ -232,7 +233,7 @@ BAL_UID=$(curl -s -X POST http://127.0.0.1:8080/api/balances \
   -d '{"name":"KBank debit","type":"payment_account","currency":"THB","balance":"10000"}' \
   | python3 -c 'import sys,json; print(json.load(sys.stdin)["uid"])')
 
-curl -s -X POST http://127.0.0.1:8080/api/expenses \
+curl -s -X POST http://127.0.0.1:8080/api/transactions \
   -H 'Content-Type: application/json' \
   -d "{\"amount\":\"120.50\",\"currency\":\"THB\",\"balance_uid\":\"$BAL_UID\",\"spent_at\":\"2026-10-06T21:06:00+08:00\",\"note\":\"Lunch\"}"
 ```
@@ -261,11 +262,11 @@ Edit: full replace (PUT) and partial update (PATCH). Both keep `id` and
 `created_at` and set `updated_at`:
 
 ```bash
-curl -s -X PUT http://127.0.0.1:8080/api/expenses/1 -H 'Content-Type: application/json' \
+curl -s -X PUT http://127.0.0.1:8080/api/transactions/1 -H 'Content-Type: application/json' \
   -d "{\"amount\":\"150\",\"currency\":\"THB\",\"balance_uid\":\"$BAL_UID\",\"spent_at\":\"2026-10-05T09:15:00+07:00\",\"note\":\"pad thai + drink\"}"
 # 200 {"id":1,"amount":"150.00","amount_minor":15000,"currency":"THB",...,"updated_at":"2026-10-06T13:18:11Z"}
 
-curl -s -X PATCH http://127.0.0.1:8080/api/expenses/2 -H 'Content-Type: application/json' \
+curl -s -X PATCH http://127.0.0.1:8080/api/transactions/2 -H 'Content-Type: application/json' \
   -d '{"note":"chicken rice"}'
 # 200 {..., "note":"chicken rice", "updated_at":"..."}   (other fields unchanged)
 ```
@@ -311,7 +312,7 @@ List with a time window (URL-encode the `+` as `%2B`; an unencoded `+` is also
 accepted):
 
 ```bash
-curl -s 'http://127.0.0.1:8080/api/expenses?from=2026-10-01T00:00:00%2B08:00&to=2026-10-31T23:59:59%2B08:00'
+curl -s 'http://127.0.0.1:8080/api/transactions?from=2026-10-01T00:00:00%2B08:00&to=2026-10-31T23:59:59%2B08:00'
 ```
 
 ## Layout
@@ -323,27 +324,27 @@ internal/money/              exact amounts: decimal string <-> integer minor uni
   currency.go                ISO 4217 codes -> minor-unit digits
   decimal.go                 DecimalInput (JSON string or number, kept as text)
 internal/validate/           ValidationError (422) and RequestError (400)
-internal/expense/            expense domain model + validation (no I/O)
-  expense.go                 Expense, CreateInput, Validate, ParseTimestamp
+internal/transaction/            transaction domain model + validation (no I/O)
+  transaction.go             Transaction, CreateInput, Validate, ParseTimestamp
   patch.go                   PATCH merge (ApplyPatch)
 internal/balance/            balance domain model + per-type validation (no I/O)
   balance.go                 Type, Balance, Input, Validate, ApplyPatch, ComputeTotals
 internal/store/              persistence (modernc.org/sqlite)
-  store.go                   expenses in table "transactions": Open, Create, List, Get, Update, Delete
+  store.go                   transactions in table "transactions": Open, Create, List, Get, Update, Delete
   balances.go                table "balances": CreateBalance, ListBalances, GetBalance, UpdateBalance, DeleteBalance
   migrate.go                 current schema, versioned migrations (v0 -> … -> v6)
   store_test.go, balances_test.go   fresh DB, upgrades from v0/v1/v2, partial/ambiguous states
 internal/api/                Gin routes and handlers
-  api.go                     expenses routes + shared helpers
+  api.go                     transactions routes + shared helpers
   balances.go                /api/balances routes
   api_test.go, edit_test.go, balances_test.go
 web/embed.go                 embeds web/static into the binary
-web/static/                  index.html, style.css, app.js (expenses), balances.js (balances + tabs)
+web/static/                  index.html, style.css, app.js (transactions), balances.js (balances + tabs)
 ```
 
 ## Web page
 
-Two tabs: **Expenses** (`/#expenses`, the default) and **Balances**
+Two tabs: **Transactions** (`/#transactions`, the default) and **Balances**
 (`/#balances`).
 
 Balances tab:
@@ -364,17 +365,17 @@ Balances tab:
 - A per-currency totals table shows assets, liabilities, net, credit limit and
   available credit.
 
-Expenses tab:
+Transactions tab:
 
-- A form to log an expense, and a table listing expenses newest first, with a
+- A form to log a transaction, and a table listing transactions newest first, with a
   date filter and totals per currency.
 - Each row shows the transaction `uid` in small muted monospace text under
   the time (read-only; not in the form).
 - **Payment account** is a dropdown of payable balances (`payment_account` and
   `credit_card`, from `GET /api/balances?payable=1`). The form submits
   `balance_uid` (the UUID). The list shows the denormalized account name.
-- **Edit** loads the expense into the same form: the card is highlighted, the
-  heading reads "Edit expense #N", and the button reads "Save changes". Saving
+- **Edit** loads the transaction into the same form: the card is highlighted, the
+  heading reads "Edit transaction #N", and the button reads "Save changes". Saving
   sends a PUT, and validation errors appear next to each field. **Cancel edit**
   or Esc leaves edit mode without saving. Edited rows show a small "edited"
   marker; hover over it to see when.
@@ -388,17 +389,17 @@ Expenses tab:
   where exchange rates would come from.
 - Categories/tags, receipts or attachments; an edit history / audit log
   (currently only the last `updated_at` is kept, not what changed).
-- Protection against lost updates if two tabs edit the same expense at once
+- Protection against lost updates if two tabs edit the same transaction at once
   (e.g. require `updated_at` to match, or `If-Match`/ETag). Today the last save wins.
-- **Follow-up:** when logging an expense, automatically adjust the linked
+- **Follow-up:** when logging a transaction, automatically adjust the linked
   balance (lower a payment account's balance, or raise a credit card's debt).
   Not done yet — `balance_uid` is recorded only.
 - Balances: should past balances be kept as dated snapshots? Should totals
   across currencies be shown in one reporting currency? Should
   `other_liability` really require a `limit`?
-- Naming follow-up to the `transactions` table rename: should the HTTP API
-  (`/api/expenses`, the JSON `expenses` key), the Go domain package
-  (`internal/expense`), the UI wording and the default DB file name
-  (`data/expenses.db`) also move to "transactions"? Does "transactions" mean
-  income/transfers will be recorded too, which would need a type/sign field?
+- Naming: the API, JSON, Go package (`internal/transaction`) and UI now say
+  "transactions". Still unchanged: the module name `expense-service`, the
+  `EXPENSE_*` env vars and the default DB file `data/expenses.db`. Does
+  "transactions" mean income/transfers will be recorded too, which would need
+  a type/sign field?
 - Refunds or negative amounts (currently rejected; amounts must be > 0).
