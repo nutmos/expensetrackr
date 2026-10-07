@@ -7,18 +7,15 @@
   const form = $("#transaction-form");
   const formCard = form.closest(".card");
   const spentAtInput = $("#spent_at");
-  const offsetInput = $("#spent_offset");
   const statusEl = $("#form-status");
   const tbody = $("#transaction-table tbody");
   const listStatus = $("#list-status");
   const totalsEl = $("#totals");
   const LS_KEY = "expense-log:last";
-  const OFFSET_RE = /^(Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/;
-
   // Edit state: null when logging a new transaction, else the transaction being edited.
   let editing = null;
-  // When true, the offset field follows the browser's offset for the chosen date.
-  let offsetAuto = true;
+  // All balances (for the source/destination dropdowns), from GET /api/balances.
+  let allBalances = [];
 
   const pad = (n, w = 2) => String(Math.abs(n)).padStart(w, "0");
 
@@ -48,43 +45,28 @@
     return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0));
   }
 
-  // Wall-clock part with seconds, from a datetime-local value.
-  function wallClock(value) {
-    const m = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(:\d{2})?/.exec(value);
-    return m ? m[1] + (m[2] || ":00") : null;
-  }
-
-  // The RFC 3339 value the form would submit, or null if incomplete/invalid.
+  // The RFC 3339 value the form would submit: the entered wall-clock time in
+  // the device's time zone, with the device's offset for that date (DST-aware).
   function composedSpentAt() {
-    const wall = wallClock(spentAtInput.value);
-    const off = offsetInput.value.trim().toUpperCase();
-    if (!wall || !OFFSET_RE.test(off)) return null;
-    return wall + off;
-  }
-
-  function syncAutoOffset() {
-    if (!offsetAuto) return;
-    const d = parseLocalInput(spentAtInput.value) || new Date();
-    offsetInput.value = offsetString(d);
+    const d = parseLocalInput(spentAtInput.value);
+    return d ? toRFC3339(d) : null;
   }
 
   function setNow() {
     spentAtInput.value = toLocalInputValue(new Date());
-    offsetAuto = true;
-    syncAutoOffset();
     updatePreview();
   }
 
   function updatePreview() {
     const v = composedSpentAt();
-    let text = v ? "Will be saved as " + v : "Enter a date-time and an offset like +08:00";
+    let text = v ? "Will be saved as " + v : "Enter a date and time";
     if (v && editing && v !== editing.spent_at) text += ` (was ${editing.spent_at})`;
     $("#spent-at-preview").textContent = text;
   }
 
   function clearErrors() {
     form.querySelectorAll(".err").forEach((el) => (el.textContent = ""));
-    form.querySelectorAll("input").forEach((el) => el.classList.remove("invalid"));
+    form.querySelectorAll("input, select").forEach((el) => el.classList.remove("invalid"));
   }
 
   function showFieldErrors(fields) {
@@ -93,7 +75,6 @@
       if (errEl) errEl.textContent = msg;
       const input = document.getElementById(name);
       if (input) input.classList.add("invalid");
-      if (name === "spent_at") offsetInput.classList.add("invalid");
     }
   }
 
@@ -114,23 +95,52 @@
     } catch (_) {}
   }
 
-  async function loadPayableBalances(selected) {
-    const sel = $("#balance_uid");
-    const keep = selected || sel.value;
+  // Which balance types may be the source (balance_uid) for each type.
+  const SOURCE_TYPES = {
+    expense: ["payment_account", "credit_card"],
+    income: ["payment_account", "other_asset"],
+    transfer: ["payment_account", "credit_card", "other_asset", "other_liability"],
+  };
+  const SOURCE_LABEL = { expense: "Payment account", income: "Received into", transfer: "From (source)" };
+  const SOURCE_HINT = {
+    expense: "Payment accounts and credit cards.",
+    income: "Payment accounts and other assets.",
+    transfer: "Any balance.",
+  };
+  const KIND = { payment_account: "account", credit_card: "card", other_asset: "asset", other_liability: "liability" };
+
+  function fillSelect(sel, types, keep) {
+    sel.replaceChildren(Object.assign(document.createElement("option"), { value: "", textContent: "Select a balance…" }));
+    for (const b of allBalances) {
+      if (!types.includes(b.type)) continue;
+      const opt = document.createElement("option");
+      opt.value = b.uid;
+      opt.textContent = `${b.name} (${b.currency}, ${KIND[b.type] || b.type})`;
+      sel.append(opt);
+    }
+    if (keep && [...sel.options].some((o) => o.value === keep)) sel.value = keep;
+  }
+
+  function currentType() { return $("#type").value || "expense"; }
+
+  // Re-render dropdowns for the selected type, keeping selections when valid.
+  function applyType(keepFrom, keepTo) {
+    const t = currentType();
+    $("#balance-label").textContent = SOURCE_LABEL[t];
+    $("#balance-hint").textContent = SOURCE_HINT[t];
+    fillSelect($("#balance_uid"), SOURCE_TYPES[t], keepFrom ?? $("#balance_uid").value);
+    $("#to-field").hidden = t !== "transfer";
+    fillSelect($("#to_balance_uid"), SOURCE_TYPES.transfer, keepTo ?? $("#to_balance_uid").value);
+  }
+
+  // Name kept for balances.js, which calls it after balance changes.
+  async function loadPayableBalances(selected, selectedTo) {
     try {
-      const res = await fetch("/api/balances?payable=1");
+      const res = await fetch("/api/balances");
       const body = await res.json();
-      if (!res.ok) return;
-      sel.replaceChildren(Object.assign(document.createElement("option"), { value: "", textContent: "Select a balance…" }));
-      for (const b of body.balances || []) {
-        const opt = document.createElement("option");
-        opt.value = b.uid;
-        const kind = b.type === "credit_card" ? "card" : "account";
-        opt.textContent = `${b.name} (${b.currency}, ${kind})`;
-        sel.append(opt);
-      }
-      if (keep && [...sel.options].some((o) => o.value === keep)) sel.value = keep;
-    } catch (_) { /* leave existing options */ }
+      if (res.ok) allBalances = body.balances || [];
+    } catch (_) { /* keep previous list */ }
+    applyType(selected, selectedTo);
   }
 
   function highlightEditingRow() {
@@ -162,21 +172,13 @@
     editing = e;
     $("#amount").value = e.amount;
     $("#currency").value = e.currency;
-    await loadPayableBalances(e.balance_uid);
-    $("#balance_uid").value = e.balance_uid || "";
+    $("#type").value = e.type || "expense";
+    await loadPayableBalances(e.balance_uid, e.to_balance_uid || "");
     $("#note").value = e.note || "";
-    // Show the saved time in its ORIGINAL offset (not converted to browser time).
-    const m = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(Z|[+-]\d{2}:\d{2})$/.exec(e.spent_at);
-    if (m) {
-      spentAtInput.value = m[1];
-      offsetInput.value = m[2];
-    } else {
-      // Should not happen (server always stores this shape); fall back safely.
-      const d = new Date(e.spent_at);
-      spentAtInput.value = isNaN(d) ? "" : toLocalInputValue(d);
-      offsetInput.value = isNaN(d) ? "" : offsetString(d);
-    }
-    offsetAuto = false;
+    // Show the saved instant converted to the device's local time; saving
+    // re-stamps it with the device's current offset.
+    const d = new Date(e.spent_at);
+    spentAtInput.value = isNaN(d) ? "" : toLocalInputValue(d);
 
     $("#form-title").textContent = `Edit transaction #${e.id}`;
     $("#submit-btn").textContent = "Save changes";
@@ -199,7 +201,8 @@
       $("#amount").value = "";
       $("#note").value = "";
       $("#currency").value = "";
-      await loadPayableBalances();
+      $("#type").value = "expense";
+      await loadPayableBalances(undefined, "");
       restoreDefaults();
       setNow();
     }
@@ -219,20 +222,16 @@
     clearErrors();
     setStatus("");
 
-    const offset = offsetInput.value.trim().toUpperCase();
-    if (!OFFSET_RE.test(offset)) {
-      showFieldErrors({ spent_at: "UTC offset must look like +08:00, -05:00 or Z" });
-      setStatus("validation failed", "bad");
-      return;
-    }
-    const wall = wallClock(spentAtInput.value);
+    const type = currentType();
     const payload = {
+      type,
       amount: $("#amount").value.trim(),
       currency: $("#currency").value.trim().toUpperCase(),
       balance_uid: $("#balance_uid").value.trim(),
-      spent_at: wall ? wall + offset : "",
+      spent_at: composedSpentAt() || "",
       note: $("#note").value.trim(),
     };
+    if (type === "transfer") payload.to_balance_uid = $("#to_balance_uid").value.trim();
 
     const isEdit = !!editing;
     const url = isEdit ? `/api/transactions/${editing.id}` : "/api/transactions";
@@ -256,7 +255,7 @@
         await exitEdit(true);
         setStatus(`Updated transaction #${body.id}: ${body.amount} ${body.currency}.`, "ok");
       } else {
-        rememberDefaults(payload.currency, payload.balance_uid);
+        if (type === "expense") rememberDefaults(payload.currency, payload.balance_uid);
         setStatus(`Saved ${body.amount} ${body.currency}.`, "ok");
         $("#amount").value = "";
         $("#note").value = "";
@@ -296,25 +295,32 @@
     return td;
   }
 
-  // Sum amounts per currency exactly using BigInt minor units.
+  function formatMinor(minor, scale) {
+    let s = minor.toString();
+    if (scale > 0) {
+      s = s.padStart(scale + 1, "0");
+      s = s.slice(0, -scale) + "." + s.slice(-scale);
+    }
+    return s;
+  }
+
+  // Per-currency totals of the shown rows, exact via BigInt minor units.
+  // Expenses and income are summed separately; transfers are excluded.
   function renderTotals(items) {
-    const sums = new Map();
+    const sums = new Map(); // currency -> {scale, expense, income}
     for (const e of items) {
+      const t = e.type || "expense";
+      if (t !== "expense" && t !== "income") continue;
       const scale = (e.amount.split(".")[1] || "").length;
-      const cur = sums.get(e.currency) || { minor: 0n, scale };
-      cur.minor += BigInt(e.amount_minor);
+      const cur = sums.get(e.currency) || { scale, expense: 0n, income: 0n };
+      cur[t] += BigInt(e.amount_minor);
       sums.set(e.currency, cur);
     }
     const parts = [];
-    for (const [code, { minor, scale }] of sums) {
-      let s = minor.toString();
-      if (scale > 0) {
-        s = s.padStart(scale + 1, "0");
-        s = s.slice(0, -scale) + "." + s.slice(-scale);
-      }
-      parts.push(`${s} ${code}`);
+    for (const [code, { scale, expense, income }] of sums) {
+      parts.push(`${code}: expenses ${formatMinor(expense, scale)}, income ${formatMinor(income, scale)}`);
     }
-    totalsEl.textContent = parts.length ? "Totals (shown rows): " + parts.join(" · ") : "";
+    totalsEl.textContent = parts.length ? "Totals (shown rows, transfers excluded): " + parts.join(" · ") : "";
   }
 
   function button(text, cls, onClick) {
@@ -340,8 +346,9 @@
       for (const e of body.transactions) {
         const tr = document.createElement("tr");
         tr.dataset.id = String(e.id);
-        const timeTd = cell(e.spent_at.replace("T", " "), "time");
-        timeTd.title = "Stored as " + e.spent_at;
+        const shown = new Date(e.spent_at);
+        const timeTd = cell(isNaN(shown) ? e.spent_at : toLocalInputValue(shown).replace("T", " "), "time");
+        timeTd.title = "Stored as " + e.spent_at + " (shown in your device's time zone)";
         if (e.updated_at) {
           const mark = document.createElement("span");
           mark.className = "edited";
@@ -356,7 +363,9 @@
           txUid.title = "Transaction uid (stable id)";
           timeTd.append(txUid);
         }
-        const acctTd = cell(e.account || "");
+        const t = e.type || "expense";
+        const typeTd = cell(t, "type type-" + t);
+        const acctTd = cell(t === "transfer" ? `${e.account || "?"} → ${e.to_account || "?"}` : (e.account || ""));
         if (e.balance_uid) {
           const uidEl = document.createElement("div");
           uidEl.className = "uid muted";
@@ -364,7 +373,7 @@
           uidEl.title = "balance uid";
           acctTd.append(uidEl);
         }
-        tr.append(timeTd, cell(e.amount, "num"), cell(e.currency), acctTd, cell(e.note || "", "note"));
+        tr.append(timeTd, typeTd, cell(e.amount, "num"), cell(e.currency), acctTd, cell(e.note || "", "note"));
         const actions = document.createElement("td");
         actions.className = "actions-cell";
         actions.append(
@@ -399,12 +408,12 @@
 
   let tzName = "";
   try { tzName = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (_) {}
-  $("#tz-label").textContent = `(your zone: ${tzName ? tzName + ", " : ""}UTC${offsetString(new Date())})`;
+  $("#tz-label").textContent = `(your device's time zone: ${tzName ? tzName + ", " : ""}UTC${offsetString(new Date())})`;
   window.loadPayableBalances = loadPayableBalances;
   loadPayableBalances().then(restoreDefaults);
   setNow();
-  spentAtInput.addEventListener("input", () => { syncAutoOffset(); updatePreview(); });
-  offsetInput.addEventListener("input", () => { offsetAuto = false; updatePreview(); });
+  spentAtInput.addEventListener("input", updatePreview);
+  $("#type").addEventListener("change", () => applyType());
   $("#now-btn").addEventListener("click", setNow);
   $("#cancel-btn").addEventListener("click", cancelEdit);
   document.addEventListener("keydown", (ev) => {

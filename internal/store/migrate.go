@@ -35,6 +35,7 @@ import (
 //	v4  balances.uid TEXT (UUID v4) added, backfilled, unique index idx_balances_uid
 //	v5  transactions.balance_uid added (matched from free-text account where possible)
 //	v6  transactions.uid TEXT (UUID v4) added, backfilled, unique index idx_transactions_uid
+//	v7  transactions.type (expense|income|transfer, default expense), to_balance_uid, to_account
 //
 // A brand-new database is created directly at the latest version from
 // currentSchema. An existing database is upgraded by running the pending
@@ -53,6 +54,9 @@ CREATE TABLE transactions (
     currency      TEXT    NOT NULL CHECK (length(currency) = 3),
     balance_uid   TEXT    NOT NULL CHECK (length(balance_uid) = 36),
     account       TEXT    NOT NULL CHECK (length(account) > 0),
+    type          TEXT    NOT NULL DEFAULT 'expense' CHECK (type IN ('expense', 'income', 'transfer')),
+    to_balance_uid TEXT   CHECK (to_balance_uid IS NULL OR length(to_balance_uid) = 36),
+    to_account    TEXT,
     spent_at      TEXT    NOT NULL,
     spent_at_unix INTEGER NOT NULL,
     note          TEXT    NOT NULL DEFAULT '',
@@ -62,6 +66,7 @@ CREATE TABLE transactions (
 CREATE INDEX idx_transactions_spent_at_unix ON transactions (spent_at_unix DESC, id DESC);
 CREATE INDEX idx_transactions_balance_uid ON transactions (balance_uid);
 CREATE UNIQUE INDEX idx_transactions_uid ON transactions (uid);
+CREATE INDEX idx_transactions_type ON transactions (type, spent_at_unix DESC);
 ` + balancesSchemaCurrent
 
 // balancesSchemaV3 creates the balances table as shipped at version 3
@@ -145,6 +150,8 @@ var migrations = []migration{
 	addTransactionBalanceUID,
 	// v5 -> v6: add transactions.uid (UUID v4), backfill, unique index.
 	addTransactionUID,
+	// v6 -> v7: add transactions.type, to_balance_uid, to_account.
+	addTransactionType,
 }
 
 // SchemaVersion is the user_version a fully migrated database has.
@@ -443,6 +450,28 @@ func addTransactionUID(tx *sql.Tx) error {
 	}
 	if _, err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_uid ON transactions (uid)`); err != nil {
 		return fmt.Errorf("create transactions uid index: %w", err)
+	}
+	return nil
+}
+
+// addTransactionType is migration v6 -> v7. Existing rows become 'expense'
+// via the column default; to_balance_uid / to_account stay NULL. Idempotent.
+func addTransactionType(tx *sql.Tx) error {
+	cols := []struct{ name, decl string }{
+		{"type", "TEXT NOT NULL DEFAULT 'expense' CHECK (type IN ('expense', 'income', 'transfer'))"},
+		{"to_balance_uid", "TEXT CHECK (to_balance_uid IS NULL OR length(to_balance_uid) = 36)"},
+		{"to_account", "TEXT"},
+	}
+	for _, c := range cols {
+		if err := addColumnIfMissing(tx, "transactions", c.name, c.decl); err != nil {
+			return fmt.Errorf("add transactions.%s: %w", c.name, err)
+		}
+	}
+	if _, err := tx.Exec(`UPDATE transactions SET type = 'expense' WHERE type IS NULL OR type = ''`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_transactions_type ON transactions (type, spent_at_unix DESC)`); err != nil {
+		return fmt.Errorf("create type index: %w", err)
 	}
 	return nil
 }

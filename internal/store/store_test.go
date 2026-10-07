@@ -103,7 +103,7 @@ func assertCurrentSchema(t *testing.T, path string) {
 	t.Helper()
 	got := schemaObjects(t, path)
 	want := map[string]string{
-		"transactions": "table", "idx_transactions_spent_at_unix": "index", "idx_transactions_balance_uid": "index", "idx_transactions_uid": "index",
+		"transactions": "table", "idx_transactions_spent_at_unix": "index", "idx_transactions_balance_uid": "index", "idx_transactions_uid": "index", "idx_transactions_type": "index",
 		"balances": "table", "idx_balances_type": "index", "idx_balances_uid": "index",
 	}
 	if len(got) != len(want) {
@@ -114,8 +114,8 @@ func assertCurrentSchema(t *testing.T, path string) {
 			t.Errorf("missing %s %q; have %v", typ, name, got)
 		}
 	}
-	if v := userVersion(t, path); v != 6 || SchemaVersion != 6 {
-		t.Errorf("user_version = %d (SchemaVersion %d), want 6", v, SchemaVersion)
+	if v := userVersion(t, path); v != 7 || SchemaVersion != 7 {
+		t.Errorf("user_version = %d (SchemaVersion %d), want 7", v, SchemaVersion)
 	}
 }
 

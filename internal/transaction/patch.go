@@ -10,19 +10,25 @@ import (
 
 // patchFields lists the fields a PATCH request may change.
 var patchFields = map[string]bool{
-	"amount": true, "currency": true, "balance_uid": true, "spent_at": true, "note": true,
+	"amount": true, "currency": true, "type": true, "balance_uid": true, "to_balance_uid": true, "spent_at": true, "note": true,
 }
 
 // Input returns the editable fields of a stored transaction as a CreateInput, so
 // that a partial update can be applied on top and re-validated as a whole.
 // Account is not editable (it is a denormalized snapshot of the balance name).
 func (e Transaction) Input() CreateInput {
+	to := ""
+	if e.ToBalanceUID != nil {
+		to = *e.ToBalanceUID
+	}
 	return CreateInput{
-		Amount:     DecimalInput(e.Amount),
-		Currency:   e.Currency,
-		BalanceUID: e.BalanceUID,
-		SpentAt:    e.SpentAt,
-		Note:       e.Note,
+		Type:         string(e.Type),
+		ToBalanceUID: to,
+		Amount:       DecimalInput(e.Amount),
+		Currency:     e.Currency,
+		BalanceUID:   e.BalanceUID,
+		SpentAt:      e.SpentAt,
+		Note:         e.Note,
 	}
 }
 
@@ -33,12 +39,12 @@ func (e Transaction) Input() CreateInput {
 // must run Validate on the result.
 func (in *CreateInput) ApplyPatch(patch map[string]json.RawMessage) error {
 	if len(patch) == 0 {
-		return &RequestError{Msg: "patch must contain at least one of: amount, currency, balance_uid, spent_at, note"}
+		return &RequestError{Msg: "patch must contain at least one of: amount, currency, type, balance_uid, to_balance_uid, spent_at, note"}
 	}
 	var unknown []string
 	delete(patch, "uid") // server-assigned and immutable; ignored like balances
 	if len(patch) == 0 {
-		return &RequestError{Msg: "patch must contain at least one of: amount, currency, balance_uid, spent_at, note"}
+		return &RequestError{Msg: "patch must contain at least one of: amount, currency, type, balance_uid, to_balance_uid, spent_at, note"}
 	}
 	for k := range patch {
 		if k == "account" {
@@ -60,7 +66,7 @@ func (in *CreateInput) ApplyPatch(patch map[string]json.RawMessage) error {
 			return nil
 		}
 		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-			if name == "note" {
+			if name == "note" || name == "to_balance_uid" {
 				*dst = ""
 			} else {
 				nullFields[name] = "cannot be null"
@@ -75,7 +81,7 @@ func (in *CreateInput) ApplyPatch(patch map[string]json.RawMessage) error {
 	for _, f := range []struct {
 		name string
 		dst  *string
-	}{{"currency", &in.Currency}, {"balance_uid", &in.BalanceUID}, {"spent_at", &in.SpentAt}, {"note", &in.Note}} {
+	}{{"currency", &in.Currency}, {"type", &in.Type}, {"balance_uid", &in.BalanceUID}, {"to_balance_uid", &in.ToBalanceUID}, {"spent_at", &in.SpentAt}, {"note", &in.Note}} {
 		if err := str(f.name, f.dst); err != nil {
 			return err
 		}
@@ -89,6 +95,15 @@ func (in *CreateInput) ApplyPatch(patch map[string]json.RawMessage) error {
 	}
 	if len(nullFields) > 0 {
 		return &ValidationError{Fields: nullFields}
+	}
+	// Changing type away from transfer drops the destination automatically,
+	// unless the patch also sends to_balance_uid (then Validate rejects it).
+	_, hasType := patch["type"]
+	_, hasTo := patch["to_balance_uid"]
+	if hasType && !hasTo {
+		if t, ok := ParseType(in.Type); ok && t != Transfer {
+			in.ToBalanceUID = ""
+		}
 	}
 	return nil
 }

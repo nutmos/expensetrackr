@@ -31,18 +31,32 @@
             </datalist>
             <small class="err" data-for="currency"></small>
           </label>
-          <label>Payment account
+          <label>Type
+            <select id="type" name="type">
+              <option value="expense">Expense</option>
+              <option value="income">Income</option>
+              <option value="transfer">Transfer</option>
+            </select>
+            <small class="err" data-for="type"></small>
+          </label>
+          <label><span id="balance-label">Payment account</span>
             <select id="balance_uid" name="balance_uid" required>
               <option value="">Select a balance…</option>
             </select>
-            <small class="muted">Payment accounts and credit cards only. <a href="#balances">Manage balances</a></small>
+            <small class="muted"><span id="balance-hint">Payment accounts and credit cards.</span> <a href="#balances">Manage balances</a></small>
             <small class="err" data-for="balance_uid"></small>
           </label>
+          <label id="to-field" hidden>To (destination)
+            <select id="to_balance_uid" name="to_balance_uid">
+              <option value="">Select a balance…</option>
+            </select>
+            <small class="muted">Any balance (e.g. pay a credit card, save to an asset, repay a loan).</small>
+            <small class="err" data-for="to_balance_uid"></small>
+          </label>
           <div class="field">
-            <span class="field-label">Spent at <span class="muted" id="tz-label"></span></span>
+            <span class="field-label">Time <span class="muted" id="tz-label"></span></span>
             <div class="datetime-row">
-              <input id="spent_at" name="spent_at" type="datetime-local" step="1" required aria-label="Spent at (local date and time)">
-              <input id="spent_offset" name="spent_offset" type="text" maxlength="6" placeholder="+08:00" autocomplete="off" aria-label="UTC offset" title="UTC offset, e.g. +08:00, -05:00 or Z">
+              <input id="spent_at" name="spent_at" type="datetime-local" step="1" required aria-label="Time (your device's local date and time)">
             </div>
             <small class="muted" id="spent-at-preview"></small>
             <small class="err" data-for="spent_at"></small>
@@ -76,7 +90,8 @@
         <table id="transaction-table">
           <thead>
             <tr>
-              <th>Spent at</th>
+              <th>Time</th>
+              <th>Type</th>
               <th class="num">Amount</th>
               <th>Currency</th>
               <th>Account</th>

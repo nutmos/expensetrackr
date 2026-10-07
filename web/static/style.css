@@ -36,7 +36,6 @@ td.note { color: var(--muted); max-width: 280px; overflow-wrap: anywhere; }
 .field-label { font-weight: 600; font-size: 0.9rem; }
 .datetime-row { display: flex; gap: 6px; }
 .datetime-row #spent_at { flex: 1; min-width: 0; }
-.datetime-row #spent_offset { width: 5.5em; font-variant-numeric: tabular-nums; }
 .card.editing { border-color: #f59e0b; box-shadow: 0 0 0 2px #fde68a; }
 tr.editing td { background: #fffbeb; }
 td.actions-cell { white-space: nowrap; }
@@ -57,3 +56,5 @@ td.neg { color: var(--err); }
 #b-totals td, #b-totals th { white-space: nowrap; }
 [hidden] { display: none !important; }
 .uid { font-size: 0.72rem; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin-top: 2px; word-break: break-all; }
+.type-income { color: #1a7f37; }
+.type-transfer { color: #555; font-style: italic; }
