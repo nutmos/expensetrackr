@@ -12,6 +12,7 @@
     <nav class="tabs" role="tablist">
       <a href="#transactions" id="tab-transactions" role="tab" class="tab">Transactions</a>
       <a href="#balances" id="tab-balances" role="tab" class="tab">Balances</a>
+      <a href="#categories" id="tab-categories" role="tab" class="tab">Categories</a>
     </nav>
 
     <div id="view-transactions" class="view" role="tabpanel">
@@ -45,6 +46,13 @@
             </select>
             <small class="muted"><span id="balance-hint">Payment accounts and credit cards.</span> <a href="#balances">Manage balances</a></small>
             <small class="err" data-for="balance_uid"></small>
+          </label>
+          <label id="category-field">Category (optional)
+            <select id="category_uid" name="category_uid">
+              <option value="">No category</option>
+            </select>
+            <small class="muted"><a href="#categories">Manage categories</a></small>
+            <small class="err" data-for="category_uid"></small>
           </label>
           <label id="to-field" hidden>To (destination)
             <select id="to_balance_uid" name="to_balance_uid">
@@ -95,6 +103,7 @@
               <th class="num">Amount</th>
               <th>Currency</th>
               <th>Account</th>
+              <th>Category</th>
               <th>Note</th>
               <th></th>
             </tr>
@@ -176,8 +185,45 @@
       </div>
     </section>
     </div>
+
+    <div id="view-categories" class="view" role="tabpanel" hidden>
+    <section class="card">
+      <h2 id="c-form-title">Add a category</h2>
+      <form id="category-form" novalidate>
+        <div class="grid">
+          <label>Name
+            <input id="c-name" name="name" type="text" maxlength="100" placeholder="Food" autocomplete="off" required>
+            <small class="err" data-for="name"></small>
+          </label>
+          <label>Type
+            <select id="c-type" name="type" required>
+              <option value="expense">Expense</option>
+              <option value="income">Income</option>
+            </select>
+            <small class="err" data-for="type"></small>
+          </label>
+        </div>
+        <label>Description (optional)
+          <input id="c-description" name="description" type="text" maxlength="1000" placeholder="Groceries, restaurants">
+          <small class="err" data-for="description"></small>
+        </label>
+        <div class="actions">
+          <button type="submit" id="c-submit-btn">Save category</button>
+          <button type="button" id="c-cancel-btn" class="secondary" hidden>Cancel edit</button>
+          <span id="c-form-status" role="status"></span>
+        </div>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Categories</h2>
+      <p id="c-list-status" class="muted"></p>
+      <div id="c-groups"></div>
+    </section>
+    </div>
   </main>
   <script src="/static/app.js"></script>
+  <script src="/static/categories.js"></script>
   <script src="/static/balances.js"></script>
 </body>
 </html>
