@@ -1,4 +1,4 @@
-package expense
+package transaction
 
 import (
 	"bytes"
@@ -16,7 +16,7 @@ var patchFields = map[string]bool{
 // Input returns the editable fields of a stored expense as a CreateInput, so
 // that a partial update can be applied on top and re-validated as a whole.
 // Account is not editable (it is a denormalized snapshot of the balance name).
-func (e Expense) Input() CreateInput {
+func (e Transaction) Input() CreateInput {
 	return CreateInput{
 		Amount:     DecimalInput(e.Amount),
 		Currency:   e.Currency,

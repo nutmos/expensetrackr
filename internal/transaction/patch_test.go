@@ -1,4 +1,4 @@
-package expense
+package transaction
 
 import (
 	"encoding/json"
@@ -16,7 +16,7 @@ func patchOf(t *testing.T, s string) map[string]json.RawMessage {
 }
 
 func base() CreateInput {
-	return Expense{
+	return Transaction{
 		Amount: "120.50", Currency: "THB", BalanceUID: "11111111-1111-4111-8111-111111111111",
 		Account: "KBank debit", SpentAt: "2026-10-05T09:00:00+07:00", Note: "lunch",
 	}.Input()

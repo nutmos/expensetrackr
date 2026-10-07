@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"expense-service/internal/expense"
 	"expense-service/internal/store"
+	"expense-service/internal/transaction"
 	"expense-service/internal/validate"
 
 	"github.com/gin-gonic/gin"
@@ -113,7 +113,7 @@ func writeInputError(c *gin.Context, err error) {
 // payable type (payment_account or credit_card), and sets e.Account to the
 // balance's current name. Returns a *validate.ValidationError on balance_uid
 // when the balance is missing or not payable.
-func (s *Server) attachPaymentBalance(c *gin.Context, e *expense.Expense) error {
+func (s *Server) attachPaymentBalance(c *gin.Context, e *transaction.Transaction) error {
 	b, err := s.Store.GetBalanceByUID(c.Request.Context(), e.BalanceUID)
 	if errors.Is(err, store.ErrNotFound) {
 		return &validate.ValidationError{Fields: map[string]string{
@@ -127,7 +127,7 @@ func (s *Server) attachPaymentBalance(c *gin.Context, e *expense.Expense) error 
 }
 
 func (s *Server) createExpense(c *gin.Context) {
-	var in expense.CreateInput
+	var in transaction.CreateInput
 	if !decodeBody(c, &in, true) {
 		return
 	}
@@ -155,7 +155,7 @@ func (s *Server) replaceExpense(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var in expense.CreateInput
+	var in transaction.CreateInput
 	if !decodeBody(c, &in, true) {
 		return
 	}
@@ -178,7 +178,7 @@ func (s *Server) replaceExpense(c *gin.Context) {
 		writeInputError(c, err)
 		return
 	}
-	updated, err := s.Store.Update(c.Request.Context(), id, func(expense.Expense) (expense.Expense, error) {
+	updated, err := s.Store.Update(c.Request.Context(), id, func(transaction.Transaction) (transaction.Transaction, error) {
 		return next, nil
 	})
 	if err != nil {
@@ -234,7 +234,7 @@ func (s *Server) patchExpense(c *gin.Context) {
 		writeInputError(c, err)
 		return
 	}
-	updated, err := s.Store.Update(c.Request.Context(), id, func(expense.Expense) (expense.Expense, error) {
+	updated, err := s.Store.Update(c.Request.Context(), id, func(transaction.Transaction) (transaction.Transaction, error) {
 		return next, nil
 	})
 	if err != nil {
@@ -256,7 +256,7 @@ func (s *Server) listExpenses(c *gin.Context) {
 		// An unencoded "+08:00" in a query string decodes to " 08:00"; RFC 3339
 		// never contains spaces, so restore the plus sign.
 		raw = strings.ReplaceAll(raw, " ", "+")
-		t, err := expense.ParseTimestamp(raw)
+		t, err := transaction.ParseTimestamp(raw)
 		if err != nil {
 			fields[name] = err.Error()
 			return nil
