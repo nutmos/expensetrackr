@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"expense-service/internal/expense"
+	"expense-service/internal/money"
 
 	_ "modernc.org/sqlite" // registers the "sqlite" driver
 )
@@ -59,7 +60,7 @@ func (s *Store) Close() error { return s.db.Close() }
 // Create inserts a validated expense as a new row in transactions and fills in
 // ID and CreatedAt.
 func (s *Store) Create(ctx context.Context, e *expense.Expense) error {
-	scale, ok := expense.MinorUnits(e.Currency)
+	scale, ok := money.MinorUnits(e.Currency)
 	if !ok {
 		return fmt.Errorf("unknown currency %q", e.Currency)
 	}
@@ -156,7 +157,7 @@ func (s *Store) Update(ctx context.Context, id int64, fn func(cur expense.Expens
 	if err != nil {
 		return expense.Expense{}, err
 	}
-	scale, ok := expense.MinorUnits(next.Currency)
+	scale, ok := money.MinorUnits(next.Currency)
 	if !ok {
 		return expense.Expense{}, fmt.Errorf("unknown currency %q", next.Currency)
 	}
@@ -205,7 +206,7 @@ func scan(r scanner) (expense.Expense, error) {
 		}
 		return e, fmt.Errorf("scan transaction: %w", err)
 	}
-	e.Amount = expense.FormatAmount(e.AmountMinor, scale)
+	e.Amount = money.FormatAmount(e.AmountMinor, scale)
 	if updated.Valid {
 		e.UpdatedAt = &updated.String
 	}

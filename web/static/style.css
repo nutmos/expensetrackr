@@ -43,3 +43,16 @@ td.actions-cell { white-space: nowrap; }
 td.actions-cell button + button { margin-left: 6px; }
 button.edit { padding: 4px 10px; font-size: 0.85rem; background: #fff; color: var(--accent); }
 .edited { font-size: 0.75rem; color: var(--muted); margin-left: 6px; }
+.tabs { display: flex; gap: 4px; margin: -4px 0 16px; border-bottom: 1px solid var(--border); }
+.tab { padding: 8px 16px; text-decoration: none; color: var(--muted); font-weight: 600; border: 1px solid transparent; border-bottom: none; border-radius: 8px 8px 0 0; margin-bottom: -1px; }
+.tab:hover { color: var(--fg); }
+.tab.active { color: var(--accent); background: #fff; border-color: var(--border); }
+select { font: inherit; font-weight: 400; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
+h3 { margin: 18px 0 6px; font-size: 1rem; }
+.small { font-size: 0.85rem; margin: 0 0 6px; }
+.group-empty { color: var(--muted); margin: 4px 0 8px; font-size: 0.9rem; }
+td.neg { color: var(--err); }
+.badge { display: inline-block; font-size: 0.72rem; font-weight: 600; padding: 1px 6px; border-radius: 999px; margin-left: 6px; vertical-align: middle; }
+.badge.over { background: #fee2e2; color: var(--err); }
+#b-totals td, #b-totals th { white-space: nowrap; }
+[hidden] { display: none !important; }

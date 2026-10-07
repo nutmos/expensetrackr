@@ -7,7 +7,7 @@ import (
 	"log"
 )
 
-// Schema notes (table "transactions"):
+// Schema notes, table "transactions" (one row per expense):
 //   - amount_minor: integer minor units (e.g. 12050 = 120.50 THB). No floats.
 //   - amount_scale: number of decimal places used for amount_minor (ISO 4217
 //     exponent at the time of writing), so each row is self-describing.
@@ -17,11 +17,17 @@ import (
 //     from/to filtering regardless of the offset each row was entered with.
 //   - created_at / updated_at: RFC 3339 UTC; updated_at is NULL until edited.
 //
+// Table "balances" (see balancesSchemaV3): one row per payment account,
+// credit card, other asset or other liability. CHECK constraints enforce the
+// per-type amount columns; name is unique case-insensitively (ASCII folding,
+// SQLite NOCASE).
+//
 // Schema history, tracked in SQLite's PRAGMA user_version:
 //
 //	v0  table "expenses" + index idx_expenses_spent_at_unix (original)
 //	v1  expenses.updated_at TEXT added
 //	v2  table renamed to "transactions", index to idx_transactions_spent_at_unix
+//	v3  table "balances" + index idx_balances_type added
 //
 // A brand-new database is created directly at the latest version from
 // currentSchema. An existing database is upgraded by running the pending
@@ -45,6 +51,39 @@ CREATE TABLE transactions (
     updated_at    TEXT
 );
 CREATE INDEX idx_transactions_spent_at_unix ON transactions (spent_at_unix DESC, id DESC);
+` + balancesSchemaV3
+
+// balancesSchemaV3 creates the balances table (migration v3, also part of
+// currentSchema). It is idempotent. Do not edit it once shipped; add a new
+// migration instead (and stop reusing it in currentSchema).
+//
+//   - type: payment_account | credit_card | other_asset | other_liability
+//   - amount_scale: minor-unit digits of currency for the *_minor columns
+//   - balance_minor: asset types only (required), may be negative (overdraft)
+//   - debt_minor, limit_minor: liability types only (both required), >= 0;
+//     debt may exceed limit (reported as over_limit by the API)
+const balancesSchemaV3 = `
+CREATE TABLE IF NOT EXISTS balances (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT    NOT NULL COLLATE NOCASE UNIQUE CHECK (length(trim(name)) > 0),
+    type          TEXT    NOT NULL CHECK (type IN ('payment_account', 'credit_card', 'other_asset', 'other_liability')),
+    currency      TEXT    NOT NULL CHECK (length(currency) = 3),
+    description   TEXT    NOT NULL DEFAULT '',
+    amount_scale  INTEGER NOT NULL CHECK (amount_scale BETWEEN 0 AND 4),
+    balance_minor INTEGER,
+    debt_minor    INTEGER CHECK (debt_minor >= 0),
+    limit_minor   INTEGER CHECK (limit_minor >= 0),
+    created_at    TEXT    NOT NULL,
+    updated_at    TEXT,
+    CHECK (
+        (type IN ('payment_account', 'other_asset')
+            AND balance_minor IS NOT NULL AND debt_minor IS NULL AND limit_minor IS NULL)
+        OR
+        (type IN ('credit_card', 'other_liability')
+            AND balance_minor IS NULL AND debt_minor IS NOT NULL AND limit_minor IS NOT NULL)
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_balances_type ON balances (type, name);
 `
 
 // migration upgrades the schema by one version inside a SQL transaction.
@@ -58,6 +97,8 @@ var migrations = []migration{
 	func(tx *sql.Tx) error { return addColumnIfMissing(tx, "expenses", "updated_at", "TEXT") },
 	// v1 -> v2: rename table expenses -> transactions and its index.
 	renameExpensesToTransactions,
+	// v2 -> v3: add the balances table.
+	createBalances,
 }
 
 // SchemaVersion is the user_version a fully migrated database has.
@@ -183,6 +224,52 @@ func renameExpensesToTransactions(tx *sql.Tx) error {
 	}
 	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_transactions_spent_at_unix ON transactions (spent_at_unix DESC, id DESC)`); err != nil {
 		return fmt.Errorf("create index: %w", err)
+	}
+	return nil
+}
+
+// createBalances is migration v2 -> v3. CREATE ... IF NOT EXISTS makes it
+// idempotent; it then checks that an already-existing balances table has the
+// expected columns rather than silently accepting a different layout.
+// Transactions are not touched (no foreign keys yet).
+func createBalances(tx *sql.Tx) error {
+	exists, err := objectExists(tx, "table", "balances")
+	if err != nil {
+		return err
+	}
+	if exists {
+		if err := requireColumns(tx, "balances", "id", "name", "type", "currency", "description",
+			"amount_scale", "balance_minor", "debt_minor", "limit_minor", "created_at", "updated_at"); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(balancesSchemaV3); err != nil {
+		return fmt.Errorf("create balances: %w", err)
+	}
+	return nil
+}
+
+func requireColumns(tx *sql.Tx, table string, cols ...string) error {
+	rows, err := tx.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	have := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return err
+		}
+		have[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, c := range cols {
+		if !have[c] {
+			return fmt.Errorf("existing table %q lacks column %q; refusing to continue", table, c)
+		}
 	}
 	return nil
 }
