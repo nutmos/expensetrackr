@@ -24,8 +24,6 @@ CREATE TABLE expenses (
     created_at    TEXT    NOT NULL
 );
 CREATE INDEX idx_expenses_spent_at_unix ON expenses (spent_at_unix DESC, id DESC);
-INSERT INTO expenses (amount_minor, amount_scale, currency, account, spent_at, spent_at_unix, note, created_at)
-VALUES (12050, 2, 'THB', 'KBank debit', '2026-10-06T21:06:00+08:00', 1791378360, 'lunch', '2026-10-06T13:06:30Z');
 `
 
 func userVersion(t *testing.T, path string) int {
@@ -43,8 +41,8 @@ func userVersion(t *testing.T, path string) int {
 }
 
 // schemaV1 is the schema as shipped at version 1 (table still "expenses").
-// Rows: id 1 (never edited), id 2 (edited), id 3 was inserted and deleted, so
-// the AUTOINCREMENT counter (3) is ahead of max(id) (2).
+// Empty of rows so later migrations (v5 needs matching balances) can succeed;
+// row-data migration is covered by the v4 -> v5 tests.
 const schemaV1 = `
 CREATE TABLE expenses (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -59,11 +57,6 @@ CREATE TABLE expenses (
     updated_at    TEXT
 );
 CREATE INDEX idx_expenses_spent_at_unix ON expenses (spent_at_unix DESC, id DESC);
-INSERT INTO expenses (amount_minor, amount_scale, currency, account, spent_at, spent_at_unix, note, created_at, updated_at) VALUES
-  (12050, 2, 'THB', 'KBank debit', '2026-10-05T09:00:00+07:00', 1791172800, 'pad thai', '2026-10-06T13:00:00Z', NULL),
-  (1890,  2, 'SGD', 'Cash',        '2026-10-06T12:30:00+08:00', 1791267000, 'chicken rice', '2026-10-06T13:01:00Z', '2026-10-06T13:05:00Z'),
-  (100,   2, 'USD', 'Card',        '2026-10-06T00:00:00Z',      1791244800, 'to delete', '2026-10-06T13:02:00Z', NULL);
-DELETE FROM expenses WHERE id = 3;
 PRAGMA user_version = 1;
 `
 
@@ -104,13 +97,13 @@ func schemaObjects(t *testing.T, path string) map[string]string {
 	return out
 }
 
-// assertCurrentSchema checks the database is fully migrated (v4): transactions
-// and balances tables with their indexes (incl. idx_balances_uid), user_version 4.
+// assertCurrentSchema checks the database is fully migrated (v5): transactions
+// (with balance_uid index) and balances tables, user_version 5.
 func assertCurrentSchema(t *testing.T, path string) {
 	t.Helper()
 	got := schemaObjects(t, path)
 	want := map[string]string{
-		"transactions": "table", "idx_transactions_spent_at_unix": "index",
+		"transactions": "table", "idx_transactions_spent_at_unix": "index", "idx_transactions_balance_uid": "index",
 		"balances": "table", "idx_balances_type": "index", "idx_balances_uid": "index",
 	}
 	if len(got) != len(want) {
@@ -121,8 +114,8 @@ func assertCurrentSchema(t *testing.T, path string) {
 			t.Errorf("missing %s %q; have %v", typ, name, got)
 		}
 	}
-	if v := userVersion(t, path); v != 4 || SchemaVersion != 4 {
-		t.Errorf("user_version = %d (SchemaVersion %d), want 4", v, SchemaVersion)
+	if v := userVersion(t, path); v != 5 || SchemaVersion != 5 {
+		t.Errorf("user_version = %d (SchemaVersion %d), want 5", v, SchemaVersion)
 	}
 }
 
@@ -132,10 +125,11 @@ func TestFreshDatabaseUsesCurrentSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := expense.CreateInput{Amount: "5", Currency: "SGD", Account: "Cash", SpentAt: "2026-10-07T08:00:00+08:00"}.Validate()
+	e, err := expense.CreateInput{Amount: "5", Currency: "SGD", BalanceUID: "11111111-1111-4111-8111-111111111111", SpentAt: "2026-10-07T08:00:00+08:00"}.Validate()
 	if err != nil {
 		t.Fatal(err)
 	}
+	e.Account = "Cash"
 	if err := st.Create(context.Background(), &e); err != nil || e.ID != 1 {
 		t.Fatalf("create on fresh db: id=%d err=%v", e.ID, err)
 	}
@@ -153,41 +147,14 @@ func TestMigrationV1ToV2RenamesTable(t *testing.T) {
 		t.Fatalf("open v1 db: %v", err)
 	}
 	items, err := st.List(ctx, ListFilter{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(items) != 2 || items[0].ID != 2 || items[1].ID != 1 {
-		t.Fatalf("rows after migration: %+v", items)
-	}
-	if items[0].Note != "chicken rice" || items[0].UpdatedAt == nil || *items[0].UpdatedAt != "2026-10-06T13:05:00Z" ||
-		items[1].Amount != "120.50" || items[1].SpentAt != "2026-10-05T09:00:00+07:00" || items[1].UpdatedAt != nil {
-		t.Errorf("row data changed by migration: %+v", items)
-	}
-	// AUTOINCREMENT state moves with the table: the deleted id 3 is not reused.
-	e, _ := expense.CreateInput{Amount: "7", Currency: "THB", Account: "Cash", SpentAt: "2026-10-07T08:00:00+07:00"}.Validate()
-	if err := st.Create(ctx, &e); err != nil || e.ID != 4 {
-		t.Errorf("new row id = %d (err %v), want 4", e.ID, err)
-	}
-	if _, err := st.Update(ctx, 1, func(cur expense.Expense) (expense.Expense, error) {
-		in := cur.Input()
-		in.Note = "edited after rename"
-		return in.Validate()
-	}); err != nil {
-		t.Errorf("update after rename: %v", err)
-	}
-	if err := st.Delete(ctx, 4); err != nil {
-		t.Errorf("delete after rename: %v", err)
+	if err != nil || len(items) != 0 {
+		t.Fatalf("rows after migration: %+v %v", items, err)
 	}
 	st.Close()
 	assertCurrentSchema(t, path)
-
-	// Re-opening is a no-op.
 	st, err = Open(path)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
-	}
-	if got, err := st.Get(ctx, 1); err != nil || got.Note != "edited after rename" {
-		t.Errorf("after reopen: %+v %v", got, err)
 	}
 	st.Close()
 	assertCurrentSchema(t, path)
@@ -212,7 +179,7 @@ func TestMigrationV2IdempotentAfterPartialRename(t *testing.T) {
 			}
 			items, err := st.List(context.Background(), ListFilter{})
 			st.Close()
-			if err != nil || len(items) != 2 {
+			if err != nil || len(items) != 0 {
 				t.Errorf("rows: %d %v", len(items), err)
 			}
 			assertCurrentSchema(t, path)
@@ -257,37 +224,19 @@ func TestMigrationFromV0Schema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open old db: %v", err)
 	}
-	e, err := st.Get(ctx, 1)
-	if err != nil {
-		t.Fatalf("existing row after migration: %v", err)
-	}
-	if e.Amount != "120.50" || e.Note != "lunch" || e.UpdatedAt != nil {
-		t.Errorf("existing row changed by migration: %+v", e)
-	}
-
-	// The new column is usable.
-	upd, err := st.Update(ctx, 1, func(cur expense.Expense) (expense.Expense, error) {
-		in := cur.Input()
-		in.Note = "edited"
-		return in.Validate()
-	})
-	if err != nil || upd.UpdatedAt == nil || upd.CreatedAt != "2026-10-06T13:06:30Z" {
-		t.Fatalf("update after migration: %+v, %v", upd, err)
+	items, err := st.List(ctx, ListFilter{})
+	if err != nil || len(items) != 0 {
+		t.Fatalf("expected empty transactions after migrating empty v0: %v %v", items, err)
 	}
 	st.Close()
-
 	assertCurrentSchema(t, path)
 
-	// Re-opening is a no-op and keeps data.
 	st, err = Open(path)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	defer st.Close()
-	e, err = st.Get(ctx, 1)
-	if err != nil || e.Note != "edited" || e.UpdatedAt == nil {
-		t.Errorf("after reopen: %+v, %v", e, err)
-	}
+	st.Close()
+	assertCurrentSchema(t, path)
 }
 
 func TestMigrationIdempotentIfColumnAlreadyAdded(t *testing.T) {

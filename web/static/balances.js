@@ -115,6 +115,7 @@
       setStatus(`${isEdit ? "Updated" : "Saved"} “${body.name}”.`, "ok");
       $("#b-name").focus();
       await loadBalances();
+      if (typeof window.loadPayableBalances === "function") window.loadPayableBalances();
     } catch (err) {
       setStatus("Network error: " + err.message, "bad");
     } finally {

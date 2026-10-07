@@ -62,7 +62,8 @@ and JSON still use "expenses" (`/api/expenses`, `{"expenses": [...]}`).
 | amount        | `amount`       | `amount_minor INTEGER` + `amount_scale INTEGER` (see below)             |
 | amount (raw)  | `amount_minor` | the integer itself, e.g. `12050`                                       |
 | currency      | `currency`     | `TEXT`, ISO 4217 alphabetic code, upper-cased (`THB`, `SGD`, `USD`, …)  |
-| payment acct  | `account`      | `TEXT`, free text (`KBank debit`, `Cash`), 1–100 chars                  |
+| payment acct  | `balance_uid`  | `TEXT` UUID of a payable balance (`payment_account` or `credit_card`); no FK |
+| account name  | `account`      | denormalized balance `name` snapshot at write time (read-only in API)   |
 | spend time    | `spent_at`     | `TEXT` RFC 3339 with offset as entered + `spent_at_unix INTEGER`        |
 | note          | `note`         | `TEXT`, optional, up to 1000 chars                                     |
 | created       | `created_at`   | `TEXT` RFC 3339 in UTC (server clock)                                  |
@@ -89,10 +90,11 @@ Every balance also has:
 - a **base `currency`** (ISO 4217)
 - an optional **`description`** (up to 1000 characters)
 
-The name is a short label like "KBank debit". It is meant to match an expense's
-free-text payment `account`, so expenses can be linked to balances later. There
-is **no link yet**: no foreign key, and logging an expense does not change any
-balance.
+The name is a short label like "KBank debit". Expenses identify the payment
+account by the balance's immutable **`uid`** (`balance_uid` on the transaction).
+There is **no SQLite foreign key**: deleting a balance leaves the transaction's
+`balance_uid` and the denormalized `account` name snapshot intact. Logging an
+expense does **not** yet adjust the balance amount (see Open questions).
 
 - Amounts use the same integer minor units + `amount_scale` scheme as expenses.
 - Sending an amount that the type does not use returns 422. Absent, `null` or
@@ -156,6 +158,7 @@ The schema version is tracked in SQLite's `PRAGMA user_version`. The code is in
 | 2       | `ALTER TABLE expenses RENAME TO transactions`, then `DROP INDEX IF EXISTS idx_expenses_spent_at_unix` and `CREATE INDEX IF NOT EXISTS idx_transactions_spent_at_unix ON transactions (spent_at_unix DESC, id DESC)` |
 | 3       | `CREATE TABLE IF NOT EXISTS balances (...)` with per-type CHECK constraints and `name COLLATE NOCASE UNIQUE`, plus `CREATE INDEX IF NOT EXISTS idx_balances_type ON balances (type, name)`. `transactions` is not touched. |
 | 4       | `ALTER TABLE balances ADD COLUMN uid TEXT` (if missing), backfill every empty uid with a new UUID v4, then `CREATE UNIQUE INDEX IF NOT EXISTS idx_balances_uid ON balances (uid)`. `transactions` is not touched. New databases create `uid TEXT NOT NULL UNIQUE` from the start. |
+| 5       | `ALTER TABLE transactions ADD COLUMN balance_uid TEXT` (if missing); match each free-text `account` to a payable balance name (`payment_account` / `credit_card`, case-insensitive) and set `balance_uid`; fail the migration if any row cannot be matched; `CREATE INDEX IF NOT EXISTS idx_transactions_balance_uid ON transactions (balance_uid)`. The `account` column is kept as a denormalized name snapshot. New databases create `balance_uid TEXT NOT NULL` (+ length CHECK) from the start. |
 
 Notes on version 2:
 
@@ -172,6 +175,18 @@ Version 3 is idempotent thanks to `IF NOT EXISTS`. If a `balances` table
 already exists without the expected columns, startup fails and nothing is
 changed. Version 4 is idempotent: existing uids are kept, only empty ones are
 filled, and the unique index is created with `IF NOT EXISTS`.
+
+Version 5 notes:
+
+- Payable types only: `payment_account` and `credit_card`. `other_asset` /
+  `other_liability` cannot be used as a payment account (they are not spendable
+  wallets in this prototype).
+- Matching is by balance `name` (`COLLATE NOCASE`) against the old free-text
+  `account` value. An empty `transactions` table migrates cleanly. If any row
+  cannot be matched, startup fails with a count and nothing is committed —
+  create the missing payable balances (or delete the orphan rows) and restart.
+- No foreign key is added. The `account` column remains as a display snapshot
+  written at create/update time from the balance's current name.
 
 Version 1 checks `pragma_table_info` before adding the column. A database with a
 newer version than the binary supports is refused rather than modified. Each
@@ -195,7 +210,7 @@ only on validation and duplicate-name errors.
 | PATCH  | `/api/expenses/:id`  | 200 + updated expense | Partial update: only the fields you send change, then the merged result is validated like a create. `"note": null` clears the note; `null` for any other field returns 422. Returns 400 for `{}`, unknown fields or wrong JSON types, and 404 if missing |
 | DELETE | `/api/expenses/:id`  | 204 | 404 if missing |
 | POST   | `/api/balances`      | 201 + balance, `Location` header | 422 on validation errors (incl. per-type amount rules), 409 if the name is already used (case-insensitive), 400 on malformed JSON or unknown fields |
-| GET    | `/api/balances`      | 200 `{"balances":[...],"count":n,"totals":[...]}` | Grouped by type (payment accounts, credit cards, other assets, other liabilities), then by name. Optional `type=` filter (400 if invalid). `totals` covers the returned rows, per currency |
+| GET    | `/api/balances`      | 200 `{"balances":[...],"count":n,"totals":[...]}` | Grouped by type, then by name. Optional `type=` filter (400 if invalid). Optional `payable=1` / `payable=true` returns only `payment_account` and `credit_card` (cannot combine with `type=`). `totals` covers the returned rows, per currency |
 | GET    | `/api/balances/:id`  | 200 + balance | `:id` may be the numeric id **or** the UUID `uid` (all-digit paths are treated as numeric ids; anything else as uid). 404 if missing |
 | PUT    | `/api/balances/:id`  | 200 + updated balance | Full replace (id or uid). A type change must include the new type's amounts and leave out the old ones. `uid` in the body is ignored. Returns 404, 409, 422 or 400 as for POST |
 | PATCH  | `/api/balances/:id`  | 200 + updated balance | Partial update (id or uid). When `type` changes, amounts the new type doesn't use are dropped automatically and the new type's amounts must be in the same PATCH. `"description": null` clears it; `"balance"`/`"debt"`/`"limit": null` removes that amount. A currency change re-reads the amounts using the new currency's decimals. `uid` in the body is ignored |
@@ -205,15 +220,31 @@ only on validation and duplicate-name errors.
 
 ### Examples
 
+Create a payable balance first (or use an existing `uid`), then log an expense
+with `balance_uid`. The free-text `account` field is **not** accepted on write
+(unknown field → 400); responses still include `account` as the name snapshot.
+
 ```bash
+BAL_UID=$(curl -s -X POST http://127.0.0.1:8080/api/balances \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"KBank debit","type":"payment_account","currency":"THB","balance":"10000"}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["uid"])')
+
 curl -s -X POST http://127.0.0.1:8080/api/expenses \
   -H 'Content-Type: application/json' \
-  -d '{"amount":"120.50","currency":"THB","account":"KBank debit","spent_at":"2026-10-06T21:06:00+08:00","note":"Lunch"}'
+  -d "{\"amount\":\"120.50\",\"currency\":\"THB\",\"balance_uid\":\"$BAL_UID\",\"spent_at\":\"2026-10-06T21:06:00+08:00\",\"note\":\"Lunch\"}"
 ```
 
 ```json
-{"id":1,"amount":"120.50","amount_minor":12050,"currency":"THB","account":"KBank debit",
+{"id":1,"amount":"120.50","amount_minor":12050,"currency":"THB",
+ "balance_uid":"a1b2c3d4-e5f6-4789-a012-3456789abcde","account":"KBank debit",
  "spent_at":"2026-10-06T21:06:00+08:00","note":"Lunch","created_at":"2026-10-06T13:20:11Z"}
+```
+
+Unknown or non-payable `balance_uid` → HTTP 422 on that field:
+
+```json
+{"error":"validation failed","fields":{"balance_uid":"does not match any balance"}}
 ```
 
 Validation error (HTTP 422):
@@ -229,7 +260,7 @@ Edit: full replace (PUT) and partial update (PATCH). Both keep `id` and
 
 ```bash
 curl -s -X PUT http://127.0.0.1:8080/api/expenses/1 -H 'Content-Type: application/json' \
-  -d '{"amount":"150","currency":"THB","account":"KBank debit","spent_at":"2026-10-05T09:15:00+07:00","note":"pad thai + drink"}'
+  -d "{\"amount\":\"150\",\"currency\":\"THB\",\"balance_uid\":\"$BAL_UID\",\"spent_at\":\"2026-10-05T09:15:00+07:00\",\"note\":\"pad thai + drink\"}"
 # 200 {"id":1,"amount":"150.00","amount_minor":15000,"currency":"THB",...,"updated_at":"2026-10-06T13:18:11Z"}
 
 curl -s -X PATCH http://127.0.0.1:8080/api/expenses/2 -H 'Content-Type: application/json' \
@@ -298,7 +329,7 @@ internal/balance/            balance domain model + per-type validation (no I/O)
 internal/store/              persistence (modernc.org/sqlite)
   store.go                   expenses in table "transactions": Open, Create, List, Get, Update, Delete
   balances.go                table "balances": CreateBalance, ListBalances, GetBalance, UpdateBalance, DeleteBalance
-  migrate.go                 current schema, versioned migrations (v0 -> v1 -> v2 -> v3 -> v4)
+  migrate.go                 current schema, versioned migrations (v0 -> … -> v5)
   store_test.go, balances_test.go   fresh DB, upgrades from v0/v1/v2, partial/ambiguous states
 internal/api/                Gin routes and handlers
   api.go                     expenses routes + shared helpers
@@ -335,6 +366,9 @@ Expenses tab:
 
 - A form to log an expense, and a table listing expenses newest first, with a
   date filter and totals per currency.
+- **Payment account** is a dropdown of payable balances (`payment_account` and
+  `credit_card`, from `GET /api/balances?payable=1`). The form submits
+  `balance_uid` (the UUID). The list shows the denormalized account name.
 - **Edit** loads the expense into the same form: the card is highlighted, the
   heading reads "Edit expense #N", and the button reads "Save changes". Saving
   sends a PUT, and validation errors appear next to each field. **Cancel edit**
@@ -352,11 +386,9 @@ Expenses tab:
   (currently only the last `updated_at` is kept, not what changed).
 - Protection against lost updates if two tabs edit the same expense at once
   (e.g. require `updated_at` to match, or `If-Match`/ETag). Today the last save wins.
-- Whether payment accounts should be a managed list instead of free text.
-  Balances are the natural list. **Follow-up:** link expenses to balances (e.g.
-  `transactions.balance_id` or matching `account` to a balance `name`), let the
-  expense form pick a balance, and decide whether logging an expense should
-  lower the account's balance or raise the card's debt automatically.
+- **Follow-up:** when logging an expense, automatically adjust the linked
+  balance (lower a payment account's balance, or raise a credit card's debt).
+  Not done yet — `balance_uid` is recorded only.
 - Balances: should past balances be kept as dated snapshots? Should totals
   across currencies be shown in one reporting currency? Should
   `other_liability` really require a `limit`?

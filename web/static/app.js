@@ -102,16 +102,35 @@
     statusEl.className = kind || "";
   }
 
-  function rememberDefaults(currency, account) {
-    try { localStorage.setItem(LS_KEY, JSON.stringify({ currency, account })); } catch (_) {}
+  function rememberDefaults(currency, balanceUID) {
+    try { localStorage.setItem(LS_KEY, JSON.stringify({ currency, balance_uid: balanceUID })); } catch (_) {}
   }
 
   function restoreDefaults() {
     try {
       const v = JSON.parse(localStorage.getItem(LS_KEY) || "{}");
       if (v.currency) $("#currency").value = v.currency;
-      if (v.account) $("#account").value = v.account;
+      if (v.balance_uid) $("#balance_uid").value = v.balance_uid;
     } catch (_) {}
+  }
+
+  async function loadPayableBalances(selected) {
+    const sel = $("#balance_uid");
+    const keep = selected || sel.value;
+    try {
+      const res = await fetch("/api/balances?payable=1");
+      const body = await res.json();
+      if (!res.ok) return;
+      sel.replaceChildren(Object.assign(document.createElement("option"), { value: "", textContent: "Select a balance…" }));
+      for (const b of body.balances || []) {
+        const opt = document.createElement("option");
+        opt.value = b.uid;
+        const kind = b.type === "credit_card" ? "card" : "account";
+        opt.textContent = `${b.name} (${b.currency}, ${kind})`;
+        sel.append(opt);
+      }
+      if (keep && [...sel.options].some((o) => o.value === keep)) sel.value = keep;
+    } catch (_) { /* leave existing options */ }
   }
 
   function highlightEditingRow() {
@@ -143,7 +162,8 @@
     editing = e;
     $("#amount").value = e.amount;
     $("#currency").value = e.currency;
-    $("#account").value = e.account;
+    await loadPayableBalances(e.balance_uid);
+    $("#balance_uid").value = e.balance_uid || "";
     $("#note").value = e.note || "";
     // Show the saved time in its ORIGINAL offset (not converted to browser time).
     const m = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(Z|[+-]\d{2}:\d{2})$/.exec(e.spent_at);
@@ -168,7 +188,7 @@
     $("#amount").focus();
   }
 
-  function exitEdit(resetFields) {
+  async function exitEdit(resetFields) {
     editing = null;
     $("#form-title").textContent = "Log an expense";
     $("#submit-btn").textContent = "Save expense";
@@ -179,16 +199,16 @@
       $("#amount").value = "";
       $("#note").value = "";
       $("#currency").value = "";
-      $("#account").value = "";
+      await loadPayableBalances();
       restoreDefaults();
       setNow();
     }
     highlightEditingRow();
   }
 
-  function cancelEdit() {
+  async function cancelEdit() {
     if (!editing) return;
-    exitEdit(true);
+    await exitEdit(true);
     setStatus("Edit cancelled.");
   }
 
@@ -209,7 +229,7 @@
     const payload = {
       amount: $("#amount").value.trim(),
       currency: $("#currency").value.trim().toUpperCase(),
-      account: $("#account").value.trim(),
+      balance_uid: $("#balance_uid").value.trim(),
       spent_at: wall ? wall + offset : "",
       note: $("#note").value.trim(),
     };
@@ -233,10 +253,10 @@
         return;
       }
       if (isEdit) {
-        exitEdit(true);
+        await exitEdit(true);
         setStatus(`Updated expense #${body.id}: ${body.amount} ${body.currency}.`, "ok");
       } else {
-        rememberDefaults(payload.currency, payload.account);
+        rememberDefaults(payload.currency, payload.balance_uid);
         setStatus(`Saved ${body.amount} ${body.currency}.`, "ok");
         $("#amount").value = "";
         $("#note").value = "";
@@ -317,9 +337,7 @@
         return;
       }
       tbody.replaceChildren();
-      const accounts = new Set();
       for (const e of body.expenses) {
-        accounts.add(e.account);
         const tr = document.createElement("tr");
         tr.dataset.id = String(e.id);
         const timeTd = cell(e.spent_at.replace("T", " "), "time");
@@ -331,7 +349,15 @@
           mark.title = "Last edited " + new Date(e.updated_at).toLocaleString() + " (" + e.updated_at + ")";
           timeTd.append(mark);
         }
-        tr.append(timeTd, cell(e.amount, "num"), cell(e.currency), cell(e.account), cell(e.note || "", "note"));
+        const acctTd = cell(e.account || "");
+        if (e.balance_uid) {
+          const uidEl = document.createElement("div");
+          uidEl.className = "uid muted";
+          uidEl.textContent = e.balance_uid;
+          uidEl.title = "balance uid";
+          acctTd.append(uidEl);
+        }
+        tr.append(timeTd, cell(e.amount, "num"), cell(e.currency), acctTd, cell(e.note || "", "note"));
         const actions = document.createElement("td");
         actions.className = "actions-cell";
         actions.append(
@@ -341,8 +367,6 @@
         tr.append(actions);
         tbody.append(tr);
       }
-      const dl = $("#account-list");
-      dl.replaceChildren(...[...accounts].sort().map((a) => Object.assign(document.createElement("option"), { value: a })));
       listStatus.textContent = body.count === 0 ? "No expenses yet." : `${body.count} expense(s), newest first.`;
       renderTotals(body.expenses);
       highlightEditingRow();
@@ -352,13 +376,13 @@
   }
 
   async function deleteExpense(e) {
-    if (!confirm(`Delete ${e.amount} ${e.currency} (${e.account}) at ${e.spent_at}?`)) return;
+    if (!confirm(`Delete ${e.amount} ${e.currency} (${e.account || e.balance_uid}) at ${e.spent_at}?`)) return;
     const res = await fetch(`/api/expenses/${e.id}`, { method: "DELETE" });
     if (!res.ok && res.status !== 404) {
       alert("Delete failed (" + res.status + ")");
     }
     if (editing && editing.id === e.id) {
-      exitEdit(true);
+      await exitEdit(true);
       setStatus("The expense you were editing was deleted.");
     }
     await loadExpenses();
@@ -369,7 +393,8 @@
   let tzName = "";
   try { tzName = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (_) {}
   $("#tz-label").textContent = `(your zone: ${tzName ? tzName + ", " : ""}UTC${offsetString(new Date())})`;
-  restoreDefaults();
+  window.loadPayableBalances = loadPayableBalances;
+  loadPayableBalances().then(restoreDefaults);
   setNow();
   spentAtInput.addEventListener("input", () => { syncAutoOffset(); updatePreview(); });
   offsetInput.addEventListener("input", () => { offsetAuto = false; updatePreview(); });

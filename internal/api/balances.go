@@ -102,6 +102,12 @@ func (s *Server) createBalance(c *gin.Context) {
 
 func (s *Server) listBalances(c *gin.Context) {
 	typ := balance.Type(strings.ToLower(strings.TrimSpace(c.Query("type"))))
+	payableOnly := strings.EqualFold(c.Query("payable"), "1") || strings.EqualFold(c.Query("payable"), "true")
+	if typ != "" && payableOnly {
+		c.JSON(http.StatusBadRequest, errorBody{Error: "invalid query parameters",
+			Fields: map[string]string{"payable": "cannot be combined with type"}})
+		return
+	}
 	if typ != "" && !typ.Valid() {
 		names := make([]string, len(balance.Types))
 		for i, t := range balance.Types {
@@ -111,7 +117,15 @@ func (s *Server) listBalances(c *gin.Context) {
 			Fields: map[string]string{"type": "must be one of " + strings.Join(names, ", ")}})
 		return
 	}
-	items, err := s.Store.ListBalances(c.Request.Context(), typ)
+	var (
+		items []balance.Balance
+		err   error
+	)
+	if payableOnly {
+		items, err = s.Store.ListPayableBalances(c.Request.Context())
+	} else {
+		items, err = s.Store.ListBalances(c.Request.Context(), typ)
+	}
 	if err != nil {
 		internalError(c, err)
 		return

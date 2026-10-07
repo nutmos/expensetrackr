@@ -106,6 +106,22 @@ func (s *Store) ListBalances(ctx context.Context, typ balance.Type) ([]balance.B
 	return out, rows.Err()
 }
 
+// ListPayableBalances returns balances that can be used as a payment account
+// on a transaction (payment_account and credit_card), ordered like ListBalances.
+func (s *Store) ListPayableBalances(ctx context.Context) ([]balance.Balance, error) {
+	all, err := s.ListBalances(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]balance.Balance, 0, len(all))
+	for _, b := range all {
+		if b.Type == balance.PaymentAccount || b.Type == balance.CreditCard {
+			out = append(out, b)
+		}
+	}
+	return out, nil
+}
+
 // GetBalance returns one balance by numeric id or ErrNotFound.
 func (s *Store) GetBalance(ctx context.Context, id int64) (balance.Balance, error) {
 	b, err := scanBalance(s.db.QueryRowContext(ctx, `SELECT `+balanceCols+` FROM balances WHERE id = ?`, id))
