@@ -1,4 +1,4 @@
-package expense
+package money
 
 // currencyMinorUnits maps active ISO 4217 alphabetic codes to their number of
 // minor-unit digits (the "exponent"). Most currencies use 2; the exceptions are

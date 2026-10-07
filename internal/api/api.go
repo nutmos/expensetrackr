@@ -15,6 +15,7 @@ import (
 
 	"expense-service/internal/expense"
 	"expense-service/internal/store"
+	"expense-service/internal/validate"
 
 	"github.com/gin-gonic/gin"
 )
@@ -93,8 +94,8 @@ func decodeBody(c *gin.Context, dst any, disallowUnknown bool) bool {
 
 // writeInputError maps validation/request errors to 422/400, anything else to 500.
 func writeInputError(c *gin.Context, err error) {
-	var ve *expense.ValidationError
-	var re *expense.RequestError
+	var ve *validate.ValidationError
+	var re *validate.RequestError
 	switch {
 	case errors.As(err, &ve):
 		c.JSON(http.StatusUnprocessableEntity, errorBody{Error: "validation failed", Fields: ve.Fields})
@@ -179,7 +180,7 @@ func (s *Server) patchExpense(c *gin.Context) {
 			return expense.Expense{}, err
 		}
 		next, err := in.Validate()
-		var ve *expense.ValidationError
+		var ve *validate.ValidationError
 		_, hasCur := patch["currency"]
 		_, hasAmt := patch["amount"]
 		if hasCur && !hasAmt && errors.As(err, &ve) && ve.Fields["amount"] != "" {

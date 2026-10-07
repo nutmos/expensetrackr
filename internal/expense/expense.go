@@ -2,13 +2,14 @@
 package expense
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"expense-service/internal/money"
+	"expense-service/internal/validate"
 )
 
 const (
@@ -30,28 +31,14 @@ type Expense struct {
 	SpentTime   time.Time `json:"-"`
 }
 
-// DecimalInput accepts either a JSON string ("120.50") or a JSON number
-// (120.50) and keeps the exact literal text, so no float parsing ever happens.
-type DecimalInput string
+// DecimalInput keeps the literal text of a JSON string or number amount.
+type DecimalInput = money.DecimalInput
 
-func (d *DecimalInput) UnmarshalJSON(b []byte) error {
-	b = bytes.TrimSpace(b)
-	if len(b) > 0 && b[0] == '"' {
-		var s string
-		if err := json.Unmarshal(b, &s); err != nil {
-			return err
-		}
-		*d = DecimalInput(s)
-		return nil
-	}
-	if bytes.Equal(b, []byte("null")) {
-		*d = ""
-		return nil
-	}
-	// Raw number literal: keep the text verbatim; ParseAmount validates it.
-	*d = DecimalInput(b)
-	return nil
-}
+// ValidationError and RequestError are shared with other domain packages.
+type (
+	ValidationError = validate.ValidationError
+	RequestError    = validate.RequestError
+)
 
 // CreateInput is the payload accepted by POST /api/expenses and
 // PUT /api/expenses/:id (full replace).
@@ -61,19 +48,6 @@ type CreateInput struct {
 	Account  string       `json:"account"`
 	SpentAt  string       `json:"spent_at"`
 	Note     string       `json:"note"`
-}
-
-// ValidationError maps field names to human-readable problems.
-type ValidationError struct {
-	Fields map[string]string `json:"fields"`
-}
-
-func (e *ValidationError) Error() string {
-	parts := make([]string, 0, len(e.Fields))
-	for k, v := range e.Fields {
-		parts = append(parts, k+" "+v)
-	}
-	return "validation failed: " + strings.Join(parts, "; ")
 }
 
 // ParseTimestamp parses a strict RFC 3339 / ISO 8601 date-time that carries an
@@ -97,7 +71,7 @@ func (in CreateInput) Validate() (Expense, error) {
 	var exp Expense
 
 	cur := strings.ToUpper(strings.TrimSpace(in.Currency))
-	exponent, known := MinorUnits(cur)
+	exponent, known := money.MinorUnits(cur)
 	switch {
 	case cur == "":
 		fields["currency"] = "is required"
@@ -107,12 +81,12 @@ func (in CreateInput) Validate() (Expense, error) {
 	exp.Currency = cur
 
 	if known {
-		minor, err := ParseAmount(string(in.Amount), exponent)
+		minor, err := money.ParseAmount(string(in.Amount), exponent)
 		if err != nil {
 			fields["amount"] = err.Error()
 		} else {
 			exp.AmountMinor = minor
-			exp.Amount = FormatAmount(minor, exponent)
+			exp.Amount = money.FormatAmount(minor, exponent)
 		}
 	} else if strings.TrimSpace(string(in.Amount)) == "" {
 		fields["amount"] = "is required"

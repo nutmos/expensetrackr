@@ -11,13 +11,6 @@ import (
 // patchFields lists the fields a PATCH request may change.
 var patchFields = map[string]bool{"amount": true, "currency": true, "account": true, "spent_at": true, "note": true}
 
-// RequestError is a client error in the shape of the request itself (unknown
-// field, wrong JSON type, empty patch). It maps to HTTP 400, whereas a
-// *ValidationError (bad field values) maps to 422.
-type RequestError struct{ Msg string }
-
-func (e *RequestError) Error() string { return e.Msg }
-
 // Input returns the editable fields of a stored expense as a CreateInput, so
 // that a partial update can be applied on top and re-validated as a whole.
 func (e Expense) Input() CreateInput {
