@@ -36,6 +36,8 @@ import (
 //	v5  transactions.balance_uid added (matched from free-text account where possible)
 //	v6  transactions.uid TEXT (UUID v4) added, backfilled, unique index idx_transactions_uid
 //	v7  transactions.type (expense|income|transfer, default expense), to_balance_uid, to_account
+//	v8  table "categories"; transactions.category_uid
+//	v9  drop transactions.category (name snapshot from a pre-release v8) if present
 //
 // A brand-new database is created directly at the latest version from
 // currentSchema. An existing database is upgraded by running the pending
@@ -57,6 +59,7 @@ CREATE TABLE transactions (
     type          TEXT    NOT NULL DEFAULT 'expense' CHECK (type IN ('expense', 'income', 'transfer')),
     to_balance_uid TEXT   CHECK (to_balance_uid IS NULL OR length(to_balance_uid) = 36),
     to_account    TEXT,
+    category_uid  TEXT    CHECK (category_uid IS NULL OR length(category_uid) = 36),
     spent_at      TEXT    NOT NULL,
     spent_at_unix INTEGER NOT NULL,
     note          TEXT    NOT NULL DEFAULT '',
@@ -67,7 +70,8 @@ CREATE INDEX idx_transactions_spent_at_unix ON transactions (spent_at_unix DESC,
 CREATE INDEX idx_transactions_balance_uid ON transactions (balance_uid);
 CREATE UNIQUE INDEX idx_transactions_uid ON transactions (uid);
 CREATE INDEX idx_transactions_type ON transactions (type, spent_at_unix DESC);
-` + balancesSchemaCurrent
+CREATE INDEX idx_transactions_category_uid ON transactions (category_uid);
+` + balancesSchemaCurrent + categoriesSchema
 
 // balancesSchemaV3 creates the balances table as shipped at version 3
 // (no uid yet). Used only by migration v2 -> v3. Do not edit once shipped.
@@ -93,6 +97,24 @@ CREATE TABLE IF NOT EXISTS balances (
     )
 );
 CREATE INDEX IF NOT EXISTS idx_balances_type ON balances (type, name);
+`
+
+// categoriesSchema creates the categories table (v8+). Used both for brand-new
+// databases and by migration v7 -> v8 (IF NOT EXISTS makes it idempotent).
+//   - uid: server-assigned UUID v4, immutable, unique
+//   - name: unique case-insensitively (ASCII NOCASE) within the same type
+//   - type: expense | income
+const categoriesSchema = `
+CREATE TABLE IF NOT EXISTS categories (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    uid         TEXT    NOT NULL UNIQUE CHECK (length(uid) = 36),
+    name        TEXT    NOT NULL CHECK (length(trim(name)) > 0),
+    type        TEXT    NOT NULL CHECK (type IN ('expense', 'income')),
+    description TEXT    NOT NULL DEFAULT '',
+    created_at  TEXT    NOT NULL,
+    updated_at  TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_type_name ON categories (type, name COLLATE NOCASE);
 `
 
 // balancesSchemaCurrent is the full balances schema for brand-new databases
@@ -152,6 +174,11 @@ var migrations = []migration{
 	addTransactionUID,
 	// v6 -> v7: add transactions.type, to_balance_uid, to_account.
 	addTransactionType,
+	// v7 -> v8: add categories table and transactions.category_uid / category.
+	addCategories,
+	// v8 -> v9: drop the transactions.category name snapshot if a pre-release
+	// build of v8 created it. No-op otherwise.
+	dropTransactionCategoryName,
 }
 
 // SchemaVersion is the user_version a fully migrated database has.
@@ -474,6 +501,47 @@ func addTransactionType(tx *sql.Tx) error {
 		return fmt.Errorf("create type index: %w", err)
 	}
 	return nil
+}
+
+// addCategories is migration v7 -> v8: creates the categories table and its
+// unique (type, name NOCASE) index, then adds nullable transactions.category_uid
+// (the only link to a category; no name snapshot) plus an index. Existing transactions get no
+// category. Idempotent.
+func addCategories(tx *sql.Tx) error {
+	if _, err := tx.Exec(categoriesSchema); err != nil {
+		return fmt.Errorf("create categories: %w", err)
+	}
+	if err := addColumnIfMissing(tx, "transactions", "category_uid", "TEXT CHECK (category_uid IS NULL OR length(category_uid) = 36)"); err != nil {
+		return fmt.Errorf("add transactions.category_uid: %w", err)
+	}
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_transactions_category_uid ON transactions (category_uid)`); err != nil {
+		return fmt.Errorf("create category index: %w", err)
+	}
+	return nil
+}
+
+// dropTransactionCategoryName is migration v8 -> v9. An early build of v8
+// stored a denormalized category name in transactions.category; transactions
+// now link to categories only by category_uid, so the column is dropped if it
+// exists (SQLite >= 3.35 ALTER TABLE DROP COLUMN). Idempotent.
+func dropTransactionCategoryName(tx *sql.Tx) error {
+	has, err := columnExists(tx, "transactions", "category")
+	if err != nil {
+		return err
+	}
+	if !has {
+		return nil
+	}
+	if _, err := tx.Exec(`ALTER TABLE transactions DROP COLUMN category`); err != nil {
+		return fmt.Errorf("drop transactions.category: %w", err)
+	}
+	return nil
+}
+
+func columnExists(tx *sql.Tx, table, column string) (bool, error) {
+	var n int
+	err := tx.QueryRow(`SELECT count(*) FROM pragma_table_info(?) WHERE name = ?`, table, column).Scan(&n)
+	return n > 0, err
 }
 
 // addColumnIfMissing makes column additions idempotent, so a migration is safe

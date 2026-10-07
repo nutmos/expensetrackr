@@ -58,3 +58,5 @@ td.neg { color: var(--err); }
 .uid { font-size: 0.72rem; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin-top: 2px; word-break: break-all; }
 .type-income { color: #1a7f37; }
 .type-transfer { color: #555; font-style: italic; }
+#b-form-status.ok, #c-form-status.ok { color: #15803d; }
+#b-form-status.bad, #c-form-status.bad { color: var(--err); }

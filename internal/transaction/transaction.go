@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"expense-service/internal/balance"
+	"expense-service/internal/category"
 	"expense-service/internal/money"
 	"expense-service/internal/validate"
 )
@@ -30,6 +31,7 @@ type Transaction struct {
 	Account      string    `json:"account"`        // denormalized balance name at write time
 	ToBalanceUID *string   `json:"to_balance_uid"` // transfer destination; null otherwise
 	ToAccount    *string   `json:"to_account"`     // denormalized destination name; null otherwise
+	CategoryUID  *string   `json:"category_uid"`   // optional link to categories.uid; null for none / transfers
 	SpentAt      string    `json:"spent_at"`       // RFC 3339 with the offset as entered
 	Note         string    `json:"note"`
 	CreatedAt    string    `json:"created_at"` // RFC 3339, UTC
@@ -56,6 +58,7 @@ type CreateInput struct {
 	Type         string       `json:"type"` // optional on create/PUT; defaults to "expense"
 	BalanceUID   string       `json:"balance_uid"`
 	ToBalanceUID string       `json:"to_balance_uid"` // transfer only
+	CategoryUID  string       `json:"category_uid"`   // optional; expense/income only
 	SpentAt      string       `json:"spent_at"`
 	Note         string       `json:"note"`
 
@@ -213,6 +216,17 @@ func (in CreateInput) Validate() (Transaction, error) {
 		exp.ToBalanceUID = &to
 	}
 
+	cat := strings.ToLower(strings.TrimSpace(in.CategoryUID))
+	switch {
+	case cat == "":
+	case okType && tt == Transfer:
+		fields["category_uid"] = "is not allowed for a transfer"
+	case !looksLikeUID(cat):
+		fields["category_uid"] = "must be a UUID (the uid of a category)"
+	default:
+		exp.CategoryUID = &cat
+	}
+
 	if t, err := ParseTimestamp(in.SpentAt); err != nil {
 		fields["spent_at"] = err.Error()
 	} else {
@@ -267,5 +281,23 @@ func (e *Transaction) AttachDestinationBalance(b balance.Balance) error {
 	}
 	uid, name := b.UID, b.Name
 	e.ToBalanceUID, e.ToAccount = &uid, &name
+	return nil
+}
+
+// AttachCategory checks that c is the referenced category and matches the
+// transaction type (expense categories for expenses, income categories for
+// income). Only the uid is stored on the transaction; the name is looked up
+// from the categories table (or GET /api/categories) when needed.
+func (e *Transaction) AttachCategory(c category.Category) error {
+	if e.CategoryUID == nil || c.UID == "" || !strings.EqualFold(*e.CategoryUID, c.UID) {
+		return &ValidationError{Fields: map[string]string{"category_uid": "does not match any category"}}
+	}
+	if string(c.Type) != string(e.Type) {
+		return &ValidationError{Fields: map[string]string{
+			"category_uid": fmt.Sprintf("must be an %s category (this one is %s)", e.Type, c.Type),
+		}}
+	}
+	uid := c.UID
+	e.CategoryUID = &uid
 	return nil
 }

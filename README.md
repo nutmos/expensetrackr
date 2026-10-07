@@ -68,6 +68,7 @@ uses `/api/transactions` and the list key `transactions` (the old
 | payment acct  | `balance_uid`  | `TEXT` UUID of the balance paid from (expense), received into (income) or moved from (transfer); no FK |
 | destination   | `to_balance_uid` | `TEXT`, transfers only (else `null`); UUID of the destination balance; no FK |
 | dest. name    | `to_account`   | denormalized destination name snapshot (transfers only, else `null`)    |
+| category      | `category_uid` | `TEXT`, optional (`null` = none); UUID of a category of the same type; never set for transfers; no FK. **The only link to the category**: no name is stored on the transaction |
 | account name  | `account`      | denormalized balance `name` snapshot at write time (read-only in API)   |
 | spend time    | `spent_at`     | `TEXT` RFC 3339 with offset as entered + `spent_at_unix INTEGER`        |
 | note          | `note`         | `TEXT`, optional, up to 1000 chars                                     |
@@ -110,6 +111,32 @@ transaction does **not** yet adjust the balance amount (see Open questions).
 - A CHECK constraint enforces the per-type columns in the database too.
 - Uniqueness uses SQLite `NOCASE`, which ignores case for ASCII letters only.
   Thai names have no case, so this is enough.
+
+### Categories (table `categories`)
+
+A **category** classifies expenses and income. Fields: server-assigned
+immutable `uid` (UUID v4), `name` (required, ≤ 100 chars), `type`
+(`expense` or `income`), optional `description` (≤ 1000), `created_at`,
+`updated_at`. Names are unique **case-insensitively within a type**
+(`Food` as expense and `food` as income may coexist); a duplicate is 409.
+
+Rules linking transactions and categories:
+
+- `category_uid` is optional on expense and income transactions. An expense
+  must use an `expense` category and income an `income` category (422 on
+  `category_uid` otherwise, also for unknown or malformed uids). A transfer
+  must not have a category (422).
+- The transaction stores **only `category_uid`** (no name copy, unlike
+  `account`). Clients look the name up from `GET /api/categories` (the web
+  page does this), so renaming a category is reflected everywhere at once.
+- **Deleting** a category that any transaction references is rejected with
+  **409**; clear or change `category_uid` on those transactions first.
+- **Changing a category's type** is rejected with **409** while any
+  transaction references it (those transactions would no longer match); an
+  unreferenced category may change type freely. Renaming is always allowed.
+- PATCH on a transaction that changes `type` without sending `category_uid`
+  drops the category (it belonged to the old type); `"category_uid": null`
+  clears it; a PUT without `category_uid` clears it.
 
 ### Transaction types
 
@@ -192,6 +219,8 @@ The schema version is tracked in SQLite's `PRAGMA user_version`. The code is in
 | 5       | `ALTER TABLE transactions ADD COLUMN balance_uid TEXT` (if missing); match each free-text `account` to a payable balance name (`payment_account` / `credit_card`, case-insensitive) and set `balance_uid`; fail the migration if any row cannot be matched; `CREATE INDEX IF NOT EXISTS idx_transactions_balance_uid ON transactions (balance_uid)`. The `account` column is kept as a denormalized name snapshot. New databases create `balance_uid TEXT NOT NULL` (+ length CHECK) from the start. |
 | 6       | `ALTER TABLE transactions ADD COLUMN uid TEXT` (if missing), backfill every empty uid with a new UUID v4, then `CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_uid ON transactions (uid)`. Same style as v4; idempotent (existing uids kept). New databases create `uid TEXT NOT NULL UNIQUE` from the start. |
 | 7       | `ALTER TABLE transactions ADD COLUMN type TEXT NOT NULL DEFAULT 'expense' CHECK (type IN ('expense','income','transfer'))` (existing rows become `expense`), `ADD COLUMN to_balance_uid TEXT` and `ADD COLUMN to_account TEXT` (each only if missing), then `CREATE INDEX IF NOT EXISTS idx_transactions_type ON transactions (type, spent_at_unix DESC)`. One SQL transaction, idempotent. |
+| 8       | `CREATE TABLE IF NOT EXISTS categories (...)` + `CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_type_name ON categories (type, name COLLATE NOCASE)`, then `ALTER TABLE transactions ADD COLUMN category_uid TEXT` (only if missing; existing rows get no category) and `CREATE INDEX IF NOT EXISTS idx_transactions_category_uid ON transactions (category_uid)`. One SQL transaction, idempotent. |
+| 9       | Drop `transactions.category` if present (`ALTER TABLE transactions DROP COLUMN category`, SQLite ≥ 3.35). Only databases created by a pre-release build of v8, which stored a category name copy, have it; otherwise a no-op. One SQL transaction, idempotent. |
 
 Notes on version 2:
 
@@ -241,7 +270,7 @@ only on validation and duplicate-name errors.
 | Method | Path                 | Success | Notes |
 |--------|----------------------|---------|-------|
 | POST   | `/api/transactions`      | 201 + transaction, `Location` header | 422 on validation errors, 400 on malformed JSON or unknown fields |
-| GET    | `/api/transactions`      | 200 `{"transactions":[...],"count":n}` | Newest first by spend time. Optional `from`, `to` (RFC 3339 with offset, both inclusive), `limit` (1–5000, default 500), `type` (`expense`/`income`/`transfer`; 400 if invalid) |
+| GET    | `/api/transactions`      | 200 `{"transactions":[...],"count":n}` | Newest first by spend time. Optional `from`, `to` (RFC 3339 with offset, both inclusive), `limit` (1–5000, default 500), `type` (`expense`/`income`/`transfer`; 400 if invalid), `category_uid` (UUID; 400 if malformed) |
 | GET    | `/api/transactions/:uid`  | 200 + transaction | `:uid` is the transaction UUID (case-insensitive). **400** if it is not UUID-shaped (including numeric ids such as `/api/transactions/1`), **404** if no such uid. Same for PUT/PATCH/DELETE |
 | PUT    | `/api/transactions/:uid`  | 200 + updated transaction | Full replace with the same body and rules as POST. An omitted `note` clears it. 404 if missing, 422 for invalid values, 400 for malformed JSON or unknown fields |
 | PATCH  | `/api/transactions/:uid`  | 200 + updated transaction | Partial update: only the fields you send change, then the merged result is validated like a create. `"note": null` clears the note; `null` for any other field returns 422. Returns 400 for `{}`, unknown fields or wrong JSON types, and 404 if missing |
@@ -252,10 +281,33 @@ only on validation and duplicate-name errors.
 | PUT    | `/api/balances/:uid`  | 200 + updated balance | Full replace. A type change must include the new type's amounts and leave out the old ones. `uid` in the body is ignored. Returns 404, 409, 422 or 400 as for POST |
 | PATCH  | `/api/balances/:uid`  | 200 + updated balance | Partial update. When `type` changes, amounts the new type doesn't use are dropped automatically and the new type's amounts must be in the same PATCH. `"description": null` clears it; `"balance"`/`"debt"`/`"limit": null` removes that amount. A currency change re-reads the amounts using the new currency's decimals. `uid` in the body is ignored |
 | DELETE | `/api/balances/:uid`  | 204 | 404 if missing |
+| POST   | `/api/categories`      | 201 + category, `Location: /api/categories/<uid>` | 422 on validation errors, 409 duplicate name within the type, 400 malformed JSON / unknown fields |
+| GET    | `/api/categories`      | 200 `{"categories":[...],"count":n}` | Expense first, then income, by name. Optional `type=expense\|income` (400 if invalid) |
+| GET    | `/api/categories/:uid` | 200 + category | 400 if not UUID-shaped, 404 if missing |
+| PUT    | `/api/categories/:uid` | 200 + updated category | Full replace (omitted description clears it). 409 duplicate name, or type change while referenced by transactions |
+| PATCH  | `/api/categories/:uid` | 200 + updated category | Partial update of `name`, `type`, `description` (`null` clears description). Same 409 rules |
+| DELETE | `/api/categories/:uid` | 204 | 409 if any transaction references it; 404 if missing |
 | GET    | `/api/healthz`       | 200 `{"status":"ok"}` | |
 | GET    | `/`                  | HTML page | Static assets under `/static/` |
 
 ### Examples
+
+Categories:
+
+```bash
+CAT_UID=$(curl -s -X POST http://127.0.0.1:8080/api/categories -H 'Content-Type: application/json' \
+  -d '{"name":"Food","type":"expense","description":"Groceries and restaurants"}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["uid"])')
+# 201 {"uid":"…","name":"Food","type":"expense","description":"Groceries and restaurants","created_at":"…","updated_at":null}
+
+curl -s -X POST http://127.0.0.1:8080/api/transactions -H 'Content-Type: application/json' \
+  -d "{\"amount\":\"120.50\",\"currency\":\"THB\",\"balance_uid\":\"$BAL_UID\",\"category_uid\":\"$CAT_UID\",\"spent_at\":\"2026-10-06T21:06:00+08:00\"}"
+# 201 {..., "category_uid":"…", ...}   (no category name on the transaction)
+
+curl -s "http://127.0.0.1:8080/api/transactions?category_uid=$CAT_UID"
+curl -s -X DELETE "http://127.0.0.1:8080/api/categories/$CAT_UID"
+# 409 {"error":"category is used by transactions (1 transaction(s)); it cannot be deleted; reassign or clear category_uid on those transactions first"}
+```
 
 Create a payable balance first (or use an existing `uid`), then log a transaction
 with `balance_uid`. The free-text `account` field is **not** accepted on write
@@ -377,25 +429,33 @@ internal/validate/           ValidationError (422) and RequestError (400)
 internal/transaction/            transaction domain model + validation (no I/O)
   transaction.go             Transaction, CreateInput, Validate, ParseTimestamp
   patch.go                   PATCH merge (ApplyPatch)
+internal/category/           category domain model (Type expense|income, Input, Validate, ApplyPatch)
 internal/balance/            balance domain model + per-type validation (no I/O)
   balance.go                 Type, Balance, Input, Validate, ApplyPatch, ComputeTotals
 internal/store/              persistence (modernc.org/sqlite)
   store.go                   transactions in table "transactions": Open, Create, List, Get, Update, Delete
   balances.go                table "balances": CreateBalance, ListBalances, GetBalance, UpdateBalance, DeleteBalance
-  migrate.go                 current schema, versioned migrations (v0 -> … -> v6)
+  categories.go              table "categories": CreateCategory, ListCategories, GetCategoryByUID, UpdateCategory, DeleteCategory
+  migrate.go                 current schema, versioned migrations (v0 -> … -> v9)
   store_test.go, balances_test.go   fresh DB, upgrades from v0/v1/v2, partial/ambiguous states
 internal/api/                Gin routes and handlers
   api.go                     transactions routes + shared helpers
   balances.go                /api/balances routes
+  categories.go              /api/categories routes
   api_test.go, edit_test.go, balances_test.go
 web/embed.go                 embeds web/static into the binary
-web/static/                  index.html, style.css, app.js (transactions), balances.js (balances + tabs)
+web/static/                  index.html, style.css, app.js (transactions), balances.js (balances + tabs), categories.js (categories)
 ```
 
 ## Web page
 
-Two tabs: **Transactions** (`/#transactions`, the default) and **Balances**
-(`/#balances`).
+Three tabs: **Transactions** (`/#transactions`, the default), **Balances**
+(`/#balances`) and **Categories** (`/#categories`).
+
+Categories tab: a form (name, type, description), the list grouped into
+expense and income categories (with each uid in small muted text), **Edit**
+(saves with PUT) and **Delete** (a 409 for a category still in use is shown
+in the form status). Changes refresh the transaction form's dropdown.
 
 Balances tab:
 
@@ -426,6 +486,10 @@ Transactions tab:
   "Payment account", "Received into" or "From (source)"). A **To
   (destination)** dropdown with all balances appears only for transfers. The
   form submits `type`, `balance_uid` and (for transfers) `to_balance_uid`.
+- A **Category** dropdown lists only categories of the selected type
+  ("No category" by default) and is hidden for transfers.
+- The list has a Category column; the name is looked up client-side from
+  the categories list by `category_uid` (re-rendered after a category changes).
 - The list has a Type column and shows "from → to" names for transfers.
 - Totals per currency show expenses and income separately; transfers are
   excluded from both.

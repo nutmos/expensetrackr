@@ -25,16 +25,19 @@
 
   // ---- Tabs ----------------------------------------------------------------
 
+  const VIEWS = { transactions: "", balances: "Balances · ", categories: "Categories · " };
+
   function showView() {
-    const view = location.hash === "#balances" ? "balances" : "transactions";
-    $("#view-transactions").hidden = view !== "transactions";
-    $("#view-balances").hidden = view !== "balances";
-    $("#tab-transactions").classList.toggle("active", view === "transactions");
-    $("#tab-balances").classList.toggle("active", view === "balances");
-    $("#tab-transactions").setAttribute("aria-selected", String(view === "transactions"));
-    $("#tab-balances").setAttribute("aria-selected", String(view === "balances"));
-    document.title = view === "balances" ? "Balances · Expense Log" : "Expense Log";
+    const h = location.hash.replace("#", "");
+    const view = h in VIEWS ? h : "transactions";
+    for (const v of Object.keys(VIEWS)) {
+      $(`#view-${v}`).hidden = v !== view;
+      $(`#tab-${v}`).classList.toggle("active", v === view);
+      $(`#tab-${v}`).setAttribute("aria-selected", String(v === view));
+    }
+    document.title = VIEWS[view] + "Expense Log";
     if (view === "balances" && !loaded) loadBalances();
+    if (view === "categories" && typeof window.loadCategoriesView === "function") window.loadCategoriesView();
   }
   window.addEventListener("hashchange", showView);
 
@@ -204,7 +207,7 @@
   }
 
   function highlightRow() {
-    groupsEl.querySelectorAll("tr[data-id]").forEach((tr) => {
+    groupsEl.querySelectorAll("tr[data-uid]").forEach((tr) => {
       tr.classList.toggle("editing", !!editing && tr.dataset.uid === String(editing.uid));
     });
   }

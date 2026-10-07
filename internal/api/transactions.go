@@ -21,6 +21,22 @@ const (
 	maxLimit     = 5000
 )
 
+// attachCategory resolves e.CategoryUID (if any), checks it matches the
+// transaction type. Only the uid is stored.
+func (s *Server) attachCategory(c *gin.Context, e *transaction.Transaction) error {
+	if e.CategoryUID == nil {
+		return nil
+	}
+	cat, err := s.Store.GetCategoryByUID(c.Request.Context(), *e.CategoryUID)
+	if errors.Is(err, store.ErrNotFound) {
+		return &validate.ValidationError{Fields: map[string]string{"category_uid": "does not match any category"}}
+	}
+	if err != nil {
+		return err
+	}
+	return e.AttachCategory(cat)
+}
+
 // registerTransactionRoutes mounts /api/transactions under the given group.
 func (s *Server) registerTransactionRoutes(api *gin.RouterGroup) {
 	api.POST("/transactions", s.createTransaction)
@@ -46,6 +62,9 @@ func (s *Server) attachPaymentBalance(c *gin.Context, e *transaction.Transaction
 		return err
 	}
 	if err := e.AttachPaymentBalance(b); err != nil {
+		return err
+	}
+	if err := s.attachCategory(c, e); err != nil {
 		return err
 	}
 	if e.Type != transaction.Transfer || e.ToBalanceUID == nil {
@@ -212,6 +231,14 @@ func (s *Server) listTransactions(c *gin.Context) {
 			f.Type = t
 		} else {
 			fields["type"] = "must be one of: expense, income, transfer"
+		}
+	}
+
+	if raw := strings.ToLower(strings.TrimSpace(c.Query("category_uid"))); raw != "" {
+		if uuidRE.MatchString(raw) {
+			f.CategoryUID = raw
+		} else {
+			fields["category_uid"] = "must be a UUID"
 		}
 	}
 

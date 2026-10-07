@@ -16,6 +16,8 @@
   let editing = null;
   // All balances (for the source/destination dropdowns), from GET /api/balances.
   let allBalances = [];
+  // All categories (for the category dropdown), from GET /api/categories.
+  let allCategories = [];
 
   const pad = (n, w = 2) => String(Math.abs(n)).padStart(w, "0");
 
@@ -130,7 +132,30 @@
     $("#balance-hint").textContent = SOURCE_HINT[t];
     fillSelect($("#balance_uid"), SOURCE_TYPES[t], keepFrom ?? $("#balance_uid").value);
     $("#to-field").hidden = t !== "transfer";
+    fillCategories(t);
     fillSelect($("#to_balance_uid"), SOURCE_TYPES.transfer, keepTo ?? $("#to_balance_uid").value);
+  }
+
+  // Category dropdown: only categories of the selected type; hidden for transfers.
+  function fillCategories(t, keep) {
+    const sel = $("#category_uid");
+    const want = keep ?? sel.value;
+    $("#category-field").hidden = t === "transfer";
+    sel.replaceChildren(Object.assign(document.createElement("option"), { value: "", textContent: "No category" }));
+    for (const c of allCategories) {
+      if (c.type !== t) continue;
+      sel.append(Object.assign(document.createElement("option"), { value: c.uid, textContent: c.name }));
+    }
+    sel.value = want && [...sel.options].some((o) => o.value === want) ? want : "";
+  }
+
+  async function loadTxCategories(keep) {
+    try {
+      const res = await fetch("/api/categories");
+      const body = await res.json();
+      if (res.ok) allCategories = body.categories || [];
+    } catch (_) { /* keep previous list */ }
+    fillCategories(currentType(), keep);
   }
 
   // Name kept for balances.js, which calls it after balance changes.
@@ -174,6 +199,7 @@
     $("#currency").value = e.currency;
     $("#type").value = e.type || "expense";
     await loadPayableBalances(e.balance_uid, e.to_balance_uid || "");
+    await loadTxCategories(e.category_uid || "");
     $("#note").value = e.note || "";
     // Show the saved instant converted to the device's local time; saving
     // re-stamps it with the device's current offset.
@@ -232,6 +258,7 @@
       note: $("#note").value.trim(),
     };
     if (type === "transfer") payload.to_balance_uid = $("#to_balance_uid").value.trim();
+    else if ($("#category_uid").value) payload.category_uid = $("#category_uid").value;
 
     const isEdit = !!editing;
     const url = isEdit ? `/api/transactions/${editing.uid}` : "/api/transactions";
@@ -332,8 +359,17 @@
     return b;
   }
 
+  // Category name for a transaction, looked up client-side by category_uid
+  // (transactions carry only the uid).
+  function categoryName(uid) {
+    if (!uid) return "";
+    const c = allCategories.find((x) => x.uid === uid);
+    return c ? c.name : "(unknown category)";
+  }
+
   async function loadTransactions() {
     listStatus.textContent = "Loading…";
+    await categoriesReady;
     try {
       const params = filterParams();
       const res = await fetch("/api/transactions" + (params.toString() ? "?" + params : ""));
@@ -373,7 +409,7 @@
           uidEl.title = "balance uid";
           acctTd.append(uidEl);
         }
-        tr.append(timeTd, typeTd, cell(e.amount, "num"), cell(e.currency), acctTd, cell(e.note || "", "note"));
+        tr.append(timeTd, typeTd, cell(e.amount, "num"), cell(e.currency), acctTd, cell(categoryName(e.category_uid)), cell(e.note || "", "note"));
         const actions = document.createElement("td");
         actions.className = "actions-cell";
         actions.append(
@@ -410,6 +446,10 @@
   try { tzName = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (_) {}
   $("#tz-label").textContent = `(your device's time zone: ${tzName ? tzName + ", " : ""}UTC${offsetString(new Date())})`;
   window.loadPayableBalances = loadPayableBalances;
+  // categories.js calls this after a category changes: refresh the dropdown
+  // and re-render the list so renamed categories show their new name.
+  window.loadTxCategories = async () => { await loadTxCategories(); await loadTransactions(); };
+  const categoriesReady = loadTxCategories();
   loadPayableBalances().then(restoreDefaults);
   setNow();
   spentAtInput.addEventListener("input", updatePreview);
