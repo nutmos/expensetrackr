@@ -20,18 +20,21 @@ const (
 
 // Transaction is a stored transaction record.
 type Transaction struct {
-	ID          int64     `json:"id"`
-	UID         string    `json:"uid"`          // server-assigned UUID v4, immutable
-	Amount      string    `json:"amount"`       // decimal string, e.g. "120.50"
-	AmountMinor int64     `json:"amount_minor"` // integer minor units, e.g. 12050
-	Currency    string    `json:"currency"`     // ISO 4217, e.g. "THB"
-	BalanceUID  string    `json:"balance_uid"`  // UUID of the paying balance
-	Account     string    `json:"account"`      // denormalized balance name at write time
-	SpentAt     string    `json:"spent_at"`     // RFC 3339 with the offset as entered
-	Note        string    `json:"note"`
-	CreatedAt   string    `json:"created_at"` // RFC 3339, UTC
-	UpdatedAt   *string   `json:"updated_at"` // RFC 3339, UTC; null until edited
-	SpentTime   time.Time `json:"-"`
+	ID           int64     `json:"id"`
+	UID          string    `json:"uid"`            // server-assigned UUID v4, immutable
+	Amount       string    `json:"amount"`         // decimal string, e.g. "120.50"
+	AmountMinor  int64     `json:"amount_minor"`   // integer minor units, e.g. 12050
+	Currency     string    `json:"currency"`       // ISO 4217, e.g. "THB"
+	Type         Type      `json:"type"`           // expense | income | transfer
+	BalanceUID   string    `json:"balance_uid"`    // paying (expense), receiving (income) or source (transfer) balance
+	Account      string    `json:"account"`        // denormalized balance name at write time
+	ToBalanceUID *string   `json:"to_balance_uid"` // transfer destination; null otherwise
+	ToAccount    *string   `json:"to_account"`     // denormalized destination name; null otherwise
+	SpentAt      string    `json:"spent_at"`       // RFC 3339 with the offset as entered
+	Note         string    `json:"note"`
+	CreatedAt    string    `json:"created_at"` // RFC 3339, UTC
+	UpdatedAt    *string   `json:"updated_at"` // RFC 3339, UTC; null until edited
+	SpentTime    time.Time `json:"-"`
 }
 
 // DecimalInput keeps the literal text of a JSON string or number amount.
@@ -48,11 +51,13 @@ type (
 // balance_uid (not free text). The read-only "account" name is filled in by
 // the API from the balance after validation.
 type CreateInput struct {
-	Amount     DecimalInput `json:"amount"`
-	Currency   string       `json:"currency"`
-	BalanceUID string       `json:"balance_uid"`
-	SpentAt    string       `json:"spent_at"`
-	Note       string       `json:"note"`
+	Amount       DecimalInput `json:"amount"`
+	Currency     string       `json:"currency"`
+	Type         string       `json:"type"` // optional on create/PUT; defaults to "expense"
+	BalanceUID   string       `json:"balance_uid"`
+	ToBalanceUID string       `json:"to_balance_uid"` // transfer only
+	SpentAt      string       `json:"spent_at"`
+	Note         string       `json:"note"`
 
 	// IgnoredUID accepts a "uid" in PUT bodies so a previous response can be
 	// round-tripped; it is never used (the uid is server-assigned, immutable).
@@ -94,6 +99,53 @@ func looksLikeUID(s string) bool {
 	return true
 }
 
+// Type is the direction of a transaction. The amount is always positive.
+type Type string
+
+const (
+	Expense  Type = "expense"
+	Income   Type = "income"
+	Transfer Type = "transfer"
+)
+
+// ParseType normalizes a type string; empty means Expense (backward compat).
+func ParseType(s string) (Type, bool) {
+	switch t := Type(strings.ToLower(strings.TrimSpace(s))); t {
+	case "":
+		return Expense, true
+	case Expense, Income, Transfer:
+		return t, true
+	}
+	return "", false
+}
+
+// SourceAllowed reports whether a balance type may be used as balance_uid for
+// a transaction type:
+//   - expense:  payment_account, credit_card (money is spent from it)
+//   - income:   payment_account, other_asset (money is received into it)
+//   - transfer: any balance type (source of the move)
+func SourceAllowed(tt Type, bt balance.Type) bool {
+	switch tt {
+	case Expense:
+		return bt == balance.PaymentAccount || bt == balance.CreditCard
+	case Income:
+		return bt == balance.PaymentAccount || bt == balance.OtherAsset
+	case Transfer:
+		return bt.Valid()
+	}
+	return false
+}
+
+func sourceRule(tt Type) string {
+	switch tt {
+	case Expense:
+		return "must refer to a payment_account or credit_card balance"
+	case Income:
+		return "must refer to a payment_account or other_asset balance (income)"
+	}
+	return "must refer to an existing balance"
+}
+
 // IsPayableType reports whether a balance of this type can be used as a payment
 // account on a transaction (payment accounts and credit cards only).
 func IsPayableType(t balance.Type) bool {
@@ -129,14 +181,37 @@ func (in CreateInput) Validate() (Transaction, error) {
 		fields["amount"] = "is required"
 	}
 
+	tt, okType := ParseType(in.Type)
+	if !okType {
+		fields["type"] = "must be one of: expense, income, transfer"
+	}
+	exp.Type = tt
+
 	uid := strings.ToLower(strings.TrimSpace(in.BalanceUID))
 	switch {
 	case uid == "":
 		fields["balance_uid"] = "is required"
 	case !looksLikeUID(uid):
-		fields["balance_uid"] = "must be a UUID (the uid of a payment_account or credit_card balance)"
+		fields["balance_uid"] = "must be a UUID (the uid of a balance)"
 	}
 	exp.BalanceUID = uid
+
+	to := strings.ToLower(strings.TrimSpace(in.ToBalanceUID))
+	if okType {
+		switch {
+		case tt != Transfer && to != "":
+			fields["to_balance_uid"] = "is only allowed when type is transfer"
+		case tt == Transfer && to == "":
+			fields["to_balance_uid"] = "is required for a transfer"
+		case tt == Transfer && !looksLikeUID(to):
+			fields["to_balance_uid"] = "must be a UUID (the uid of a balance)"
+		case tt == Transfer && to == uid:
+			fields["to_balance_uid"] = "must differ from balance_uid"
+		}
+	}
+	if tt == Transfer && to != "" {
+		exp.ToBalanceUID = &to
+	}
 
 	if t, err := ParseTimestamp(in.SpentAt); err != nil {
 		fields["spent_at"] = err.Error()
@@ -157,13 +232,17 @@ func (in CreateInput) Validate() (Transaction, error) {
 	return exp, nil
 }
 
-// AttachPaymentBalance checks that b is a payable balance and copies its name
-// into Account as a denormalized snapshot. Call after Validate, once the uid
-// has been loaded from the store.
+// AttachPaymentBalance checks that b is allowed as balance_uid for e.Type and
+// copies its name into Account as a denormalized snapshot. Call after
+// Validate, once the uid has been loaded from the store.
 func (e *Transaction) AttachPaymentBalance(b balance.Balance) error {
-	if b.UID == "" || !IsPayableType(b.Type) {
+	tt := e.Type
+	if tt == "" {
+		tt = Expense
+	}
+	if b.UID == "" || !SourceAllowed(tt, b.Type) {
 		return &ValidationError{Fields: map[string]string{
-			"balance_uid": "must refer to a payment_account or credit_card balance",
+			"balance_uid": sourceRule(tt),
 		}}
 	}
 	if e.BalanceUID != "" && !strings.EqualFold(e.BalanceUID, b.UID) {
@@ -173,5 +252,20 @@ func (e *Transaction) AttachPaymentBalance(b balance.Balance) error {
 	}
 	e.BalanceUID = b.UID
 	e.Account = b.Name
+	return nil
+}
+
+// AttachDestinationBalance sets the transfer destination snapshot. Any
+// balance type is accepted (e.g. paying a credit card, saving into an other
+// asset, repaying a loan).
+func (e *Transaction) AttachDestinationBalance(b balance.Balance) error {
+	if e.Type != Transfer || e.ToBalanceUID == nil {
+		return &ValidationError{Fields: map[string]string{"to_balance_uid": "is only allowed when type is transfer"}}
+	}
+	if b.UID == "" || !strings.EqualFold(*e.ToBalanceUID, b.UID) {
+		return &ValidationError{Fields: map[string]string{"to_balance_uid": "does not match any balance"}}
+	}
+	uid, name := b.UID, b.Name
+	e.ToBalanceUID, e.ToAccount = &uid, &name
 	return nil
 }

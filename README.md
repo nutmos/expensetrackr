@@ -64,7 +64,10 @@ uses `/api/transactions` and the list key `transactions` (the old
 | amount        | `amount`       | `amount_minor INTEGER` + `amount_scale INTEGER` (see below)             |
 | amount (raw)  | `amount_minor` | the integer itself, e.g. `12050`                                       |
 | currency      | `currency`     | `TEXT`, ISO 4217 alphabetic code, upper-cased (`THB`, `SGD`, `USD`, …)  |
-| payment acct  | `balance_uid`  | `TEXT` UUID of a payable balance (`payment_account` or `credit_card`); no FK |
+| type          | `type`         | `TEXT NOT NULL DEFAULT 'expense'`: `expense`, `income` or `transfer` (see "Transaction types") |
+| payment acct  | `balance_uid`  | `TEXT` UUID of the balance paid from (expense), received into (income) or moved from (transfer); no FK |
+| destination   | `to_balance_uid` | `TEXT`, transfers only (else `null`); UUID of the destination balance; no FK |
+| dest. name    | `to_account`   | denormalized destination name snapshot (transfers only, else `null`)    |
 | account name  | `account`      | denormalized balance `name` snapshot at write time (read-only in API)   |
 | spend time    | `spent_at`     | `TEXT` RFC 3339 with offset as entered + `spent_at_unix INTEGER`        |
 | note          | `note`         | `TEXT`, optional, up to 1000 chars                                     |
@@ -108,6 +111,30 @@ transaction does **not** yet adjust the balance amount (see Open questions).
 - Uniqueness uses SQLite `NOCASE`, which ignores case for ASCII letters only.
   Thai names have no case, so this is enough.
 
+### Transaction types
+
+`amount` is always positive; `type` gives the direction. Balance amounts are
+**not** adjusted automatically yet (see Open questions).
+
+| `type`     | `balance_uid` must be                         | `to_balance_uid` |
+|------------|-----------------------------------------------|------------------|
+| `expense`  | `payment_account` or `credit_card` (spent from) | not allowed (422) |
+| `income`   | `payment_account` or `other_asset` (received into) | not allowed (422) |
+| `transfer` | any balance type (source)                     | **required**; any existing balance type, different from `balance_uid` |
+
+- Omitting `type` on POST or PUT means `expense`, so older clients keep working.
+  A PUT is a full replace, so a PUT of a transfer must send `"type":"transfer"`.
+- Why: income lands in a spendable account or an asset (salary, dividends);
+  a credit card or loan receiving money is modelled as a transfer (card
+  payment, loan repayment). Transfers may also move money into an
+  `other_asset` (savings) or draw from a credit card / loan.
+- No currency check across the two balances of a transfer (there is no
+  conversion; the amount is in the transaction's `currency`).
+- PATCH changing `type` away from `transfer` drops `to_balance_uid` /
+  `to_account` automatically; changing to `transfer` requires
+  `to_balance_uid` in the same PATCH (or a 422). `"to_balance_uid": null`
+  clears it.
+
 ### Amounts: integer minor units (no floats)
 
 The amount is parsed from its **decimal text** straight into an integer count of
@@ -132,13 +159,15 @@ Bangkok transaction was entered at +07:00). The derived `spent_at_unix` column h
 the absolute instant and is used for ordering and filtering, so rows entered with
 different offsets compare correctly.
 
-The web form has a date-time field plus a separate UTC-offset field. For a new
-transaction both default to the browser's current local time and offset, and the
-offset follows the chosen date (DST-aware) until you type your own (for example
-`+07:00` for a purchase in Bangkok). When you edit a transaction, the form shows the
-saved wall-clock time **in its original offset**, so a transaction saved as
-`09:15+07:00` appears as 09:15 with `+07:00` and is not converted to your
-browser's zone.
+The web form has only a date-time field: it always uses the **device's current
+time zone**. On create and edit the entered wall-clock time is sent with the
+device's UTC offset for that date (DST-aware); there is no manual offset field.
+When you edit a record saved with a different offset (e.g. `09:15+07:00` on a
+`+08:00` device), the form shows it **converted to device local time**
+(10:15) and saving re-stamps it with the device offset
+(`10:15+08:00`, the same instant). The list also shows times in device local
+time; hover a time to see the stored value. The API is unchanged and still
+accepts any RFC 3339 offset.
 
 ### Schema migrations
 
@@ -162,6 +191,7 @@ The schema version is tracked in SQLite's `PRAGMA user_version`. The code is in
 | 4       | `ALTER TABLE balances ADD COLUMN uid TEXT` (if missing), backfill every empty uid with a new UUID v4, then `CREATE UNIQUE INDEX IF NOT EXISTS idx_balances_uid ON balances (uid)`. `transactions` is not touched. New databases create `uid TEXT NOT NULL UNIQUE` from the start. |
 | 5       | `ALTER TABLE transactions ADD COLUMN balance_uid TEXT` (if missing); match each free-text `account` to a payable balance name (`payment_account` / `credit_card`, case-insensitive) and set `balance_uid`; fail the migration if any row cannot be matched; `CREATE INDEX IF NOT EXISTS idx_transactions_balance_uid ON transactions (balance_uid)`. The `account` column is kept as a denormalized name snapshot. New databases create `balance_uid TEXT NOT NULL` (+ length CHECK) from the start. |
 | 6       | `ALTER TABLE transactions ADD COLUMN uid TEXT` (if missing), backfill every empty uid with a new UUID v4, then `CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_uid ON transactions (uid)`. Same style as v4; idempotent (existing uids kept). New databases create `uid TEXT NOT NULL UNIQUE` from the start. |
+| 7       | `ALTER TABLE transactions ADD COLUMN type TEXT NOT NULL DEFAULT 'expense' CHECK (type IN ('expense','income','transfer'))` (existing rows become `expense`), `ADD COLUMN to_balance_uid TEXT` and `ADD COLUMN to_account TEXT` (each only if missing), then `CREATE INDEX IF NOT EXISTS idx_transactions_type ON transactions (type, spent_at_unix DESC)`. One SQL transaction, idempotent. |
 
 Notes on version 2:
 
@@ -207,7 +237,7 @@ only on validation and duplicate-name errors.
 | Method | Path                 | Success | Notes |
 |--------|----------------------|---------|-------|
 | POST   | `/api/transactions`      | 201 + transaction, `Location` header | 422 on validation errors, 400 on malformed JSON or unknown fields |
-| GET    | `/api/transactions`      | 200 `{"transactions":[...],"count":n}` | Newest first by spend time. Optional `from`, `to` (RFC 3339 with offset, both inclusive), `limit` (1–5000, default 500) |
+| GET    | `/api/transactions`      | 200 `{"transactions":[...],"count":n}` | Newest first by spend time. Optional `from`, `to` (RFC 3339 with offset, both inclusive), `limit` (1–5000, default 500), `type` (`expense`/`income`/`transfer`; 400 if invalid) |
 | GET    | `/api/transactions/:id`  | 200 + transaction | `:id` may be the numeric id **or** the transaction `uid` (all digits = id, otherwise uid; same for PUT/PATCH/DELETE). 404 if missing, 400 for a non-positive numeric id |
 | PUT    | `/api/transactions/:id`  | 200 + updated transaction | Full replace with the same body and rules as POST. An omitted `note` clears it. 404 if missing, 422 for invalid values, 400 for malformed JSON or unknown fields |
 | PATCH  | `/api/transactions/:id`  | 200 + updated transaction | Partial update: only the fields you send change, then the merged result is validated like a create. `"note": null` clears the note; `null` for any other field returns 422. Returns 400 for `{}`, unknown fields or wrong JSON types, and 404 if missing |
@@ -243,6 +273,22 @@ curl -s -X POST http://127.0.0.1:8080/api/transactions \
  "balance_uid":"a1b2c3d4-e5f6-4789-a012-3456789abcde","account":"KBank debit",
  "spent_at":"2026-10-06T21:06:00+08:00","note":"Lunch","created_at":"2026-10-06T13:20:11Z"}
 ```
+
+Transfer (pay a credit card from a bank account):
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/api/transactions -H 'Content-Type: application/json' \
+  -d "{\"type\":\"transfer\",\"amount\":\"5000\",\"currency\":\"THB\",\"balance_uid\":\"$BAL_UID\",\"to_balance_uid\":\"$CARD_UID\",\"spent_at\":\"2026-10-07T22:00:00+08:00\"}"
+```
+
+```json
+{"id":2,"uid":"…","type":"transfer","amount":"5000.00","amount_minor":500000,"currency":"THB",
+ "balance_uid":"…","account":"KBank debit","to_balance_uid":"…","to_account":"KBank Visa",
+ "spent_at":"2026-10-07T22:00:00+08:00","note":"","created_at":"…","updated_at":null}
+```
+
+Expense and income rows return `"to_balance_uid":null,"to_account":null`.
+`GET /api/transactions?type=income` lists only income.
 
 Unknown or non-payable `balance_uid` → HTTP 422 on that field:
 
@@ -371,9 +417,14 @@ Transactions tab:
   date filter and totals per currency.
 - Each row shows the transaction `uid` in small muted monospace text under
   the time (read-only; not in the form).
-- **Payment account** is a dropdown of payable balances (`payment_account` and
-  `credit_card`, from `GET /api/balances?payable=1`). The form submits
-  `balance_uid` (the UUID). The list shows the denormalized account name.
+- A **Type** selector (Expense / Income / Transfer). The source dropdown
+  lists only the balance types allowed for that type (label changes to
+  "Payment account", "Received into" or "From (source)"). A **To
+  (destination)** dropdown with all balances appears only for transfers. The
+  form submits `type`, `balance_uid` and (for transfers) `to_balance_uid`.
+- The list has a Type column and shows "from → to" names for transfers.
+- Totals per currency show expenses and income separately; transfers are
+  excluded from both.
 - **Edit** loads the transaction into the same form: the card is highlighted, the
   heading reads "Edit transaction #N", and the button reads "Save changes". Saving
   sends a PUT, and validation errors appear next to each field. **Cancel edit**

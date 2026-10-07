@@ -72,9 +72,9 @@ func (s *Store) Create(ctx context.Context, e *transaction.Transaction) error {
 	e.UID = uid
 	e.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO transactions (uid, amount_minor, amount_scale, currency, balance_uid, account, spent_at, spent_at_unix, note, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.UID, e.AmountMinor, scale, e.Currency, e.BalanceUID, e.Account, e.SpentAt, e.SpentTime.Unix(), e.Note, e.CreatedAt)
+		`INSERT INTO transactions (uid, type, amount_minor, amount_scale, currency, balance_uid, account, to_balance_uid, to_account, spent_at, spent_at_unix, note, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.UID, string(e.Type), e.AmountMinor, scale, e.Currency, e.BalanceUID, e.Account, e.ToBalanceUID, e.ToAccount, e.SpentAt, e.SpentTime.Unix(), e.Note, e.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("insert transaction: %w", err)
 	}
@@ -88,12 +88,13 @@ func (s *Store) Create(ctx context.Context, e *transaction.Transaction) error {
 
 // ListFilter restricts List results. Zero values mean "no restriction".
 type ListFilter struct {
-	From  *time.Time // inclusive
-	To    *time.Time // inclusive
+	From  *time.Time       // inclusive
+	To    *time.Time       // inclusive
+	Type  transaction.Type // "" = all
 	Limit int
 }
 
-const selectCols = `id, uid, amount_minor, amount_scale, currency, balance_uid, account, spent_at, note, created_at, updated_at`
+const selectCols = `id, uid, type, amount_minor, amount_scale, currency, balance_uid, account, to_balance_uid, to_account, spent_at, note, created_at, updated_at`
 
 // List returns rows from transactions newest first (by spend time, then ID).
 func (s *Store) List(ctx context.Context, f ListFilter) ([]transaction.Transaction, error) {
@@ -106,6 +107,10 @@ func (s *Store) List(ctx context.Context, f ListFilter) ([]transaction.Transacti
 	if f.To != nil {
 		query += ` AND spent_at_unix <= ?`
 		args = append(args, f.To.Unix())
+	}
+	if f.Type != "" {
+		query += ` AND type = ?`
+		args = append(args, string(f.Type))
 	}
 	query += ` ORDER BY spent_at_unix DESC, id DESC`
 	if f.Limit > 0 {
@@ -181,10 +186,10 @@ func (s *Store) Update(ctx context.Context, id int64, fn func(cur transaction.Tr
 	next.ID, next.UID, next.CreatedAt, next.UpdatedAt = cur.ID, cur.UID, cur.CreatedAt, &now
 
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE transactions SET amount_minor = ?, amount_scale = ?, currency = ?, balance_uid = ?, account = ?,
+		`UPDATE transactions SET type = ?, amount_minor = ?, amount_scale = ?, currency = ?, balance_uid = ?, account = ?, to_balance_uid = ?, to_account = ?,
 		        spent_at = ?, spent_at_unix = ?, note = ?, updated_at = ?
 		 WHERE id = ?`,
-		next.AmountMinor, scale, next.Currency, next.BalanceUID, next.Account,
+		string(next.Type), next.AmountMinor, scale, next.Currency, next.BalanceUID, next.Account, next.ToBalanceUID, next.ToAccount,
 		next.SpentAt, next.SpentTime.Unix(), next.Note, now, id); err != nil {
 		return transaction.Transaction{}, fmt.Errorf("update transaction: %w", err)
 	}
@@ -215,8 +220,9 @@ type scanner interface{ Scan(dest ...any) error }
 func scan(r scanner) (transaction.Transaction, error) {
 	var e transaction.Transaction
 	var scale int
-	var updated sql.NullString
-	if err := r.Scan(&e.ID, &e.UID, &e.AmountMinor, &scale, &e.Currency, &e.BalanceUID, &e.Account, &e.SpentAt, &e.Note, &e.CreatedAt, &updated); err != nil {
+	var updated, toUID, toName sql.NullString
+	var typ string
+	if err := r.Scan(&e.ID, &e.UID, &typ, &e.AmountMinor, &scale, &e.Currency, &e.BalanceUID, &e.Account, &toUID, &toName, &e.SpentAt, &e.Note, &e.CreatedAt, &updated); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return e, err
 		}
@@ -225,6 +231,13 @@ func scan(r scanner) (transaction.Transaction, error) {
 	e.Amount = money.FormatAmount(e.AmountMinor, scale)
 	if updated.Valid {
 		e.UpdatedAt = &updated.String
+	}
+	e.Type = transaction.Type(typ)
+	if toUID.Valid {
+		e.ToBalanceUID = &toUID.String
+	}
+	if toName.Valid {
+		e.ToAccount = &toName.String
 	}
 	if t, err := time.Parse(time.RFC3339, e.SpentAt); err == nil {
 		e.SpentTime = t

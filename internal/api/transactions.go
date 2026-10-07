@@ -31,9 +31,9 @@ func (s *Server) registerTransactionRoutes(api *gin.RouterGroup) {
 	api.DELETE("/transactions/:id", s.deleteTransaction)
 }
 
-// attachPaymentBalance loads the balance for e.BalanceUID, checks it is a
-// payable type (payment_account or credit_card), and sets e.Account to the
-// balance's current name. Returns a *validate.ValidationError on balance_uid
+// attachPaymentBalance loads the balance for e.BalanceUID, checks its type is
+// allowed for e.Type, and sets e.Account to the balance's current name. For a
+// transfer it also resolves to_balance_uid and sets ToAccount. Returns a *validate.ValidationError on balance_uid
 // when the balance is missing or not payable.
 func (s *Server) attachPaymentBalance(c *gin.Context, e *transaction.Transaction) error {
 	b, err := s.Store.GetBalanceByUID(c.Request.Context(), e.BalanceUID)
@@ -45,7 +45,23 @@ func (s *Server) attachPaymentBalance(c *gin.Context, e *transaction.Transaction
 	if err != nil {
 		return err
 	}
-	return e.AttachPaymentBalance(b)
+	if err := e.AttachPaymentBalance(b); err != nil {
+		return err
+	}
+	if e.Type != transaction.Transfer || e.ToBalanceUID == nil {
+		e.ToBalanceUID, e.ToAccount = nil, nil
+		return nil
+	}
+	to, err := s.Store.GetBalanceByUID(c.Request.Context(), *e.ToBalanceUID)
+	if errors.Is(err, store.ErrNotFound) {
+		return &validate.ValidationError{Fields: map[string]string{
+			"to_balance_uid": "does not match any balance",
+		}}
+	}
+	if err != nil {
+		return err
+	}
+	return e.AttachDestinationBalance(to)
 }
 
 func (s *Server) createTransaction(c *gin.Context) {
@@ -189,6 +205,14 @@ func (s *Server) listTransactions(c *gin.Context) {
 	f.To = parseTime("to")
 	if f.From != nil && f.To != nil && f.From.After(*f.To) {
 		fields["to"] = "must not be earlier than from"
+	}
+
+	if raw := c.Query("type"); raw != "" {
+		if t, ok := transaction.ParseType(raw); ok {
+			f.Type = t
+		} else {
+			fields["type"] = "must be one of: expense, income, transfer"
+		}
 	}
 
 	f.Limit = defaultLimit
