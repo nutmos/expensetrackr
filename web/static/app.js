@@ -359,8 +359,17 @@
     return b;
   }
 
+  // Category name for a transaction, looked up client-side by category_uid
+  // (transactions carry only the uid).
+  function categoryName(uid) {
+    if (!uid) return "";
+    const c = allCategories.find((x) => x.uid === uid);
+    return c ? c.name : "(unknown category)";
+  }
+
   async function loadTransactions() {
     listStatus.textContent = "Loading…";
+    await categoriesReady;
     try {
       const params = filterParams();
       const res = await fetch("/api/transactions" + (params.toString() ? "?" + params : ""));
@@ -400,7 +409,7 @@
           uidEl.title = "balance uid";
           acctTd.append(uidEl);
         }
-        tr.append(timeTd, typeTd, cell(e.amount, "num"), cell(e.currency), acctTd, cell(e.category || ""), cell(e.note || "", "note"));
+        tr.append(timeTd, typeTd, cell(e.amount, "num"), cell(e.currency), acctTd, cell(categoryName(e.category_uid)), cell(e.note || "", "note"));
         const actions = document.createElement("td");
         actions.className = "actions-cell";
         actions.append(
@@ -437,8 +446,10 @@
   try { tzName = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (_) {}
   $("#tz-label").textContent = `(your device's time zone: ${tzName ? tzName + ", " : ""}UTC${offsetString(new Date())})`;
   window.loadPayableBalances = loadPayableBalances;
-  window.loadTxCategories = loadTxCategories;
-  loadTxCategories();
+  // categories.js calls this after a category changes: refresh the dropdown
+  // and re-render the list so renamed categories show their new name.
+  window.loadTxCategories = async () => { await loadTxCategories(); await loadTransactions(); };
+  const categoriesReady = loadTxCategories();
   loadPayableBalances().then(restoreDefaults);
   setNow();
   spentAtInput.addEventListener("input", updatePreview);

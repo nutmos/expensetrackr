@@ -114,8 +114,8 @@ func assertCurrentSchema(t *testing.T, path string) {
 			t.Errorf("missing %s %q; have %v", typ, name, got)
 		}
 	}
-	if v := userVersion(t, path); v != 8 || SchemaVersion != 8 {
-		t.Errorf("user_version = %d (SchemaVersion %d), want 8", v, SchemaVersion)
+	if v := userVersion(t, path); v != 9 || SchemaVersion != 9 {
+		t.Errorf("user_version = %d (SchemaVersion %d), want 9", v, SchemaVersion)
 	}
 }
 

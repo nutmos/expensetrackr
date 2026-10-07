@@ -68,8 +68,7 @@ uses `/api/transactions` and the list key `transactions` (the old
 | payment acct  | `balance_uid`  | `TEXT` UUID of the balance paid from (expense), received into (income) or moved from (transfer); no FK |
 | destination   | `to_balance_uid` | `TEXT`, transfers only (else `null`); UUID of the destination balance; no FK |
 | dest. name    | `to_account`   | denormalized destination name snapshot (transfers only, else `null`)    |
-| category      | `category_uid` | `TEXT`, optional (`null` = none); UUID of a category of the same type; never set for transfers; no FK |
-| category name | `category`     | denormalized category name snapshot at write time (`null` if none)      |
+| category      | `category_uid` | `TEXT`, optional (`null` = none); UUID of a category of the same type; never set for transfers; no FK. **The only link to the category**: no name is stored on the transaction |
 | account name  | `account`      | denormalized balance `name` snapshot at write time (read-only in API)   |
 | spend time    | `spent_at`     | `TEXT` RFC 3339 with offset as entered + `spent_at_unix INTEGER`        |
 | note          | `note`         | `TEXT`, optional, up to 1000 chars                                     |
@@ -127,9 +126,9 @@ Rules linking transactions and categories:
   must use an `expense` category and income an `income` category (422 on
   `category_uid` otherwise, also for unknown or malformed uids). A transfer
   must not have a category (422).
-- The transaction stores the category's name in `category` at write time;
-  renaming a category later does not rewrite existing transactions (same as
-  `account`).
+- The transaction stores **only `category_uid`** (no name copy, unlike
+  `account`). Clients look the name up from `GET /api/categories` (the web
+  page does this), so renaming a category is reflected everywhere at once.
 - **Deleting** a category that any transaction references is rejected with
   **409**; clear or change `category_uid` on those transactions first.
 - **Changing a category's type** is rejected with **409** while any
@@ -220,7 +219,8 @@ The schema version is tracked in SQLite's `PRAGMA user_version`. The code is in
 | 5       | `ALTER TABLE transactions ADD COLUMN balance_uid TEXT` (if missing); match each free-text `account` to a payable balance name (`payment_account` / `credit_card`, case-insensitive) and set `balance_uid`; fail the migration if any row cannot be matched; `CREATE INDEX IF NOT EXISTS idx_transactions_balance_uid ON transactions (balance_uid)`. The `account` column is kept as a denormalized name snapshot. New databases create `balance_uid TEXT NOT NULL` (+ length CHECK) from the start. |
 | 6       | `ALTER TABLE transactions ADD COLUMN uid TEXT` (if missing), backfill every empty uid with a new UUID v4, then `CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_uid ON transactions (uid)`. Same style as v4; idempotent (existing uids kept). New databases create `uid TEXT NOT NULL UNIQUE` from the start. |
 | 7       | `ALTER TABLE transactions ADD COLUMN type TEXT NOT NULL DEFAULT 'expense' CHECK (type IN ('expense','income','transfer'))` (existing rows become `expense`), `ADD COLUMN to_balance_uid TEXT` and `ADD COLUMN to_account TEXT` (each only if missing), then `CREATE INDEX IF NOT EXISTS idx_transactions_type ON transactions (type, spent_at_unix DESC)`. One SQL transaction, idempotent. |
-| 8       | `CREATE TABLE IF NOT EXISTS categories (...)` + `CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_type_name ON categories (type, name COLLATE NOCASE)`, then `ALTER TABLE transactions ADD COLUMN category_uid TEXT` and `ADD COLUMN category TEXT` (each only if missing; existing rows get no category) and `CREATE INDEX IF NOT EXISTS idx_transactions_category_uid ON transactions (category_uid)`. One SQL transaction, idempotent. |
+| 8       | `CREATE TABLE IF NOT EXISTS categories (...)` + `CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_type_name ON categories (type, name COLLATE NOCASE)`, then `ALTER TABLE transactions ADD COLUMN category_uid TEXT` (only if missing; existing rows get no category) and `CREATE INDEX IF NOT EXISTS idx_transactions_category_uid ON transactions (category_uid)`. One SQL transaction, idempotent. |
+| 9       | Drop `transactions.category` if present (`ALTER TABLE transactions DROP COLUMN category`, SQLite ≥ 3.35). Only databases created by a pre-release build of v8, which stored a category name copy, have it; otherwise a no-op. One SQL transaction, idempotent. |
 
 Notes on version 2:
 
@@ -302,7 +302,7 @@ CAT_UID=$(curl -s -X POST http://127.0.0.1:8080/api/categories -H 'Content-Type:
 
 curl -s -X POST http://127.0.0.1:8080/api/transactions -H 'Content-Type: application/json' \
   -d "{\"amount\":\"120.50\",\"currency\":\"THB\",\"balance_uid\":\"$BAL_UID\",\"category_uid\":\"$CAT_UID\",\"spent_at\":\"2026-10-06T21:06:00+08:00\"}"
-# 201 {..., "category_uid":"…","category":"Food", ...}
+# 201 {..., "category_uid":"…", ...}   (no category name on the transaction)
 
 curl -s "http://127.0.0.1:8080/api/transactions?category_uid=$CAT_UID"
 curl -s -X DELETE "http://127.0.0.1:8080/api/categories/$CAT_UID"
@@ -436,7 +436,7 @@ internal/store/              persistence (modernc.org/sqlite)
   store.go                   transactions in table "transactions": Open, Create, List, Get, Update, Delete
   balances.go                table "balances": CreateBalance, ListBalances, GetBalance, UpdateBalance, DeleteBalance
   categories.go              table "categories": CreateCategory, ListCategories, GetCategoryByUID, UpdateCategory, DeleteCategory
-  migrate.go                 current schema, versioned migrations (v0 -> … -> v8)
+  migrate.go                 current schema, versioned migrations (v0 -> … -> v9)
   store_test.go, balances_test.go   fresh DB, upgrades from v0/v1/v2, partial/ambiguous states
 internal/api/                Gin routes and handlers
   api.go                     transactions routes + shared helpers
@@ -488,7 +488,8 @@ Transactions tab:
   form submits `type`, `balance_uid` and (for transfers) `to_balance_uid`.
 - A **Category** dropdown lists only categories of the selected type
   ("No category" by default) and is hidden for transfers.
-- The list has a Category column.
+- The list has a Category column; the name is looked up client-side from
+  the categories list by `category_uid` (re-rendered after a category changes).
 - The list has a Type column and shows "from → to" names for transfers.
 - Totals per currency show expenses and income separately; transfers are
   excluded from both.

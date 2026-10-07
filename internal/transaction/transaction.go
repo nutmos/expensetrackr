@@ -31,8 +31,7 @@ type Transaction struct {
 	Account      string    `json:"account"`        // denormalized balance name at write time
 	ToBalanceUID *string   `json:"to_balance_uid"` // transfer destination; null otherwise
 	ToAccount    *string   `json:"to_account"`     // denormalized destination name; null otherwise
-	CategoryUID  *string   `json:"category_uid"`   // optional expense/income category; null for none / transfers
-	Category     *string   `json:"category"`       // denormalized category name at write time
+	CategoryUID  *string   `json:"category_uid"`   // optional link to categories.uid; null for none / transfers
 	SpentAt      string    `json:"spent_at"`       // RFC 3339 with the offset as entered
 	Note         string    `json:"note"`
 	CreatedAt    string    `json:"created_at"` // RFC 3339, UTC
@@ -285,9 +284,10 @@ func (e *Transaction) AttachDestinationBalance(b balance.Balance) error {
 	return nil
 }
 
-// AttachCategory checks that c matches the transaction type (expense
-// categories for expenses, income categories for income) and copies its name
-// into Category as a snapshot.
+// AttachCategory checks that c is the referenced category and matches the
+// transaction type (expense categories for expenses, income categories for
+// income). Only the uid is stored on the transaction; the name is looked up
+// from the categories table (or GET /api/categories) when needed.
 func (e *Transaction) AttachCategory(c category.Category) error {
 	if e.CategoryUID == nil || c.UID == "" || !strings.EqualFold(*e.CategoryUID, c.UID) {
 		return &ValidationError{Fields: map[string]string{"category_uid": "does not match any category"}}
@@ -297,7 +297,7 @@ func (e *Transaction) AttachCategory(c category.Category) error {
 			"category_uid": fmt.Sprintf("must be an %s category (this one is %s)", e.Type, c.Type),
 		}}
 	}
-	uid, name := c.UID, c.Name
-	e.CategoryUID, e.Category = &uid, &name
+	uid := c.UID
+	e.CategoryUID = &uid
 	return nil
 }

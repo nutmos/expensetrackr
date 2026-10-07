@@ -72,9 +72,9 @@ func (s *Store) Create(ctx context.Context, e *transaction.Transaction) error {
 	e.UID = uid
 	e.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO transactions (uid, type, amount_minor, amount_scale, currency, balance_uid, account, to_balance_uid, to_account, category_uid, category, spent_at, spent_at_unix, note, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.UID, string(e.Type), e.AmountMinor, scale, e.Currency, e.BalanceUID, e.Account, e.ToBalanceUID, e.ToAccount, e.CategoryUID, e.Category, e.SpentAt, e.SpentTime.Unix(), e.Note, e.CreatedAt)
+		`INSERT INTO transactions (uid, type, amount_minor, amount_scale, currency, balance_uid, account, to_balance_uid, to_account, category_uid, spent_at, spent_at_unix, note, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.UID, string(e.Type), e.AmountMinor, scale, e.Currency, e.BalanceUID, e.Account, e.ToBalanceUID, e.ToAccount, e.CategoryUID, e.SpentAt, e.SpentTime.Unix(), e.Note, e.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("insert transaction: %w", err)
 	}
@@ -95,7 +95,7 @@ type ListFilter struct {
 	Limit       int
 }
 
-const selectCols = `id, uid, type, amount_minor, amount_scale, currency, balance_uid, account, to_balance_uid, to_account, category_uid, category, spent_at, note, created_at, updated_at`
+const selectCols = `id, uid, type, amount_minor, amount_scale, currency, balance_uid, account, to_balance_uid, to_account, category_uid, spent_at, note, created_at, updated_at`
 
 // List returns rows from transactions newest first (by spend time, then ID).
 func (s *Store) List(ctx context.Context, f ListFilter) ([]transaction.Transaction, error) {
@@ -191,10 +191,10 @@ func (s *Store) Update(ctx context.Context, id int64, fn func(cur transaction.Tr
 	next.ID, next.UID, next.CreatedAt, next.UpdatedAt = cur.ID, cur.UID, cur.CreatedAt, &now
 
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE transactions SET type = ?, amount_minor = ?, amount_scale = ?, currency = ?, balance_uid = ?, account = ?, to_balance_uid = ?, to_account = ?, category_uid = ?, category = ?,
+		`UPDATE transactions SET type = ?, amount_minor = ?, amount_scale = ?, currency = ?, balance_uid = ?, account = ?, to_balance_uid = ?, to_account = ?, category_uid = ?,
 		        spent_at = ?, spent_at_unix = ?, note = ?, updated_at = ?
 		 WHERE id = ?`,
-		string(next.Type), next.AmountMinor, scale, next.Currency, next.BalanceUID, next.Account, next.ToBalanceUID, next.ToAccount, next.CategoryUID, next.Category,
+		string(next.Type), next.AmountMinor, scale, next.Currency, next.BalanceUID, next.Account, next.ToBalanceUID, next.ToAccount, next.CategoryUID,
 		next.SpentAt, next.SpentTime.Unix(), next.Note, now, id); err != nil {
 		return transaction.Transaction{}, fmt.Errorf("update transaction: %w", err)
 	}
@@ -225,9 +225,9 @@ type scanner interface{ Scan(dest ...any) error }
 func scan(r scanner) (transaction.Transaction, error) {
 	var e transaction.Transaction
 	var scale int
-	var updated, toUID, toName, catUID, catName sql.NullString
+	var updated, toUID, toName, catUID sql.NullString
 	var typ string
-	if err := r.Scan(&e.ID, &e.UID, &typ, &e.AmountMinor, &scale, &e.Currency, &e.BalanceUID, &e.Account, &toUID, &toName, &catUID, &catName, &e.SpentAt, &e.Note, &e.CreatedAt, &updated); err != nil {
+	if err := r.Scan(&e.ID, &e.UID, &typ, &e.AmountMinor, &scale, &e.Currency, &e.BalanceUID, &e.Account, &toUID, &toName, &catUID, &e.SpentAt, &e.Note, &e.CreatedAt, &updated); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return e, err
 		}
@@ -246,9 +246,6 @@ func scan(r scanner) (transaction.Transaction, error) {
 	}
 	if catUID.Valid {
 		e.CategoryUID = &catUID.String
-	}
-	if catName.Valid {
-		e.Category = &catName.String
 	}
 	if t, err := time.Parse(time.RFC3339, e.SpentAt); err == nil {
 		e.SpentTime = t

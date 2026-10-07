@@ -22,10 +22,9 @@ const (
 )
 
 // attachCategory resolves e.CategoryUID (if any), checks it matches the
-// transaction type and sets the Category name snapshot.
+// transaction type. Only the uid is stored.
 func (s *Server) attachCategory(c *gin.Context, e *transaction.Transaction) error {
 	if e.CategoryUID == nil {
-		e.Category = nil
 		return nil
 	}
 	cat, err := s.Store.GetCategoryByUID(c.Request.Context(), *e.CategoryUID)

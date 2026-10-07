@@ -103,15 +103,15 @@ func TestTransactionCategories(t *testing.T) {
 	}
 
 	rec, e := do(t, h, "POST", "/api/transactions", tx(`,"category_uid":"`+strings.ToUpper(food)+`"`))
-	if rec.Code != 201 || e["category_uid"] != food || e["category"] != "Food" {
+	if _, has := e["category"]; rec.Code != 201 || e["category_uid"] != food || has {
 		t.Fatalf("expense with category: %d %v", rec.Code, e)
 	}
 	// No category is fine (null).
 	rec, n := do(t, h, "POST", "/api/transactions", tx(``))
-	if rec.Code != 201 || n["category_uid"] != nil || n["category"] != nil {
+	if rec.Code != 201 || n["category_uid"] != nil {
 		t.Errorf("no category: %d %v", rec.Code, n)
 	}
-	if rec, b := do(t, h, "POST", "/api/transactions", tx(`,"type":"income","category_uid":"`+salary+`"`)); rec.Code != 201 || b["category"] != "Salary" {
+	if rec, b := do(t, h, "POST", "/api/transactions", tx(`,"type":"income","category_uid":"`+salary+`"`)); rec.Code != 201 || b["category_uid"] != salary {
 		t.Errorf("income with category: %d %v", rec.Code, b)
 	}
 	cases := []struct{ name, body string }{
@@ -138,7 +138,7 @@ func TestTransactionCategories(t *testing.T) {
 	}
 
 	// Referenced category: delete and type change rejected with 409; rename ok
-	// (transaction keeps its name snapshot).
+	// (the transaction only holds the uid, so it follows the category).
 	if rec, _ := do(t, h, "DELETE", "/api/categories/"+food, ""); rec.Code != 409 {
 		t.Errorf("delete referenced: %d", rec.Code)
 	}
@@ -149,17 +149,17 @@ func TestTransactionCategories(t *testing.T) {
 		t.Errorf("rename referenced: %d", rec.Code)
 	}
 	txPath := "/api/transactions/" + e["uid"].(string)
-	if _, g := do(t, h, "GET", txPath, ""); g["category"] != "Food" {
-		t.Errorf("snapshot changed: %v", g["category"])
+	if _, g := do(t, h, "GET", txPath, ""); g["category_uid"] != food {
+		t.Errorf("category_uid changed: %v", g)
 	}
 
 	// PATCH: type change drops category; clear with null; then delete works.
 	rec, p := do(t, h, "PATCH", txPath, `{"type":"income"}`)
-	if rec.Code != 200 || p["category_uid"] != nil || p["category"] != nil {
+	if rec.Code != 200 || p["category_uid"] != nil {
 		t.Errorf("type change drops category: %d %v", rec.Code, p)
 	}
 	rec, p = do(t, h, "PATCH", txPath, `{"type":"expense","category_uid":"`+food+`"}`)
-	if rec.Code != 200 || p["category"] != "Meals" {
+	if rec.Code != 200 || p["category_uid"] != food {
 		t.Errorf("set category: %d %v", rec.Code, p)
 	}
 	rec, p = do(t, h, "PATCH", txPath, `{"category_uid":null}`)

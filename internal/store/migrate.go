@@ -36,7 +36,8 @@ import (
 //	v5  transactions.balance_uid added (matched from free-text account where possible)
 //	v6  transactions.uid TEXT (UUID v4) added, backfilled, unique index idx_transactions_uid
 //	v7  transactions.type (expense|income|transfer, default expense), to_balance_uid, to_account
-//	v8  table "categories"; transactions.category_uid + category snapshot
+//	v8  table "categories"; transactions.category_uid
+//	v9  drop transactions.category (name snapshot from a pre-release v8) if present
 //
 // A brand-new database is created directly at the latest version from
 // currentSchema. An existing database is upgraded by running the pending
@@ -59,7 +60,6 @@ CREATE TABLE transactions (
     to_balance_uid TEXT   CHECK (to_balance_uid IS NULL OR length(to_balance_uid) = 36),
     to_account    TEXT,
     category_uid  TEXT    CHECK (category_uid IS NULL OR length(category_uid) = 36),
-    category      TEXT,
     spent_at      TEXT    NOT NULL,
     spent_at_unix INTEGER NOT NULL,
     note          TEXT    NOT NULL DEFAULT '',
@@ -176,6 +176,9 @@ var migrations = []migration{
 	addTransactionType,
 	// v7 -> v8: add categories table and transactions.category_uid / category.
 	addCategories,
+	// v8 -> v9: drop the transactions.category name snapshot if a pre-release
+	// build of v8 created it. No-op otherwise.
+	dropTransactionCategoryName,
 }
 
 // SchemaVersion is the user_version a fully migrated database has.
@@ -502,25 +505,43 @@ func addTransactionType(tx *sql.Tx) error {
 
 // addCategories is migration v7 -> v8: creates the categories table and its
 // unique (type, name NOCASE) index, then adds nullable transactions.category_uid
-// and the category name snapshot plus an index. Existing transactions get no
+// (the only link to a category; no name snapshot) plus an index. Existing transactions get no
 // category. Idempotent.
 func addCategories(tx *sql.Tx) error {
 	if _, err := tx.Exec(categoriesSchema); err != nil {
 		return fmt.Errorf("create categories: %w", err)
 	}
-	cols := []struct{ name, decl string }{
-		{"category_uid", "TEXT CHECK (category_uid IS NULL OR length(category_uid) = 36)"},
-		{"category", "TEXT"},
-	}
-	for _, c := range cols {
-		if err := addColumnIfMissing(tx, "transactions", c.name, c.decl); err != nil {
-			return fmt.Errorf("add transactions.%s: %w", c.name, err)
-		}
+	if err := addColumnIfMissing(tx, "transactions", "category_uid", "TEXT CHECK (category_uid IS NULL OR length(category_uid) = 36)"); err != nil {
+		return fmt.Errorf("add transactions.category_uid: %w", err)
 	}
 	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_transactions_category_uid ON transactions (category_uid)`); err != nil {
 		return fmt.Errorf("create category index: %w", err)
 	}
 	return nil
+}
+
+// dropTransactionCategoryName is migration v8 -> v9. An early build of v8
+// stored a denormalized category name in transactions.category; transactions
+// now link to categories only by category_uid, so the column is dropped if it
+// exists (SQLite >= 3.35 ALTER TABLE DROP COLUMN). Idempotent.
+func dropTransactionCategoryName(tx *sql.Tx) error {
+	has, err := columnExists(tx, "transactions", "category")
+	if err != nil {
+		return err
+	}
+	if !has {
+		return nil
+	}
+	if _, err := tx.Exec(`ALTER TABLE transactions DROP COLUMN category`); err != nil {
+		return fmt.Errorf("drop transactions.category: %w", err)
+	}
+	return nil
+}
+
+func columnExists(tx *sql.Tx, table, column string) (bool, error) {
+	var n int
+	err := tx.QueryRow(`SELECT count(*) FROM pragma_table_info(?) WHERE name = ?`, table, column).Scan(&n)
+	return n > 0, err
 }
 
 // addColumnIfMissing makes column additions idempotent, so a migration is safe
