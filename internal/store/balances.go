@@ -21,6 +21,15 @@ var ErrDuplicateName = errors.New("a balance with this name already exists")
 
 const balanceCols = `id, uid, name, type, currency, description, amount_scale, balance_minor, debt_minor, limit_minor, created_at, updated_at`
 
+// newUID returns a random lowercase UUID v4 string (used for transactions).
+func newUID() (string, error) {
+	id, err := uuid.NewRandom()
+	if err != nil {
+		return "", fmt.Errorf("generate uid: %w", err)
+	}
+	return id.String(), nil
+}
+
 // newBalanceUID returns a random UUID v4 string
 // (xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx, lowercase).
 func newBalanceUID() (string, error) {

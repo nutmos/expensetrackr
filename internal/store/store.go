@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"expense-service/internal/expense"
@@ -64,11 +65,16 @@ func (s *Store) Create(ctx context.Context, e *expense.Expense) error {
 	if !ok {
 		return fmt.Errorf("unknown currency %q", e.Currency)
 	}
+	uid, err := newUID()
+	if err != nil {
+		return err
+	}
+	e.UID = uid
 	e.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO transactions (amount_minor, amount_scale, currency, balance_uid, account, spent_at, spent_at_unix, note, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.AmountMinor, scale, e.Currency, e.BalanceUID, e.Account, e.SpentAt, e.SpentTime.Unix(), e.Note, e.CreatedAt)
+		`INSERT INTO transactions (uid, amount_minor, amount_scale, currency, balance_uid, account, spent_at, spent_at_unix, note, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.UID, e.AmountMinor, scale, e.Currency, e.BalanceUID, e.Account, e.SpentAt, e.SpentTime.Unix(), e.Note, e.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("insert transaction: %w", err)
 	}
@@ -87,7 +93,7 @@ type ListFilter struct {
 	Limit int
 }
 
-const selectCols = `id, amount_minor, amount_scale, currency, balance_uid, account, spent_at, note, created_at, updated_at`
+const selectCols = `id, uid, amount_minor, amount_scale, currency, balance_uid, account, spent_at, note, created_at, updated_at`
 
 // List returns rows from transactions newest first (by spend time, then ID).
 func (s *Store) List(ctx context.Context, f ListFilter) ([]expense.Expense, error) {
@@ -133,6 +139,16 @@ func (s *Store) Get(ctx context.Context, id int64) (expense.Expense, error) {
 	return e, err
 }
 
+// GetByUID returns one row from transactions by its UUID or ErrNotFound.
+func (s *Store) GetByUID(ctx context.Context, uid string) (expense.Expense, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT `+selectCols+` FROM transactions WHERE uid = ?`, strings.ToLower(strings.TrimSpace(uid)))
+	e, err := scan(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return expense.Expense{}, ErrNotFound
+	}
+	return e, err
+}
+
 // Update loads row id from transactions, passes it to fn and stores the expense
 // fn returns, all inside one database transaction (so a PATCH's read-modify-write is atomic). fn
 // receives the current row and returns the new, already validated values; an
@@ -162,7 +178,7 @@ func (s *Store) Update(ctx context.Context, id int64, fn func(cur expense.Expens
 		return expense.Expense{}, fmt.Errorf("unknown currency %q", next.Currency)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	next.ID, next.CreatedAt, next.UpdatedAt = cur.ID, cur.CreatedAt, &now
+	next.ID, next.UID, next.CreatedAt, next.UpdatedAt = cur.ID, cur.UID, cur.CreatedAt, &now
 
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE transactions SET amount_minor = ?, amount_scale = ?, currency = ?, balance_uid = ?, account = ?,
@@ -200,7 +216,7 @@ func scan(r scanner) (expense.Expense, error) {
 	var e expense.Expense
 	var scale int
 	var updated sql.NullString
-	if err := r.Scan(&e.ID, &e.AmountMinor, &scale, &e.Currency, &e.BalanceUID, &e.Account, &e.SpentAt, &e.Note, &e.CreatedAt, &updated); err != nil {
+	if err := r.Scan(&e.ID, &e.UID, &e.AmountMinor, &scale, &e.Currency, &e.BalanceUID, &e.Account, &e.SpentAt, &e.Note, &e.CreatedAt, &updated); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return e, err
 		}

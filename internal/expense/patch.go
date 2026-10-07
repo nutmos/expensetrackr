@@ -36,6 +36,10 @@ func (in *CreateInput) ApplyPatch(patch map[string]json.RawMessage) error {
 		return &RequestError{Msg: "patch must contain at least one of: amount, currency, balance_uid, spent_at, note"}
 	}
 	var unknown []string
+	delete(patch, "uid") // server-assigned and immutable; ignored like balances
+	if len(patch) == 0 {
+		return &RequestError{Msg: "patch must contain at least one of: amount, currency, balance_uid, spent_at, note"}
+	}
 	for k := range patch {
 		if k == "account" {
 			return &RequestError{Msg: `unknown field "account" (use "balance_uid" to set the payment account)`}

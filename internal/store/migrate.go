@@ -34,6 +34,7 @@ import (
 //	v3  table "balances" + index idx_balances_type added
 //	v4  balances.uid TEXT (UUID v4) added, backfilled, unique index idx_balances_uid
 //	v5  transactions.balance_uid added (matched from free-text account where possible)
+//	v6  transactions.uid TEXT (UUID v4) added, backfilled, unique index idx_transactions_uid
 //
 // A brand-new database is created directly at the latest version from
 // currentSchema. An existing database is upgraded by running the pending
@@ -46,6 +47,7 @@ import (
 const currentSchema = `
 CREATE TABLE transactions (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    uid           TEXT    NOT NULL UNIQUE CHECK (length(uid) = 36),
     amount_minor  INTEGER NOT NULL CHECK (amount_minor > 0),
     amount_scale  INTEGER NOT NULL CHECK (amount_scale BETWEEN 0 AND 4),
     currency      TEXT    NOT NULL CHECK (length(currency) = 3),
@@ -59,6 +61,7 @@ CREATE TABLE transactions (
 );
 CREATE INDEX idx_transactions_spent_at_unix ON transactions (spent_at_unix DESC, id DESC);
 CREATE INDEX idx_transactions_balance_uid ON transactions (balance_uid);
+CREATE UNIQUE INDEX idx_transactions_uid ON transactions (uid);
 ` + balancesSchemaCurrent
 
 // balancesSchemaV3 creates the balances table as shipped at version 3
@@ -140,6 +143,8 @@ var migrations = []migration{
 	addBalanceUID,
 	// v4 -> v5: add transactions.balance_uid, match free-text account to balances.
 	addTransactionBalanceUID,
+	// v5 -> v6: add transactions.uid (UUID v4), backfill, unique index.
+	addTransactionUID,
 }
 
 // SchemaVersion is the user_version a fully migrated database has.
@@ -399,6 +404,45 @@ func addTransactionBalanceUID(tx *sql.Tx) error {
 	}
 	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_transactions_balance_uid ON transactions (balance_uid)`); err != nil {
 		return fmt.Errorf("create balance_uid index: %w", err)
+	}
+	return nil
+}
+
+// addTransactionUID is migration v5 -> v6, mirroring addBalanceUID (v4): add a
+// nullable uid column if missing, fill every empty uid with a new UUID v4, then
+// create a unique index. New databases get uid TEXT NOT NULL UNIQUE directly.
+func addTransactionUID(tx *sql.Tx) error {
+	if err := addColumnIfMissing(tx, "transactions", "uid", "TEXT"); err != nil {
+		return fmt.Errorf("add transactions.uid column: %w", err)
+	}
+	rows, err := tx.Query(`SELECT id FROM transactions WHERE uid IS NULL OR uid = ''`)
+	if err != nil {
+		return fmt.Errorf("list transactions missing uid: %w", err)
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		uid, err := newUID()
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE transactions SET uid = ? WHERE id = ?`, uid, id); err != nil {
+			return fmt.Errorf("backfill transaction uid for id %d: %w", id, err)
+		}
+	}
+	if _, err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_uid ON transactions (uid)`); err != nil {
+		return fmt.Errorf("create transactions uid index: %w", err)
 	}
 	return nil
 }
