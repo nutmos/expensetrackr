@@ -9,7 +9,12 @@
 <body>
   <main>
     <h1>Expense Log</h1>
+    <nav class="tabs" role="tablist">
+      <a href="#expenses" id="tab-expenses" role="tab" class="tab">Expenses</a>
+      <a href="#balances" id="tab-balances" role="tab" class="tab">Balances</a>
+    </nav>
 
+    <div id="view-expenses" class="view" role="tabpanel">
     <section class="card">
       <h2 id="form-title">Log an expense</h2>
       <form id="expense-form" novalidate>
@@ -82,7 +87,80 @@
       </div>
       <div id="totals" class="muted"></div>
     </section>
+    </div>
+
+    <div id="view-balances" class="view" role="tabpanel" hidden>
+    <section class="card">
+      <h2 id="b-form-title">Add a balance</h2>
+      <form id="balance-form" novalidate>
+        <div class="grid">
+          <label>Name
+            <input id="b-name" name="name" type="text" maxlength="100" placeholder="KBank debit" autocomplete="off" required>
+            <small class="err" data-for="name"></small>
+          </label>
+          <label>Type
+            <select id="b-type" name="type" required>
+              <option value="payment_account">Payment account</option>
+              <option value="credit_card">Credit card</option>
+              <option value="other_asset">Other asset</option>
+              <option value="other_liability">Other liability</option>
+            </select>
+            <small class="err" data-for="type"></small>
+          </label>
+          <label>Base currency
+            <input id="b-currency" name="currency" type="text" list="currency-list" maxlength="3" placeholder="THB" autocomplete="off" required>
+            <small class="err" data-for="currency"></small>
+          </label>
+          <label class="asset-only">Balance
+            <input id="b-balance" name="balance" type="text" inputmode="decimal" placeholder="15000.00 (negative if overdrawn)" autocomplete="off">
+            <small class="err" data-for="balance"></small>
+          </label>
+          <label class="liability-only" hidden>Debt
+            <input id="b-debt" name="debt" type="text" inputmode="decimal" placeholder="2500.00" autocomplete="off">
+            <small class="err" data-for="debt"></small>
+          </label>
+          <label class="liability-only" hidden>Limit
+            <input id="b-limit" name="limit" type="text" inputmode="decimal" placeholder="50000.00" autocomplete="off">
+            <small class="err" data-for="limit"></small>
+          </label>
+        </div>
+        <label>Description (optional)
+          <input id="b-description" name="description" type="text" maxlength="1000" placeholder="Salary account">
+          <small class="err" data-for="description"></small>
+        </label>
+        <div class="actions">
+          <button type="submit" id="b-submit-btn">Save balance</button>
+          <button type="button" id="b-cancel-btn" class="secondary" hidden>Cancel edit</button>
+          <span id="b-form-status" role="status"></span>
+        </div>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Balances</h2>
+      <p id="b-list-status" class="muted"></p>
+      <div id="b-groups"></div>
+      <h3>Totals per currency</h3>
+      <p class="muted small">Assets = sum of balances; liabilities = sum of debts; available credit = limits − debts. No currency conversion.</p>
+      <div class="table-wrap">
+        <table id="b-totals">
+          <thead>
+            <tr>
+              <th>Currency</th>
+              <th class="num">Assets</th>
+              <th class="num">Liabilities</th>
+              <th class="num">Net</th>
+              <th class="num">Credit limit</th>
+              <th class="num">Available credit</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+    </div>
   </main>
   <script src="/static/app.js"></script>
+  <script src="/static/balances.js"></script>
 </body>
 </html>

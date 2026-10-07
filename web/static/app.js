@@ -83,13 +83,13 @@
   }
 
   function clearErrors() {
-    document.querySelectorAll(".err").forEach((el) => (el.textContent = ""));
+    form.querySelectorAll(".err").forEach((el) => (el.textContent = ""));
     form.querySelectorAll("input").forEach((el) => el.classList.remove("invalid"));
   }
 
   function showFieldErrors(fields) {
     for (const [name, msg] of Object.entries(fields || {})) {
-      const errEl = document.querySelector(`.err[data-for="${name}"]`);
+      const errEl = form.querySelector(`.err[data-for="${name}"]`);
       if (errEl) errEl.textContent = msg;
       const input = document.getElementById(name);
       if (input) input.classList.add("invalid");
@@ -375,7 +375,9 @@
   offsetInput.addEventListener("input", () => { offsetAuto = false; updatePreview(); });
   $("#now-btn").addEventListener("click", setNow);
   $("#cancel-btn").addEventListener("click", cancelEdit);
-  document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") cancelEdit(); });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && !$("#view-expenses").hidden) cancelEdit();
+  });
   form.addEventListener("submit", submitExpense);
   $("#filter-form").addEventListener("submit", (ev) => { ev.preventDefault(); loadExpenses(); });
   $("#filter-clear").addEventListener("click", () => {

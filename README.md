@@ -68,6 +68,34 @@ and JSON still use "expenses" (`/api/expenses`, `{"expenses": [...]}`).
 | created       | `created_at`   | `TEXT` RFC 3339 in UTC (server clock)                                  |
 | last edited   | `updated_at`   | `TEXT` RFC 3339 in UTC, `NULL` (JSON `null`) until the expense is edited |
 
+### Balances (table `balances`)
+
+A **balance** records the current state of an account. There are four types:
+
+| Type              | Kind      | Amount fields      | Rules |
+|-------------------|-----------|--------------------|-------|
+| `payment_account` | asset     | `balance`          | required; may be **negative** (e.g. an overdrawn account) or zero |
+| `other_asset`     | asset     | `balance`          | same as above |
+| `credit_card`     | liability | `debt`, `limit`    | both required, both ≥ 0; debt **may exceed** the limit (flagged `over_limit: true`) |
+| `other_liability` | liability | `debt`, `limit`    | same as above (for a loan, `limit` could be the credit line or the original principal; it's up to you) |
+
+Every balance also has a **`name`** (required, up to 100 characters, unique
+case-insensitively), a **base `currency`** (ISO 4217) and an optional
+`description` (up to 1000 characters). The name is a short label like
+"KBank debit". It is meant to match an expense's free-text payment `account`, so
+expenses can be linked to balances later. There is **no link yet**: no foreign
+key, and logging an expense does not change any balance.
+
+- Amounts use the same integer minor units + `amount_scale` scheme as expenses.
+- Sending an amount that the type does not use returns 422. Absent, `null` or
+  `""` counts as not sent.
+- Fields that don't apply are `null` in responses.
+- Liabilities also return the derived `available` = `limit − debt` (negative
+  when over the limit) and `over_limit`.
+- A CHECK constraint enforces the per-type columns in the database too.
+- Uniqueness uses SQLite `NOCASE`, which ignores case for ASCII letters only.
+  Thai names have no case, so this is enough.
+
 ### Amounts: integer minor units (no floats)
 
 The amount is parsed from its **decimal text** straight into an integer count of
@@ -105,8 +133,9 @@ browser's zone.
 The schema version is tracked in SQLite's `PRAGMA user_version`. The code is in
 `internal/store/migrate.go`.
 
-- **New, empty database:** the latest schema (`transactions` table + index) is
-  created directly at the current version, in one SQL transaction.
+- **New, empty database:** the latest schema (`transactions` and `balances`
+  tables + indexes) is created directly at the current version, in one SQL
+  transaction.
 - **Existing database:** pending migrations run in order. Each migration and
   its `user_version` bump share one SQL transaction, so an interrupted upgrade
   rolls back to the previous version and runs again on the next start.
@@ -117,6 +146,7 @@ The schema version is tracked in SQLite's `PRAGMA user_version`. The code is in
 | 0       | original schema: table `expenses`, index `idx_expenses_spent_at_unix` |
 | 1       | `ALTER TABLE expenses ADD COLUMN updated_at TEXT` (NULL for existing rows) |
 | 2       | `ALTER TABLE expenses RENAME TO transactions`, then `DROP INDEX IF EXISTS idx_expenses_spent_at_unix` and `CREATE INDEX IF NOT EXISTS idx_transactions_spent_at_unix ON transactions (spent_at_unix DESC, id DESC)` |
+| 3       | `CREATE TABLE IF NOT EXISTS balances (...)` with per-type CHECK constraints and `name COLLATE NOCASE UNIQUE`, plus `CREATE INDEX IF NOT EXISTS idx_balances_type ON balances (type, name)`. `transactions` is not touched. |
 
 Notes on version 2:
 
@@ -129,6 +159,10 @@ Notes on version 2:
 - If **both** `expenses` and `transactions` exist, startup fails with a clear
   error and nothing is changed. The tool won't guess which table holds the data.
 
+Version 3 is idempotent thanks to `IF NOT EXISTS`. If a `balances` table
+already exists without the expected columns, startup fails and nothing is
+changed.
+
 Version 1 checks `pragma_table_info` before adding the column. A database with a
 newer version than the binary supports is refused rather than modified. Each
 step is logged (`store: migrated schema to version N`, or `store: created new
@@ -140,7 +174,7 @@ upgrading.
 
 All responses are JSON. Every error looks like
 `{"error": "message", "fields": {"field": "problem", ...}}`. `fields` appears
-only on validation errors.
+only on validation and duplicate-name errors.
 
 | Method | Path                 | Success | Notes |
 |--------|----------------------|---------|-------|
@@ -150,6 +184,12 @@ only on validation errors.
 | PUT    | `/api/expenses/:id`  | 200 + updated expense | Full replace with the same body and rules as POST. An omitted `note` clears it. 404 if missing, 422 for invalid values, 400 for malformed JSON or unknown fields |
 | PATCH  | `/api/expenses/:id`  | 200 + updated expense | Partial update: only the fields you send change, then the merged result is validated like a create. `"note": null` clears the note; `null` for any other field returns 422. Returns 400 for `{}`, unknown fields or wrong JSON types, and 404 if missing |
 | DELETE | `/api/expenses/:id`  | 204 | 404 if missing |
+| POST   | `/api/balances`      | 201 + balance, `Location` header | 422 on validation errors (incl. per-type amount rules), 409 if the name is already used (case-insensitive), 400 on malformed JSON or unknown fields |
+| GET    | `/api/balances`      | 200 `{"balances":[...],"count":n,"totals":[...]}` | Grouped by type (payment accounts, credit cards, other assets, other liabilities), then by name. Optional `type=` filter (400 if invalid). `totals` covers the returned rows, per currency |
+| GET    | `/api/balances/:id`  | 200 + balance | 404 if missing |
+| PUT    | `/api/balances/:id`  | 200 + updated balance | Full replace. A type change must include the new type's amounts and leave out the old ones. Returns 404, 409, 422 or 400 as for POST |
+| PATCH  | `/api/balances/:id`  | 200 + updated balance | Partial update. When `type` changes, amounts the new type doesn't use are dropped automatically and the new type's amounts must be in the same PATCH. `"description": null` clears it; `"balance"`/`"debt"`/`"limit": null` removes that amount. A currency change re-reads the amounts using the new currency's decimals |
+| DELETE | `/api/balances/:id`  | 204 | 404 if missing |
 | GET    | `/api/healthz`       | 200 `{"status":"ok"}` | |
 | GET    | `/`                  | HTML page | Static assets under `/static/` |
 
@@ -197,6 +237,33 @@ number stays the same:
   `{"error":"validation failed","fields":{"amount":"the current amount 18.90 (SGD) cannot be expressed in JPY: ...; send a new amount together with the currency ..."}}`.
   Send `{"currency":"JPY","amount":"2800"}` instead.
 
+Balances:
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/api/balances -H 'Content-Type: application/json' \
+  -d '{"name":"KBank Visa","type":"credit_card","currency":"THB","debt":"52000","limit":"50000"}'
+```
+
+```json
+{"id":2,"name":"KBank Visa","type":"credit_card","kind":"liability","currency":"THB","description":"",
+ "balance":null,"balance_minor":null,"debt":"52000.00","debt_minor":5200000,"limit":"50000.00","limit_minor":5000000,
+ "available":"-2000.00","available_minor":-200000,"over_limit":true,"created_at":"2026-10-07T00:21:55Z","updated_at":null}
+```
+
+```bash
+curl -s 'http://127.0.0.1:8080/api/balances'
+# {"balances":[...],"count":5,"totals":[
+#   {"currency":"THB","assets":"95000.50","liabilities":"352000.00","net":"-256999.50",
+#    "credit_limit":"550000.00","available_credit":"198000.00"}, ...]}
+
+curl -s -X PATCH http://127.0.0.1:8080/api/balances/1 -H 'Content-Type: application/json' \
+  -d '{"type":"credit_card","debt":"0","limit":"20000"}'      # asset -> liability: balance dropped
+```
+
+Per-currency totals: `assets` = sum of balances, `liabilities` = sum of debts,
+`net` = assets − liabilities, `credit_limit` = sum of limits,
+`available_credit` = credit_limit − liabilities. There is no currency conversion.
+
 List with a time window (URL-encode the `+` as `%2B`; an unencoded `+` is also
 accepted):
 
@@ -208,25 +275,51 @@ curl -s 'http://127.0.0.1:8080/api/expenses?from=2026-10-01T00:00:00%2B08:00&to=
 
 ```
 cmd/server/main.go           entry point: flags, open DB, HTTP server, graceful shutdown
-internal/expense/            domain model + validation (no I/O)
-  expense.go                 Expense, CreateInput, Validate, ParseTimestamp
-  patch.go                   PATCH merge (ApplyPatch), RequestError
-  amount.go                  decimal string <-> integer minor units
+internal/money/              exact amounts: decimal string <-> integer minor units
+  amount.go                  ParseAmount (> 0), ParseNonNegative (>= 0), ParseSigned, FormatAmount
   currency.go                ISO 4217 codes -> minor-unit digits
-  expense_test.go, patch_test.go
-internal/store/              persistence: SQLite table "transactions" (modernc.org/sqlite)
-  store.go                   Store: Open, Create, List, Get, Update, Delete
-  migrate.go                 current schema, versioned migrations (v0 -> v1 -> v2)
-  store_test.go              fresh DB, v0/v1 -> v2 upgrades, partial/ambiguous states
+  decimal.go                 DecimalInput (JSON string or number, kept as text)
+internal/validate/           ValidationError (422) and RequestError (400)
+internal/expense/            expense domain model + validation (no I/O)
+  expense.go                 Expense, CreateInput, Validate, ParseTimestamp
+  patch.go                   PATCH merge (ApplyPatch)
+internal/balance/            balance domain model + per-type validation (no I/O)
+  balance.go                 Type, Balance, Input, Validate, ApplyPatch, ComputeTotals
+internal/store/              persistence (modernc.org/sqlite)
+  store.go                   expenses in table "transactions": Open, Create, List, Get, Update, Delete
+  balances.go                table "balances": CreateBalance, ListBalances, GetBalance, UpdateBalance, DeleteBalance
+  migrate.go                 current schema, versioned migrations (v0 -> v1 -> v2 -> v3)
+  store_test.go, balances_test.go   fresh DB, upgrades from v0/v1/v2, partial/ambiguous states
 internal/api/                Gin routes and handlers
-  api.go
-  api_test.go                create/list/get/delete
-  edit_test.go               PUT/PATCH
+  api.go                     expenses routes + shared helpers
+  balances.go                /api/balances routes
+  api_test.go, edit_test.go, balances_test.go
 web/embed.go                 embeds web/static into the binary
-web/static/                  index.html, app.js, style.css (no build step)
+web/static/                  index.html, style.css, app.js (expenses), balances.js (balances + tabs)
 ```
 
 ## Web page
+
+Two tabs: **Expenses** (`/#expenses`, the default) and **Balances**
+(`/#balances`).
+
+Balances tab:
+
+- A form with name, type, base currency, description, and amount fields that
+  change with the type: **Balance** for payment accounts and other assets,
+  **Debt** + **Limit** for credit cards and other liabilities. Hidden fields
+  are not sent.
+- Validation errors appear next to each field, including the duplicate-name
+  error (409).
+- The list is grouped by type, with a count in each heading. Assets show their
+  balance; liabilities show debt, limit and available (limit − debt). A red
+  "over limit" badge marks debt above the limit, and negative amounts are red.
+- **Edit** loads the balance into the form (saving sends a PUT); **Cancel edit**
+  or Esc leaves edit mode. **Delete** asks for confirmation.
+- A per-currency totals table shows assets, liabilities, net, credit limit and
+  available credit.
+
+Expenses tab:
 
 - A form to log an expense, and a table listing expenses newest first, with a
   date filter and totals per currency.
@@ -248,6 +341,13 @@ web/static/                  index.html, app.js, style.css (no build step)
 - Protection against lost updates if two tabs edit the same expense at once
   (e.g. require `updated_at` to match, or `If-Match`/ETag). Today the last save wins.
 - Whether payment accounts should be a managed list instead of free text.
+  Balances are the natural list. **Follow-up:** link expenses to balances (e.g.
+  `transactions.balance_id` or matching `account` to a balance `name`), let the
+  expense form pick a balance, and decide whether logging an expense should
+  lower the account's balance or raise the card's debt automatically.
+- Balances: should past balances be kept as dated snapshots? Should totals
+  across currencies be shown in one reporting currency? Should
+  `other_liability` really require a `limit`?
 - Naming follow-up to the `transactions` table rename: should the HTTP API
   (`/api/expenses`, the JSON `expenses` key), the Go domain package
   (`internal/expense`), the UI wording and the default DB file name
