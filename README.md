@@ -51,6 +51,11 @@ touch the real database.
 
 ## Data model
 
+Expenses are stored in the SQLite table **`transactions`**, with index
+`idx_transactions_spent_at_unix` on `(spent_at_unix DESC, id DESC)`. Until schema
+version 2 the table was named `expenses`; see "Schema migrations". The HTTP API
+and JSON still use "expenses" (`/api/expenses`, `{"expenses": [...]}`).
+
 | Field         | JSON           | Stored as                                                              |
 |---------------|----------------|------------------------------------------------------------------------|
 | id            | `id`           | `INTEGER PRIMARY KEY AUTOINCREMENT`                                    |
@@ -97,21 +102,39 @@ browser's zone.
 
 ### Schema migrations
 
-The schema version is tracked in SQLite's `PRAGMA user_version`. On startup
-the store creates the original (version 0) table if it is missing, then applies
-any pending numbered migrations, each in its own transaction:
+The schema version is tracked in SQLite's `PRAGMA user_version`. The code is in
+`internal/store/migrate.go`.
 
-| Version | Change                                                   |
-|---------|----------------------------------------------------------|
-| 0       | original schema                                          |
-| 1       | `ALTER TABLE expenses ADD COLUMN updated_at TEXT` (NULL) |
+- **New, empty database:** the latest schema (`transactions` table + index) is
+  created directly at the current version, in one SQL transaction.
+- **Existing database:** pending migrations run in order. Each migration and
+  its `user_version` bump share one SQL transaction, so an interrupted upgrade
+  rolls back to the previous version and runs again on the next start.
+  Migrations are also written to be idempotent, as a second line of defence.
 
-Column additions check `pragma_table_info` first, so a migration that was
-interrupted halfway can safely run again. Existing rows are untouched and get
-`updated_at = NULL`. A database with a newer version than the binary supports
-is refused rather than modified. Each applied migration is logged
-(`store: migrated schema to version 1`). To be extra safe, stop the server and
-copy `data/expenses.db` before upgrading.
+| Version | Change |
+|---------|--------|
+| 0       | original schema: table `expenses`, index `idx_expenses_spent_at_unix` |
+| 1       | `ALTER TABLE expenses ADD COLUMN updated_at TEXT` (NULL for existing rows) |
+| 2       | `ALTER TABLE expenses RENAME TO transactions`, then `DROP INDEX IF EXISTS idx_expenses_spent_at_unix` and `CREATE INDEX IF NOT EXISTS idx_transactions_spent_at_unix ON transactions (spent_at_unix DESC, id DESC)` |
+
+Notes on version 2:
+
+- `RENAME TO` keeps every row, the AUTOINCREMENT counter (deleted IDs are still
+  not reused) and attached indexes.
+- SQLite cannot rename an index, so the old one is dropped and recreated
+  under the new name.
+- If the table is already called `transactions` (e.g. renamed by hand), only
+  the index is fixed.
+- If **both** `expenses` and `transactions` exist, startup fails with a clear
+  error and nothing is changed. The tool won't guess which table holds the data.
+
+Version 1 checks `pragma_table_info` before adding the column. A database with a
+newer version than the binary supports is refused rather than modified. Each
+step is logged (`store: migrated schema to version N`, or `store: created new
+database at schema version N`). To be extra safe, stop the server and copy
+`data/expenses.db` (the file name is unchanged) to `data/backups/` before
+upgrading.
 
 ## API
 
@@ -191,9 +214,10 @@ internal/expense/            domain model + validation (no I/O)
   amount.go                  decimal string <-> integer minor units
   currency.go                ISO 4217 codes -> minor-unit digits
   expense_test.go, patch_test.go
-internal/store/              SQLite schema, migrations, CRUD (modernc.org/sqlite)
-  store.go
-  store_test.go              migration from an old-schema DB, idempotency
+internal/store/              persistence: SQLite table "transactions" (modernc.org/sqlite)
+  store.go                   Store: Open, Create, List, Get, Update, Delete
+  migrate.go                 current schema, versioned migrations (v0 -> v1 -> v2)
+  store_test.go              fresh DB, v0/v1 -> v2 upgrades, partial/ambiguous states
 internal/api/                Gin routes and handlers
   api.go
   api_test.go                create/list/get/delete
@@ -224,4 +248,9 @@ web/static/                  index.html, app.js, style.css (no build step)
 - Protection against lost updates if two tabs edit the same expense at once
   (e.g. require `updated_at` to match, or `If-Match`/ETag). Today the last save wins.
 - Whether payment accounts should be a managed list instead of free text.
+- Naming follow-up to the `transactions` table rename: should the HTTP API
+  (`/api/expenses`, the JSON `expenses` key), the Go domain package
+  (`internal/expense`), the UI wording and the default DB file name
+  (`data/expenses.db`) also move to "transactions"? Does "transactions" mean
+  income/transfers will be recorded too, which would need a type/sign field?
 - Refunds or negative amounts (currently rejected; amounts must be > 0).
