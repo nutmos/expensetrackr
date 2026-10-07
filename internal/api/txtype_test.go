@@ -74,7 +74,7 @@ func TestTransactionTypes(t *testing.T) {
 	}
 
 	// PATCH transfer -> expense drops destination.
-	id := fmt.Sprint(int64(tr["id"].(float64)))
+	id := tr["uid"].(string)
 	rec, p := do(t, h, "PATCH", "/api/transactions/"+id, `{"type":"expense"}`)
 	if rec.Code != 200 || p["type"] != "expense" || p["to_balance_uid"] != nil || p["to_account"] != nil {
 		t.Errorf("patch to expense: %d %v", rec.Code, p)

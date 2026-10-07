@@ -3,11 +3,9 @@ package api
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
-	"strconv"
+	"regexp"
 	"strings"
-	"unicode"
 
 	"expense-service/internal/balance"
 	"expense-service/internal/store"
@@ -18,10 +16,10 @@ import (
 func (s *Server) registerBalanceRoutes(api *gin.RouterGroup) {
 	api.POST("/balances", s.createBalance)
 	api.GET("/balances", s.listBalances)
-	api.GET("/balances/:id", s.getBalance)
-	api.PUT("/balances/:id", s.replaceBalance)
-	api.PATCH("/balances/:id", s.patchBalance)
-	api.DELETE("/balances/:id", s.deleteBalance)
+	api.GET("/balances/:uid", s.getBalance)
+	api.PUT("/balances/:uid", s.replaceBalance)
+	api.PATCH("/balances/:uid", s.patchBalance)
+	api.DELETE("/balances/:uid", s.deleteBalance)
 }
 
 // writeBalanceError maps balance errors: 404 not found, 409 duplicate name,
@@ -40,29 +38,14 @@ func writeBalanceError(c *gin.Context, err error) {
 	}
 }
 
-// resolveBalance looks up /api/balances/:id. If the path segment is all digits
-// it is treated as the numeric id; otherwise as the UUID uid. Returns the
-// balance and true, or writes an error response and returns false.
+// resolveBalance looks up /api/balances/:uid. Only the UUID uid is accepted:
+// a malformed value is 400, an unknown uid is 404.
 func (s *Server) resolveBalance(c *gin.Context) (balance.Balance, bool) {
-	raw := strings.TrimSpace(c.Param("id"))
-	if raw == "" {
-		c.JSON(http.StatusBadRequest, errorBody{Error: "id or uid is required"})
+	uid, ok := pathUID(c)
+	if !ok {
 		return balance.Balance{}, false
 	}
-	var (
-		b   balance.Balance
-		err error
-	)
-	if isAllDigits(raw) {
-		id, perr := strconv.ParseInt(raw, 10, 64)
-		if perr != nil || id < 1 {
-			c.JSON(http.StatusBadRequest, errorBody{Error: "id must be a positive integer"})
-			return balance.Balance{}, false
-		}
-		b, err = s.Store.GetBalance(c.Request.Context(), id)
-	} else {
-		b, err = s.Store.GetBalanceByUID(c.Request.Context(), raw)
-	}
+	b, err := s.Store.GetBalanceByUID(c.Request.Context(), uid)
 	if err != nil {
 		writeBalanceError(c, err)
 		return balance.Balance{}, false
@@ -70,17 +53,18 @@ func (s *Server) resolveBalance(c *gin.Context) (balance.Balance, bool) {
 	return b, true
 }
 
-func isAllDigits(s string) bool {
-	if s == "" {
-		return false
+// pathUID reads the :uid path parameter, lowercases it and checks it has the
+// canonical UUID shape (8-4-4-4-12 hex). Writes 400 and returns false if not.
+func pathUID(c *gin.Context) (string, bool) {
+	uid := strings.ToLower(strings.TrimSpace(c.Param("uid")))
+	if !uuidRE.MatchString(uid) {
+		c.JSON(http.StatusBadRequest, errorBody{Error: "uid must be a UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)"})
+		return "", false
 	}
-	for _, r := range s {
-		if !unicode.IsDigit(r) {
-			return false
-		}
-	}
-	return true
+	return uid, true
 }
+
+var uuidRE = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 func (s *Server) createBalance(c *gin.Context) {
 	var in balance.Input
@@ -96,7 +80,7 @@ func (s *Server) createBalance(c *gin.Context) {
 		writeBalanceError(c, err)
 		return
 	}
-	c.Header("Location", fmt.Sprintf("/api/balances/%d", b.ID))
+	c.Header("Location", "/api/balances/"+b.UID)
 	c.JSON(http.StatusCreated, b)
 }
 

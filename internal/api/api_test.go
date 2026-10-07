@@ -71,12 +71,19 @@ func seedCard(t *testing.T, h http.Handler, name, currency string) string {
 
 func TestBadIDAndIndex(t *testing.T) {
 	h := newTestServer(t)
-	// Non-digit segments are treated as a uid: unknown -> 404.
-	if rec, _ := do(t, h, "GET", "/api/transactions/abc", ""); rec.Code != http.StatusNotFound {
-		t.Errorf("unknown uid: status %d", rec.Code)
-	}
-	if rec, _ := do(t, h, "GET", "/api/transactions/0", ""); rec.Code != http.StatusBadRequest {
-		t.Errorf("bad id 0: status %d", rec.Code)
+	// Only UUIDs are accepted: malformed (incl. numeric ids) -> 400, unknown -> 404.
+	for _, res := range []string{"transactions", "balances"} {
+		for _, bad := range []string{"abc", "0", "1", "12345"} {
+			if rec, _ := do(t, h, "GET", "/api/"+res+"/"+bad, ""); rec.Code != http.StatusBadRequest {
+				t.Errorf("%s/%s: status %d, want 400", res, bad, rec.Code)
+			}
+		}
+		if rec, _ := do(t, h, "DELETE", "/api/"+res+"/7", ""); rec.Code != http.StatusBadRequest {
+			t.Errorf("DELETE %s/7: status %d, want 400", res, rec.Code)
+		}
+		if rec, _ := do(t, h, "GET", "/api/"+res+"/AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA", ""); rec.Code != http.StatusNotFound {
+			t.Errorf("%s unknown uid: status %d, want 404", res, rec.Code)
+		}
 	}
 	rec, _ := do(t, h, "GET", "/", "")
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Expense Log") {

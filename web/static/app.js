@@ -145,18 +145,18 @@
 
   function highlightEditingRow() {
     tbody.querySelectorAll("tr").forEach((tr) => {
-      tr.classList.toggle("editing", !!editing && tr.dataset.id === String(editing.id));
+      tr.classList.toggle("editing", !!editing && tr.dataset.uid === String(editing.uid));
     });
   }
 
   // ---- Edit mode ---------------------------------------------------------
 
-  async function startEdit(id) {
+  async function startEdit(uid) {
     clearErrors();
     setStatus("");
     let e;
     try {
-      const res = await fetch(`/api/transactions/${id}`);
+      const res = await fetch(`/api/transactions/${uid}`);
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
         setStatus(body.error || `Could not load transaction (${res.status})`, "bad");
@@ -180,7 +180,7 @@
     const d = new Date(e.spent_at);
     spentAtInput.value = isNaN(d) ? "" : toLocalInputValue(d);
 
-    $("#form-title").textContent = `Edit transaction #${e.id}`;
+    $("#form-title").textContent = `Edit transaction ${e.uid.slice(0, 8)}…`;
     $("#submit-btn").textContent = "Save changes";
     $("#cancel-btn").hidden = false;
     formCard.classList.add("editing");
@@ -234,7 +234,7 @@
     if (type === "transfer") payload.to_balance_uid = $("#to_balance_uid").value.trim();
 
     const isEdit = !!editing;
-    const url = isEdit ? `/api/transactions/${editing.id}` : "/api/transactions";
+    const url = isEdit ? `/api/transactions/${editing.uid}` : "/api/transactions";
     const btn = $("#submit-btn");
     btn.disabled = true;
     try {
@@ -253,7 +253,7 @@
       }
       if (isEdit) {
         await exitEdit(true);
-        setStatus(`Updated transaction #${body.id}: ${body.amount} ${body.currency}.`, "ok");
+        setStatus(`Updated transaction ${body.uid.slice(0, 8)}…: ${body.amount} ${body.currency}.`, "ok");
       } else {
         if (type === "expense") rememberDefaults(payload.currency, payload.balance_uid);
         setStatus(`Saved ${body.amount} ${body.currency}.`, "ok");
@@ -345,7 +345,7 @@
       tbody.replaceChildren();
       for (const e of body.transactions) {
         const tr = document.createElement("tr");
-        tr.dataset.id = String(e.id);
+        tr.dataset.uid = String(e.uid);
         const shown = new Date(e.spent_at);
         const timeTd = cell(isNaN(shown) ? e.spent_at : toLocalInputValue(shown).replace("T", " "), "time");
         timeTd.title = "Stored as " + e.spent_at + " (shown in your device's time zone)";
@@ -377,7 +377,7 @@
         const actions = document.createElement("td");
         actions.className = "actions-cell";
         actions.append(
-          button("Edit", "edit", () => startEdit(e.id)),
+          button("Edit", "edit", () => startEdit(e.uid)),
           button("Delete", "danger", () => deleteTransaction(e)),
         );
         tr.append(actions);
@@ -393,11 +393,11 @@
 
   async function deleteTransaction(e) {
     if (!confirm(`Delete ${e.amount} ${e.currency} (${e.account || e.balance_uid}) at ${e.spent_at}?`)) return;
-    const res = await fetch(`/api/transactions/${e.id}`, { method: "DELETE" });
+    const res = await fetch(`/api/transactions/${e.uid}`, { method: "DELETE" });
     if (!res.ok && res.status !== 404) {
       alert("Delete failed (" + res.status + ")");
     }
-    if (editing && editing.id === e.id) {
+    if (editing && editing.uid === e.uid) {
       await exitEdit(true);
       setStatus("The transaction you were editing was deleted.");
     }

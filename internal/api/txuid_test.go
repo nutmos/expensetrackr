@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -24,10 +25,18 @@ func TestTransactionUID(t *testing.T) {
 	if !uuidV4RE.MatchString(uid) || uid == "00000000-0000-4000-8000-000000000000" {
 		t.Fatalf("create uid = %q (must be server-assigned UUID v4)", uid)
 	}
-	id := int64(created["id"].(float64))
+	if _, hasID := created["id"]; hasID {
+		t.Errorf("response must not include id: %v", created)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/api/transactions/"+uid {
+		t.Errorf("Location = %q", loc)
+	}
 
-	// GET by uid and by id; list includes uid.
-	for _, p := range []string{fmt.Sprintf("/api/transactions/%d", id), "/api/transactions/" + uid} {
+	// GET by uid (upper-case accepted); list includes uid; numeric id is 400.
+	if rec, _ := do(t, h, http.MethodGet, "/api/transactions/1", ""); rec.Code != 400 {
+		t.Errorf("numeric id: %d, want 400", rec.Code)
+	}
+	for _, p := range []string{"/api/transactions/" + uid, "/api/transactions/" + strings.ToUpper(uid)} {
 		rec, got := do(t, h, http.MethodGet, p, "")
 		if rec.Code != 200 || got["uid"] != uid {
 			t.Errorf("GET %s: %d %v", p, rec.Code, got)
@@ -45,7 +54,7 @@ func TestTransactionUID(t *testing.T) {
 		t.Errorf("PUT: %d %v", rec.Code, put)
 	}
 	// PATCH with uid in body: ignored, uid unchanged.
-	rec, pat := do(t, h, http.MethodPatch, fmt.Sprintf("/api/transactions/%d", id),
+	rec, pat := do(t, h, http.MethodPatch, "/api/transactions/"+uid,
 		`{"note":"x","uid":"22222222-2222-4222-8222-222222222222"}`)
 	if rec.Code != 200 || pat["uid"] != uid || pat["note"] != "x" {
 		t.Errorf("PATCH: %d %v", rec.Code, pat)
@@ -58,7 +67,7 @@ func TestTransactionUID(t *testing.T) {
 	if rec, _ := do(t, h, http.MethodDelete, "/api/transactions/"+uid, ""); rec.Code != 204 {
 		t.Errorf("delete by uid: %d", rec.Code)
 	}
-	if rec, _ := do(t, h, http.MethodGet, fmt.Sprintf("/api/transactions/%d", id), ""); rec.Code != 404 {
+	if rec, _ := do(t, h, http.MethodGet, "/api/transactions/"+uid, ""); rec.Code != 404 {
 		t.Errorf("after delete: %d", rec.Code)
 	}
 }

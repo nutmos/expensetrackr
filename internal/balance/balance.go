@@ -65,7 +65,7 @@ const (
 // null in JSON: assets have balance; liabilities have debt, limit, available
 // and over_limit.
 type Balance struct {
-	ID             int64   `json:"id"`
+	ID             int64   `json:"-"`   // internal row id; the API identifies balances by UID
 	UID            string  `json:"uid"` // server-assigned UUID v4; immutable
 	Name           string  `json:"name"`
 	Type           Type    `json:"type"`

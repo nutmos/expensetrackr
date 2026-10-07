@@ -2,7 +2,6 @@ package api
 
 import (
 	"net/http"
-	"strconv"
 	"testing"
 )
 
@@ -12,7 +11,7 @@ func create(t *testing.T, h http.Handler, body string) (string, map[string]any) 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("seed: %d %s", rec.Code, rec.Body)
 	}
-	return "/api/transactions/" + strconv.Itoa(int(m["id"].(float64))), m
+	return "/api/transactions/" + m["uid"].(string), m
 }
 
 func TestPutReplacesTransaction(t *testing.T) {
@@ -32,7 +31,7 @@ func TestPutReplacesTransaction(t *testing.T) {
 		body["balance_uid"] != cash || body["spent_at"] != "2026-10-06T12:30:00+08:00" || body["note"] != "" {
 		t.Errorf("unexpected put body: %v", body)
 	}
-	if body["id"] != orig["id"] || body["created_at"] != orig["created_at"] {
+	if body["uid"] != orig["uid"] || body["created_at"] != orig["created_at"] {
 		t.Errorf("id/created_at must not change: %v vs %v", body, orig)
 	}
 }
@@ -47,9 +46,9 @@ func TestPutErrors(t *testing.T) {
 		status           int
 		field            string
 	}{
-		{"missing id", "/api/transactions/9999", valid, 404, ""},
-		{"missing id + invalid body", "/api/transactions/9999", `{"amount":"x"}`, 404, ""},
-		{"bad id", "/api/transactions/0", valid, 400, ""},
+		{"missing id", "/api/transactions/00000000-0000-4000-8000-000000009999", valid, 404, ""},
+		{"missing id + invalid body", "/api/transactions/00000000-0000-4000-8000-000000009999", `{"amount":"x"}`, 404, ""},
+		{"bad id", "/api/transactions/1", valid, 400, ""},
 		{"no offset", path, `{"amount":"1","currency":"USD","balance_uid":"` + uid + `","spent_at":"2026-10-06T12:30:00"}`, 422, "spent_at"},
 		{"missing fields", path, `{"amount":"1"}`, 422, "currency"},
 		{"unknown field", path, `{"amount":"1","currency":"USD","balance_uid":"` + uid + `","spent_at":"2026-10-06T12:30:00Z","id":5}`, 400, ""},
@@ -147,8 +146,8 @@ func TestPatchErrors(t *testing.T) {
 		name, path, body string
 		status           int
 	}{
-		{"missing id", "/api/transactions/9999", `{"note":"x"}`, 404},
-		{"bad id", "/api/transactions/0", `{"note":"x"}`, 400},
+		{"missing id", "/api/transactions/00000000-0000-4000-8000-000000009999", `{"note":"x"}`, 404},
+		{"bad id", "/api/transactions/1", `{"note":"x"}`, 400},
 		{"empty object", path, `{}`, 400},
 		{"null body", path, `null`, 400},
 		{"array body", path, `[1]`, 400},

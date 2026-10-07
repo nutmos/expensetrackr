@@ -25,10 +25,10 @@ const (
 func (s *Server) registerTransactionRoutes(api *gin.RouterGroup) {
 	api.POST("/transactions", s.createTransaction)
 	api.GET("/transactions", s.listTransactions)
-	api.GET("/transactions/:id", s.getTransaction)
-	api.PUT("/transactions/:id", s.replaceTransaction)
-	api.PATCH("/transactions/:id", s.patchTransaction)
-	api.DELETE("/transactions/:id", s.deleteTransaction)
+	api.GET("/transactions/:uid", s.getTransaction)
+	api.PUT("/transactions/:uid", s.replaceTransaction)
+	api.PATCH("/transactions/:uid", s.patchTransaction)
+	api.DELETE("/transactions/:uid", s.deleteTransaction)
 }
 
 // attachPaymentBalance loads the balance for e.BalanceUID, checks its type is
@@ -82,7 +82,7 @@ func (s *Server) createTransaction(c *gin.Context) {
 		internalError(c, err)
 		return
 	}
-	c.Header("Location", fmt.Sprintf("/api/transactions/%d", e.ID))
+	c.Header("Location", "/api/transactions/"+e.UID)
 	c.JSON(http.StatusCreated, e)
 }
 
@@ -271,27 +271,21 @@ func (s *Server) deleteTransaction(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// parseID resolves /api/transactions/:id to a numeric id. An all-digit segment is
-// the numeric id; anything else is looked up as the transaction uid (404 if
-// no such uid).
+// parseID resolves /api/transactions/:uid to the internal row id. Only the
+// UUID uid is accepted: a malformed value is 400, an unknown uid is 404.
 func (s *Server) parseID(c *gin.Context) (int64, bool) {
-	raw := strings.TrimSpace(c.Param("id"))
-	if raw != "" && !isAllDigits(raw) {
-		e, err := s.Store.GetByUID(c.Request.Context(), raw)
-		if errors.Is(err, store.ErrNotFound) {
-			c.JSON(http.StatusNotFound, errorBody{Error: "transaction not found"})
-			return 0, false
-		}
-		if err != nil {
-			internalError(c, err)
-			return 0, false
-		}
-		return e.ID, true
-	}
-	id, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || id < 1 {
-		c.JSON(http.StatusBadRequest, errorBody{Error: "id must be a positive integer or a uid"})
+	uid, ok := pathUID(c)
+	if !ok {
 		return 0, false
 	}
-	return id, true
+	e, err := s.Store.GetByUID(c.Request.Context(), uid)
+	if errors.Is(err, store.ErrNotFound) {
+		c.JSON(http.StatusNotFound, errorBody{Error: "transaction not found"})
+		return 0, false
+	}
+	if err != nil {
+		internalError(c, err)
+		return 0, false
+	}
+	return e.ID, true
 }

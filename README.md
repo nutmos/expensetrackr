@@ -59,7 +59,7 @@ uses `/api/transactions` and the list key `transactions` (the old
 
 | Field         | JSON           | Stored as                                                              |
 |---------------|----------------|------------------------------------------------------------------------|
-| id            | `id`           | `INTEGER PRIMARY KEY AUTOINCREMENT`                                    |
+| id            | (not exposed)  | `INTEGER PRIMARY KEY AUTOINCREMENT`, internal only; the API uses `uid`  |
 | uid           | `uid`          | `TEXT NOT NULL UNIQUE`, server-assigned UUID v4 (lowercase), immutable; a `uid` in PUT/PATCH bodies is ignored |
 | amount        | `amount`       | `amount_minor INTEGER` + `amount_scale INTEGER` (see below)             |
 | amount (raw)  | `amount_minor` | the integer itself, e.g. `12050`                                       |
@@ -230,6 +230,10 @@ upgrading.
 
 ## API
 
+Resources are identified **only by `uid`** (UUID v4) in URLs and JSON;
+the internal integer row id is never returned or accepted. `Location`
+headers on create are `/api/transactions/<uid>` and `/api/balances/<uid>`.
+
 All responses are JSON. Every error looks like
 `{"error": "message", "fields": {"field": "problem", ...}}`. `fields` appears
 only on validation and duplicate-name errors.
@@ -238,16 +242,16 @@ only on validation and duplicate-name errors.
 |--------|----------------------|---------|-------|
 | POST   | `/api/transactions`      | 201 + transaction, `Location` header | 422 on validation errors, 400 on malformed JSON or unknown fields |
 | GET    | `/api/transactions`      | 200 `{"transactions":[...],"count":n}` | Newest first by spend time. Optional `from`, `to` (RFC 3339 with offset, both inclusive), `limit` (1–5000, default 500), `type` (`expense`/`income`/`transfer`; 400 if invalid) |
-| GET    | `/api/transactions/:id`  | 200 + transaction | `:id` may be the numeric id **or** the transaction `uid` (all digits = id, otherwise uid; same for PUT/PATCH/DELETE). 404 if missing, 400 for a non-positive numeric id |
-| PUT    | `/api/transactions/:id`  | 200 + updated transaction | Full replace with the same body and rules as POST. An omitted `note` clears it. 404 if missing, 422 for invalid values, 400 for malformed JSON or unknown fields |
-| PATCH  | `/api/transactions/:id`  | 200 + updated transaction | Partial update: only the fields you send change, then the merged result is validated like a create. `"note": null` clears the note; `null` for any other field returns 422. Returns 400 for `{}`, unknown fields or wrong JSON types, and 404 if missing |
-| DELETE | `/api/transactions/:id`  | 204 | 404 if missing |
+| GET    | `/api/transactions/:uid`  | 200 + transaction | `:uid` is the transaction UUID (case-insensitive). **400** if it is not UUID-shaped (including numeric ids such as `/api/transactions/1`), **404** if no such uid. Same for PUT/PATCH/DELETE |
+| PUT    | `/api/transactions/:uid`  | 200 + updated transaction | Full replace with the same body and rules as POST. An omitted `note` clears it. 404 if missing, 422 for invalid values, 400 for malformed JSON or unknown fields |
+| PATCH  | `/api/transactions/:uid`  | 200 + updated transaction | Partial update: only the fields you send change, then the merged result is validated like a create. `"note": null` clears the note; `null` for any other field returns 422. Returns 400 for `{}`, unknown fields or wrong JSON types, and 404 if missing |
+| DELETE | `/api/transactions/:uid`  | 204 | 404 if missing |
 | POST   | `/api/balances`      | 201 + balance, `Location` header | 422 on validation errors (incl. per-type amount rules), 409 if the name is already used (case-insensitive), 400 on malformed JSON or unknown fields |
 | GET    | `/api/balances`      | 200 `{"balances":[...],"count":n,"totals":[...]}` | Grouped by type, then by name. Optional `type=` filter (400 if invalid). Optional `payable=1` / `payable=true` returns only `payment_account` and `credit_card` (cannot combine with `type=`). `totals` covers the returned rows, per currency |
-| GET    | `/api/balances/:id`  | 200 + balance | `:id` may be the numeric id **or** the UUID `uid` (all-digit paths are treated as numeric ids; anything else as uid). 404 if missing |
-| PUT    | `/api/balances/:id`  | 200 + updated balance | Full replace (id or uid). A type change must include the new type's amounts and leave out the old ones. `uid` in the body is ignored. Returns 404, 409, 422 or 400 as for POST |
-| PATCH  | `/api/balances/:id`  | 200 + updated balance | Partial update (id or uid). When `type` changes, amounts the new type doesn't use are dropped automatically and the new type's amounts must be in the same PATCH. `"description": null` clears it; `"balance"`/`"debt"`/`"limit": null` removes that amount. A currency change re-reads the amounts using the new currency's decimals. `uid` in the body is ignored |
-| DELETE | `/api/balances/:id`  | 204 | id or uid; 404 if missing |
+| GET    | `/api/balances/:uid`  | 200 + balance | `:uid` is the balance UUID. 400 if not UUID-shaped (numeric ids are no longer accepted), 404 if missing. Same for PUT/PATCH/DELETE |
+| PUT    | `/api/balances/:uid`  | 200 + updated balance | Full replace. A type change must include the new type's amounts and leave out the old ones. `uid` in the body is ignored. Returns 404, 409, 422 or 400 as for POST |
+| PATCH  | `/api/balances/:uid`  | 200 + updated balance | Partial update. When `type` changes, amounts the new type doesn't use are dropped automatically and the new type's amounts must be in the same PATCH. `"description": null` clears it; `"balance"`/`"debt"`/`"limit": null` removes that amount. A currency change re-reads the amounts using the new currency's decimals. `uid` in the body is ignored |
+| DELETE | `/api/balances/:uid`  | 204 | 404 if missing |
 | GET    | `/api/healthz`       | 200 `{"status":"ok"}` | |
 | GET    | `/`                  | HTML page | Static assets under `/static/` |
 
@@ -269,7 +273,7 @@ curl -s -X POST http://127.0.0.1:8080/api/transactions \
 ```
 
 ```json
-{"id":1,"uid":"5f0c2e9a-7b1d-4c3e-9a8f-2d6b1e4c7a90","amount":"120.50","amount_minor":12050,"currency":"THB",
+{"uid":"5f0c2e9a-7b1d-4c3e-9a8f-2d6b1e4c7a90","amount":"120.50","amount_minor":12050,"currency":"THB",
  "balance_uid":"a1b2c3d4-e5f6-4789-a012-3456789abcde","account":"KBank debit",
  "spent_at":"2026-10-06T21:06:00+08:00","note":"Lunch","created_at":"2026-10-06T13:20:11Z"}
 ```
@@ -282,7 +286,7 @@ curl -s -X POST http://127.0.0.1:8080/api/transactions -H 'Content-Type: applica
 ```
 
 ```json
-{"id":2,"uid":"…","type":"transfer","amount":"5000.00","amount_minor":500000,"currency":"THB",
+{"uid":"…","type":"transfer","amount":"5000.00","amount_minor":500000,"currency":"THB",
  "balance_uid":"…","account":"KBank debit","to_balance_uid":"…","to_account":"KBank Visa",
  "spent_at":"2026-10-07T22:00:00+08:00","note":"","created_at":"…","updated_at":null}
 ```
@@ -304,15 +308,15 @@ Validation error (HTTP 422):
   "spent_at":"must be an RFC 3339 / ISO 8601 date-time with a timezone offset, e.g. 2026-10-06T21:06:00+08:00"}}
 ```
 
-Edit: full replace (PUT) and partial update (PATCH). Both keep `id` and
+Edit: full replace (PUT) and partial update (PATCH). Both keep `uid` and
 `created_at` and set `updated_at`:
 
 ```bash
-curl -s -X PUT http://127.0.0.1:8080/api/transactions/1 -H 'Content-Type: application/json' \
+curl -s -X PUT http://127.0.0.1:8080/api/transactions/$TX_UID -H 'Content-Type: application/json' \
   -d "{\"amount\":\"150\",\"currency\":\"THB\",\"balance_uid\":\"$BAL_UID\",\"spent_at\":\"2026-10-05T09:15:00+07:00\",\"note\":\"pad thai + drink\"}"
-# 200 {"id":1,"amount":"150.00","amount_minor":15000,"currency":"THB",...,"updated_at":"2026-10-06T13:18:11Z"}
+# 200 {"uid":"…","amount":"150.00","amount_minor":15000,"currency":"THB",...,"updated_at":"2026-10-06T13:18:11Z"}
 
-curl -s -X PATCH http://127.0.0.1:8080/api/transactions/2 -H 'Content-Type: application/json' \
+curl -s -X PATCH http://127.0.0.1:8080/api/transactions/$TX_UID -H 'Content-Type: application/json' \
   -d '{"note":"chicken rice"}'
 # 200 {..., "note":"chicken rice", "updated_at":"..."}   (other fields unchanged)
 ```
@@ -335,7 +339,7 @@ curl -s -X POST http://127.0.0.1:8080/api/balances -H 'Content-Type: application
 ```
 
 ```json
-{"id":2,"uid":"a1b2c3d4-e5f6-4789-a012-3456789abcde","name":"KBank Visa","type":"credit_card","kind":"liability","currency":"THB","description":"",
+{"uid":"a1b2c3d4-e5f6-4789-a012-3456789abcde","name":"KBank Visa","type":"credit_card","kind":"liability","currency":"THB","description":"",
  "balance":null,"balance_minor":null,"debt":"52000.00","debt_minor":5200000,"limit":"50000.00","limit_minor":5000000,
  "available":"-2000.00","available_minor":-200000,"over_limit":true,"created_at":"2026-10-07T00:21:55Z","updated_at":null}
 ```
@@ -346,7 +350,7 @@ curl -s 'http://127.0.0.1:8080/api/balances'
 #   {"currency":"THB","assets":"95000.50","liabilities":"352000.00","net":"-256999.50",
 #    "credit_limit":"550000.00","available_credit":"198000.00"}, ...]}
 
-curl -s -X PATCH http://127.0.0.1:8080/api/balances/1 -H 'Content-Type: application/json' \
+curl -s -X PATCH http://127.0.0.1:8080/api/balances/$BAL_UID -H 'Content-Type: application/json' \
   -d '{"type":"credit_card","debt":"0","limit":"20000"}'      # asset -> liability: balance dropped
 ```
 
@@ -426,7 +430,7 @@ Transactions tab:
 - Totals per currency show expenses and income separately; transfers are
   excluded from both.
 - **Edit** loads the transaction into the same form: the card is highlighted, the
-  heading reads "Edit transaction #N", and the button reads "Save changes". Saving
+  heading reads "Edit transaction <first 8 chars of uid>…", and the button reads "Save changes". Saving
   sends a PUT, and validation errors appear next to each field. **Cancel edit**
   or Esc leaves edit mode without saving. Edited rows show a small "edited"
   marker; hover over it to see when.
