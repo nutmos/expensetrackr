@@ -17,6 +17,7 @@ button { font: inherit; padding: 8px 14px; border-radius: 6px; border: 1px solid
 button.secondary { background: #fff; color: var(--accent); }
 button.danger { background: #fff; color: var(--err); border-color: var(--err); padding: 4px 10px; font-size: 0.85rem; }
 button:disabled { opacity: 0.6; cursor: default; }
+select:disabled { opacity: 0.7; cursor: not-allowed; background: var(--bg); }
 #form-status.ok { color: #15803d; }
 #form-status.bad { color: var(--err); }
 .list-header { display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 10px; }

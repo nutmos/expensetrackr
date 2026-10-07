@@ -176,12 +176,17 @@ func (s *Store) UpdateBalance(ctx context.Context, id int64, fn func(cur balance
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	next.ID, next.UID, next.CreatedAt, next.UpdatedAt = cur.ID, cur.UID, cur.CreatedAt, &now
+	// The type is immutable after creation (callers reject a change with 422
+	// via balance.Input.ValidateUpdate); never write it here.
+	if next.Type != cur.Type {
+		return balance.Balance{}, fmt.Errorf("update balance: type cannot change (%s -> %s)", cur.Type, next.Type)
+	}
 
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE balances SET name = ?, type = ?, currency = ?, description = ?, amount_scale = ?,
+		`UPDATE balances SET name = ?, currency = ?, description = ?, amount_scale = ?,
 		        balance_minor = ?, debt_minor = ?, limit_minor = ?, updated_at = ?
 		 WHERE id = ?`,
-		next.Name, string(next.Type), next.Currency, next.Description, scale,
+		next.Name, next.Currency, next.Description, scale,
 		nullInt(next.BalanceMinor), nullInt(next.DebtMinor), nullInt(next.LimitMinor), now, id); err != nil {
 		if mapped := mapBalanceErr(err); mapped == ErrDuplicateName {
 			return balance.Balance{}, mapped

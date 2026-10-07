@@ -79,7 +79,8 @@
   function payload() {
     const p = {
       name: $("#b-name").value.trim(),
-      type: typeSel.value,
+      // The type is fixed after creation; an edit always sends the stored one.
+      type: editing ? editing.type : typeSel.value,
       currency: $("#b-currency").value.trim().toUpperCase(),
       description: $("#b-description").value.trim(),
     };
@@ -139,6 +140,8 @@
     editing = b;
     $("#b-name").value = b.name;
     typeSel.value = b.type;
+    typeSel.disabled = true; // type is immutable once created
+    $("#b-type-note").hidden = false;
     $("#b-currency").value = b.currency;
     $("#b-description").value = b.description || "";
     $("#b-balance").value = b.balance ?? "";
@@ -156,6 +159,8 @@
 
   function exitEdit() {
     editing = null;
+    typeSel.disabled = false;
+    $("#b-type-note").hidden = true;
     $("#b-form-title").textContent = "Add a balance";
     $("#b-submit-btn").textContent = "Save balance";
     $("#b-cancel-btn").hidden = true;

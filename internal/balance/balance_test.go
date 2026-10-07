@@ -3,6 +3,7 @@ package balance
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"expense-service/internal/money"
@@ -145,30 +146,33 @@ func TestApplyPatch(t *testing.T) {
 		t.Errorf("simple patch: %+v %v", b, err)
 	}
 
-	// asset -> liability without new amounts: balance dropped, debt/limit required.
+	// type may be sent in a patch, but ValidateUpdate only accepts the stored one.
 	in = acct.Input()
-	_ = in.ApplyPatch(patchOf(t, `{"type":"credit_card"}`))
-	_, err = in.Validate()
-	if f := fieldErrs(t, err); f["debt"] == "" || f["limit"] == "" || f["balance"] != "" {
-		t.Errorf("type change without amounts: %v", f)
+	if err := in.ApplyPatch(patchOf(t, `{"type":" Payment_Account ","balance":"1"}`)); err != nil {
+		t.Fatal(err)
 	}
-	// ... with them: OK.
-	in = acct.Input()
-	_ = in.ApplyPatch(patchOf(t, `{"type":"credit_card","debt":"10","limit":"100"}`))
-	if b, err := in.Validate(); err != nil || b.Balance != nil || *b.Available != "90.00" {
-		t.Errorf("type change with amounts: %+v %v", b, err)
+	if b, err := in.ValidateUpdate(acct.Type); err != nil || *b.Balance != "1.00" || b.Type != PaymentAccount {
+		t.Errorf("same type: %+v %v", b, err)
 	}
-	// ... but explicitly keeping balance is rejected.
-	in = acct.Input()
-	_ = in.ApplyPatch(patchOf(t, `{"type":"credit_card","debt":"10","limit":"100","balance":"5"}`))
-	if _, err := in.Validate(); fieldErrs(t, err)["balance"] == "" {
-		t.Errorf("explicit balance on liability should fail")
-	}
-	// asset -> asset keeps the balance.
-	in = acct.Input()
-	_ = in.ApplyPatch(patchOf(t, `{"type":"other_asset"}`))
-	if b, err := in.Validate(); err != nil || *b.Balance != "100.50" {
-		t.Errorf("asset->asset: %+v %v", b, err)
+	for _, patch := range []string{
+		`{"type":"credit_card"}`,
+		`{"type":"credit_card","debt":"10","limit":"100"}`,
+		`{"type":"other_asset"}`,
+		`{"type":"bogus"}`,
+	} {
+		in = acct.Input()
+		if err := in.ApplyPatch(patchOf(t, patch)); err != nil {
+			t.Fatalf("%s: %v", patch, err)
+		}
+		_, err := in.ValidateUpdate(acct.Type)
+		if f := fieldErrs(t, err); f["type"] != ErrTypeChanged {
+			t.Errorf("%s: want type error, got %v", patch, f)
+		}
+		// Amounts are judged against the stored type: debt/limit are not used by
+		// payment_account, the existing balance is still fine.
+		if f := fieldErrs(t, err); strings.Contains(patch, "debt") != (f["debt"] != "") || f["balance"] != "" {
+			t.Errorf("%s: other fields: %v", patch, f)
+		}
 	}
 	// Currency change re-scales: THB 100.50 -> JPY rejected, -> KWD 100.500.
 	in = acct.Input()

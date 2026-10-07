@@ -125,9 +125,10 @@ func (s *Server) getBalance(c *gin.Context) {
 	c.JSON(http.StatusOK, b)
 }
 
-// replaceBalance handles PUT: full replace with the same rules as create. A
-// type change must come with the new type's amounts (and without the old ones).
-// uid in the body is ignored; the existing uid is kept.
+// replaceBalance handles PUT: full replace with the same rules as create,
+// except that type is immutable: it is still required and must equal the
+// stored type (422 on "type" otherwise). uid in the body is ignored; the
+// existing uid is kept.
 func (s *Server) replaceBalance(c *gin.Context) {
 	cur, ok := s.resolveBalance(c)
 	if !ok {
@@ -137,13 +138,8 @@ func (s *Server) replaceBalance(c *gin.Context) {
 	if !decodeBody(c, &in, true) {
 		return
 	}
-	next, err := in.Validate()
-	if err != nil {
-		writeBalanceError(c, err)
-		return
-	}
-	updated, err := s.Store.UpdateBalance(c.Request.Context(), cur.ID, func(balance.Balance) (balance.Balance, error) {
-		return next, nil
+	updated, err := s.Store.UpdateBalance(c.Request.Context(), cur.ID, func(existing balance.Balance) (balance.Balance, error) {
+		return in.ValidateUpdate(existing.Type)
 	})
 	if err != nil {
 		writeBalanceError(c, err)
@@ -153,7 +149,7 @@ func (s *Server) replaceBalance(c *gin.Context) {
 }
 
 // patchBalance handles PATCH: only fields present change; the merged result is
-// validated as a whole (see balance.Input.ApplyPatch for type changes).
+// validated as a whole. "type" may be sent only with the stored value.
 // A "uid" field in the body is ignored.
 func (s *Server) patchBalance(c *gin.Context) {
 	cur, ok := s.resolveBalance(c)
@@ -173,7 +169,7 @@ func (s *Server) patchBalance(c *gin.Context) {
 		if err := in.ApplyPatch(patch); err != nil {
 			return balance.Balance{}, err
 		}
-		return in.Validate()
+		return in.ValidateUpdate(existing.Type)
 	})
 	if err != nil {
 		writeBalanceError(c, err)

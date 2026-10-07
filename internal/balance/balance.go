@@ -6,7 +6,9 @@ package balance
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -216,6 +218,33 @@ func (in Input) Validate() (Balance, error) {
 	return b, nil
 }
 
+// ErrTypeChanged is the field message for an update that tries to change type.
+const ErrTypeChanged = "balance type cannot be changed after creation"
+
+// ValidateUpdate validates in as the new state of a stored balance of type
+// stored (PUT, and PATCH after ApplyPatch). The type is fixed at creation: in
+// must carry the same type (case/space-insensitive); a different one is a
+// validation error on "type". The other fields are then still checked against
+// the stored type, so every problem is reported at once.
+func (in Input) ValidateUpdate(stored Type) (Balance, error) {
+	t := Type(strings.ToLower(strings.TrimSpace(in.Type)))
+	changed := t != "" && t != stored
+	if !changed {
+		return in.Validate()
+	}
+	in.Type = string(stored)
+	fields := map[string]string{}
+	if _, err := in.Validate(); err != nil {
+		var ve *validate.ValidationError
+		if !errors.As(err, &ve) {
+			return Balance{}, err
+		}
+		maps.Copy(fields, ve.Fields)
+	}
+	fields["type"] = ErrTypeChanged
+	return Balance{}, &validate.ValidationError{Fields: fields}
+}
+
 // Input returns the editable fields of a stored balance, for PATCH merging.
 func (b Balance) Input() Input {
 	dec := func(s *string) *money.DecimalInput {
@@ -241,10 +270,8 @@ func isNull(raw json.RawMessage) bool { return bytes.Equal(bytes.TrimSpace(raw),
 // ApplyPatch overlays the fields present in a JSON-object patch onto in.
 // Absent fields are unchanged. "description": null clears the description;
 // "balance"/"debt"/"limit": null removes that amount. null for name, type or
-// currency is a validation error. When "type" is in the patch, amounts that
-// the new type does not use are dropped unless the patch sets them
-// explicitly (in which case Validate rejects them). The caller must run
-// Validate on the result.
+// currency is a validation error. "type" may be sent but must equal the stored
+// type; the caller must run ValidateUpdate (which enforces that) on the result.
 func (in *Input) ApplyPatch(patch map[string]json.RawMessage) error {
 	// uid is immutable; drop it so round-tripping a previous response is fine.
 	delete(patch, "uid")
@@ -303,24 +330,6 @@ func (in *Input) ApplyPatch(patch map[string]json.RawMessage) error {
 	}
 	if len(nullFields) > 0 {
 		return &validate.ValidationError{Fields: nullFields}
-	}
-
-	if _, ok := patch["type"]; ok {
-		t := Type(strings.ToLower(strings.TrimSpace(in.Type)))
-		_, hasBal := patch["balance"]
-		_, hasDebt := patch["debt"]
-		_, hasLimit := patch["limit"]
-		if t.IsLiability() && !hasBal {
-			in.Balance = nil
-		}
-		if t.IsAsset() {
-			if !hasDebt {
-				in.Debt = nil
-			}
-			if !hasLimit {
-				in.Limit = nil
-			}
-		}
 	}
 	return nil
 }
