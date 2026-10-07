@@ -104,10 +104,15 @@ func schemaObjects(t *testing.T, path string) map[string]string {
 	return out
 }
 
-func assertV2Schema(t *testing.T, path string) {
+// assertCurrentSchema checks the database is fully migrated (v3): exactly the
+// transactions and balances tables with their indexes, and user_version 3.
+func assertCurrentSchema(t *testing.T, path string) {
 	t.Helper()
 	got := schemaObjects(t, path)
-	want := map[string]string{"transactions": "table", "idx_transactions_spent_at_unix": "index"}
+	want := map[string]string{
+		"transactions": "table", "idx_transactions_spent_at_unix": "index",
+		"balances": "table", "idx_balances_type": "index",
+	}
 	if len(got) != len(want) {
 		t.Errorf("schema objects = %v, want exactly %v", got, want)
 	}
@@ -116,12 +121,12 @@ func assertV2Schema(t *testing.T, path string) {
 			t.Errorf("missing %s %q; have %v", typ, name, got)
 		}
 	}
-	if v := userVersion(t, path); v != 2 || SchemaVersion != 2 {
-		t.Errorf("user_version = %d (SchemaVersion %d), want 2", v, SchemaVersion)
+	if v := userVersion(t, path); v != 3 || SchemaVersion != 3 {
+		t.Errorf("user_version = %d (SchemaVersion %d), want 3", v, SchemaVersion)
 	}
 }
 
-func TestFreshDatabaseUsesTransactions(t *testing.T) {
+func TestFreshDatabaseUsesCurrentSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "fresh.db")
 	st, err := Open(path)
 	if err != nil {
@@ -135,7 +140,7 @@ func TestFreshDatabaseUsesTransactions(t *testing.T) {
 		t.Fatalf("create on fresh db: id=%d err=%v", e.ID, err)
 	}
 	st.Close()
-	assertV2Schema(t, path)
+	assertCurrentSchema(t, path)
 }
 
 func TestMigrationV1ToV2RenamesTable(t *testing.T) {
@@ -174,7 +179,7 @@ func TestMigrationV1ToV2RenamesTable(t *testing.T) {
 		t.Errorf("delete after rename: %v", err)
 	}
 	st.Close()
-	assertV2Schema(t, path)
+	assertCurrentSchema(t, path)
 
 	// Re-opening is a no-op.
 	st, err = Open(path)
@@ -185,7 +190,7 @@ func TestMigrationV1ToV2RenamesTable(t *testing.T) {
 		t.Errorf("after reopen: %+v %v", got, err)
 	}
 	st.Close()
-	assertV2Schema(t, path)
+	assertCurrentSchema(t, path)
 }
 
 func TestMigrationV2IdempotentAfterPartialRename(t *testing.T) {
@@ -210,7 +215,7 @@ func TestMigrationV2IdempotentAfterPartialRename(t *testing.T) {
 			if err != nil || len(items) != 2 {
 				t.Errorf("rows: %d %v", len(items), err)
 			}
-			assertV2Schema(t, path)
+			assertCurrentSchema(t, path)
 		})
 	}
 }
@@ -271,7 +276,7 @@ func TestMigrationFromV0Schema(t *testing.T) {
 	}
 	st.Close()
 
-	assertV2Schema(t, path)
+	assertCurrentSchema(t, path)
 
 	// Re-opening is a no-op and keeps data.
 	st, err = Open(path)
@@ -298,7 +303,7 @@ func TestMigrationIdempotentIfColumnAlreadyAdded(t *testing.T) {
 		t.Fatalf("open half-migrated db: %v", err)
 	}
 	st.Close()
-	assertV2Schema(t, path)
+	assertCurrentSchema(t, path)
 }
 
 func TestUpdateNotFound(t *testing.T) {

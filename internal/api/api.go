@@ -52,6 +52,7 @@ func (s *Server) Router() *gin.Engine {
 	api.PUT("/expenses/:id", s.replaceExpense)
 	api.PATCH("/expenses/:id", s.patchExpense)
 	api.DELETE("/expenses/:id", s.deleteExpense)
+	s.registerBalanceRoutes(api)
 	api.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 
 	if s.Static != nil {
