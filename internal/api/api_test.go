@@ -74,7 +74,7 @@ func TestCreateGetDelete(t *testing.T) {
 	h := newTestServer(t)
 	uid := seedPayable(t, h, "KBank debit", "THB")
 
-	rec, body := do(t, h, "POST", "/api/expenses",
+	rec, body := do(t, h, "POST", "/api/transactions",
 		`{"amount":"120.5","currency":"thb","balance_uid":"`+uid+`","spent_at":"2026-10-06T21:06:00+08:00","note":"lunch"}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create: status %d body %s", rec.Code, rec.Body)
@@ -93,16 +93,16 @@ func TestCreateGetDelete(t *testing.T) {
 		t.Errorf("missing Location header")
 	}
 
-	rec, body = do(t, h, "GET", "/api/expenses/"+itoa(id), "")
+	rec, body = do(t, h, "GET", "/api/transactions/"+itoa(id), "")
 	if rec.Code != http.StatusOK || body["account"] != "KBank debit" || body["balance_uid"] != uid || body["note"] != "lunch" {
 		t.Fatalf("get: status %d body %v", rec.Code, body)
 	}
 
-	rec, _ = do(t, h, "DELETE", "/api/expenses/"+itoa(id), "")
+	rec, _ = do(t, h, "DELETE", "/api/transactions/"+itoa(id), "")
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("delete: status %d", rec.Code)
 	}
-	rec, _ = do(t, h, "GET", "/api/expenses/"+itoa(id), "")
+	rec, _ = do(t, h, "GET", "/api/transactions/"+itoa(id), "")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("get after delete: status %d", rec.Code)
 	}
@@ -139,7 +139,7 @@ func TestCreateValidationErrors(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			rec, body := do(t, h, "POST", "/api/expenses", c.body)
+			rec, body := do(t, h, "POST", "/api/transactions", c.body)
 			if rec.Code != c.status {
 				t.Fatalf("status %d, want %d; body %s", rec.Code, c.status, rec.Body)
 			}
@@ -166,12 +166,12 @@ func TestListOrderingAndFilters(t *testing.T) {
 		`{"amount":"3","currency":"USD","balance_uid":"` + card + `","spent_at":"2026-10-05T03:00:00Z"}`,
 	}
 	for _, in := range inputs {
-		if rec, _ := do(t, h, "POST", "/api/expenses", in); rec.Code != http.StatusCreated {
+		if rec, _ := do(t, h, "POST", "/api/transactions", in); rec.Code != http.StatusCreated {
 			t.Fatalf("seed: %d %s", rec.Code, rec.Body)
 		}
 	}
 
-	rec, body := do(t, h, "GET", "/api/expenses", "")
+	rec, body := do(t, h, "GET", "/api/transactions", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list: %d", rec.Code)
 	}
@@ -181,7 +181,7 @@ func TestListOrderingAndFilters(t *testing.T) {
 	}
 
 	q := url.Values{"from": {"2026-10-05T10:30:00+08:00"}, "to": {"2026-10-05T11:30:00+08:00"}}
-	rec, body = do(t, h, "GET", "/api/expenses?"+q.Encode(), "")
+	rec, body = do(t, h, "GET", "/api/transactions?"+q.Encode(), "")
 	if rec.Code != http.StatusOK || strings.Join(amounts(body), ",") != "3.00" {
 		t.Errorf("filtered = %d %v, want [3.00]", rec.Code, amounts(body))
 	}
@@ -190,10 +190,10 @@ func TestListOrderingAndFilters(t *testing.T) {
 func TestBadIDAndIndex(t *testing.T) {
 	h := newTestServer(t)
 	// Non-digit segments are treated as a uid: unknown -> 404.
-	if rec, _ := do(t, h, "GET", "/api/expenses/abc", ""); rec.Code != http.StatusNotFound {
+	if rec, _ := do(t, h, "GET", "/api/transactions/abc", ""); rec.Code != http.StatusNotFound {
 		t.Errorf("unknown uid: status %d", rec.Code)
 	}
-	if rec, _ := do(t, h, "GET", "/api/expenses/0", ""); rec.Code != http.StatusBadRequest {
+	if rec, _ := do(t, h, "GET", "/api/transactions/0", ""); rec.Code != http.StatusBadRequest {
 		t.Errorf("bad id 0: status %d", rec.Code)
 	}
 	rec, _ := do(t, h, "GET", "/", "")
@@ -221,7 +221,7 @@ func TestPayableBalancesFilter(t *testing.T) {
 
 func amounts(body map[string]any) []string {
 	var out []string
-	items, _ := body["expenses"].([]any)
+	items, _ := body["transactions"].([]any)
 	for _, it := range items {
 		out = append(out, it.(map[string]any)["amount"].(string))
 	}

@@ -1,4 +1,4 @@
-// Package expense holds the domain model and input validation.
+// Package transaction holds the domain model and input validation.
 package transaction
 
 import (
@@ -18,7 +18,7 @@ const (
 	uidLen     = 36 // UUID v4 canonical form
 )
 
-// Transaction is a stored expense record.
+// Transaction is a stored transaction record.
 type Transaction struct {
 	ID          int64     `json:"id"`
 	UID         string    `json:"uid"`          // server-assigned UUID v4, immutable
@@ -43,8 +43,8 @@ type (
 	RequestError    = validate.RequestError
 )
 
-// CreateInput is the payload accepted by POST /api/expenses and
-// PUT /api/expenses/:id (full replace). Payment account is identified by
+// CreateInput is the payload accepted by POST /api/transactions and
+// PUT /api/transactions/:id (full replace). Payment account is identified by
 // balance_uid (not free text). The read-only "account" name is filled in by
 // the API from the balance after validation.
 type CreateInput struct {

@@ -4,18 +4,18 @@
   "use strict";
 
   const $ = (sel) => document.querySelector(sel);
-  const form = $("#expense-form");
+  const form = $("#transaction-form");
   const formCard = form.closest(".card");
   const spentAtInput = $("#spent_at");
   const offsetInput = $("#spent_offset");
   const statusEl = $("#form-status");
-  const tbody = $("#expense-table tbody");
+  const tbody = $("#transaction-table tbody");
   const listStatus = $("#list-status");
   const totalsEl = $("#totals");
   const LS_KEY = "expense-log:last";
   const OFFSET_RE = /^(Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/;
 
-  // Edit state: null when logging a new expense, else the expense being edited.
+  // Edit state: null when logging a new transaction, else the transaction being edited.
   let editing = null;
   // When true, the offset field follows the browser's offset for the chosen date.
   let offsetAuto = true;
@@ -146,11 +146,11 @@
     setStatus("");
     let e;
     try {
-      const res = await fetch(`/api/expenses/${id}`);
+      const res = await fetch(`/api/transactions/${id}`);
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setStatus(body.error || `Could not load expense (${res.status})`, "bad");
-        if (res.status === 404) await loadExpenses();
+        setStatus(body.error || `Could not load transaction (${res.status})`, "bad");
+        if (res.status === 404) await loadTransactions();
         return;
       }
       e = body;
@@ -178,7 +178,7 @@
     }
     offsetAuto = false;
 
-    $("#form-title").textContent = `Edit expense #${e.id}`;
+    $("#form-title").textContent = `Edit transaction #${e.id}`;
     $("#submit-btn").textContent = "Save changes";
     $("#cancel-btn").hidden = false;
     formCard.classList.add("editing");
@@ -190,8 +190,8 @@
 
   async function exitEdit(resetFields) {
     editing = null;
-    $("#form-title").textContent = "Log an expense";
-    $("#submit-btn").textContent = "Save expense";
+    $("#form-title").textContent = "Log a transaction";
+    $("#submit-btn").textContent = "Save transaction";
     $("#cancel-btn").hidden = true;
     formCard.classList.remove("editing");
     clearErrors();
@@ -214,7 +214,7 @@
 
   // ---- Submit (create or update) ----------------------------------------
 
-  async function submitExpense(ev) {
+  async function submitTransaction(ev) {
     ev.preventDefault();
     clearErrors();
     setStatus("");
@@ -235,7 +235,7 @@
     };
 
     const isEdit = !!editing;
-    const url = isEdit ? `/api/expenses/${editing.id}` : "/api/expenses";
+    const url = isEdit ? `/api/transactions/${editing.id}` : "/api/transactions";
     const btn = $("#submit-btn");
     btn.disabled = true;
     try {
@@ -248,13 +248,13 @@
       if (!res.ok) {
         showFieldErrors(body.fields);
         let msg = body.error || `Request failed (${res.status})`;
-        if (isEdit && res.status === 404) msg = "This expense no longer exists (it may have been deleted).";
+        if (isEdit && res.status === 404) msg = "This transaction no longer exists (it may have been deleted).";
         setStatus(msg, "bad");
         return;
       }
       if (isEdit) {
         await exitEdit(true);
-        setStatus(`Updated expense #${body.id}: ${body.amount} ${body.currency}.`, "ok");
+        setStatus(`Updated transaction #${body.id}: ${body.amount} ${body.currency}.`, "ok");
       } else {
         rememberDefaults(payload.currency, payload.balance_uid);
         setStatus(`Saved ${body.amount} ${body.currency}.`, "ok");
@@ -263,7 +263,7 @@
         setNow();
       }
       $("#amount").focus();
-      await loadExpenses();
+      await loadTransactions();
     } catch (err) {
       setStatus("Network error: " + err.message, "bad");
     } finally {
@@ -326,18 +326,18 @@
     return b;
   }
 
-  async function loadExpenses() {
+  async function loadTransactions() {
     listStatus.textContent = "Loading…";
     try {
       const params = filterParams();
-      const res = await fetch("/api/expenses" + (params.toString() ? "?" + params : ""));
+      const res = await fetch("/api/transactions" + (params.toString() ? "?" + params : ""));
       const body = await res.json();
       if (!res.ok) {
         listStatus.textContent = body.error + (body.fields ? ": " + Object.values(body.fields).join("; ") : "");
         return;
       }
       tbody.replaceChildren();
-      for (const e of body.expenses) {
+      for (const e of body.transactions) {
         const tr = document.createElement("tr");
         tr.dataset.id = String(e.id);
         const timeTd = cell(e.spent_at.replace("T", " "), "time");
@@ -369,30 +369,30 @@
         actions.className = "actions-cell";
         actions.append(
           button("Edit", "edit", () => startEdit(e.id)),
-          button("Delete", "danger", () => deleteExpense(e)),
+          button("Delete", "danger", () => deleteTransaction(e)),
         );
         tr.append(actions);
         tbody.append(tr);
       }
-      listStatus.textContent = body.count === 0 ? "No expenses yet." : `${body.count} expense(s), newest first.`;
-      renderTotals(body.expenses);
+      listStatus.textContent = body.count === 0 ? "No transactions yet." : `${body.count} transaction(s), newest first.`;
+      renderTotals(body.transactions);
       highlightEditingRow();
     } catch (err) {
-      listStatus.textContent = "Failed to load expenses: " + err.message;
+      listStatus.textContent = "Failed to load transactions: " + err.message;
     }
   }
 
-  async function deleteExpense(e) {
+  async function deleteTransaction(e) {
     if (!confirm(`Delete ${e.amount} ${e.currency} (${e.account || e.balance_uid}) at ${e.spent_at}?`)) return;
-    const res = await fetch(`/api/expenses/${e.id}`, { method: "DELETE" });
+    const res = await fetch(`/api/transactions/${e.id}`, { method: "DELETE" });
     if (!res.ok && res.status !== 404) {
       alert("Delete failed (" + res.status + ")");
     }
     if (editing && editing.id === e.id) {
       await exitEdit(true);
-      setStatus("The expense you were editing was deleted.");
+      setStatus("The transaction you were editing was deleted.");
     }
-    await loadExpenses();
+    await loadTransactions();
   }
 
   // ---- Init ----------------------------------------------------------------
@@ -408,14 +408,14 @@
   $("#now-btn").addEventListener("click", setNow);
   $("#cancel-btn").addEventListener("click", cancelEdit);
   document.addEventListener("keydown", (ev) => {
-    if (ev.key === "Escape" && !$("#view-expenses").hidden) cancelEdit();
+    if (ev.key === "Escape" && !$("#view-transactions").hidden) cancelEdit();
   });
-  form.addEventListener("submit", submitExpense);
-  $("#filter-form").addEventListener("submit", (ev) => { ev.preventDefault(); loadExpenses(); });
+  form.addEventListener("submit", submitTransaction);
+  $("#filter-form").addEventListener("submit", (ev) => { ev.preventDefault(); loadTransactions(); });
   $("#filter-clear").addEventListener("click", () => {
     $("#filter-from").value = "";
     $("#filter-to").value = "";
-    loadExpenses();
+    loadTransactions();
   });
-  loadExpenses();
+  loadTransactions();
 })();

@@ -1,4 +1,4 @@
-// Package store persists expense records in the SQLite table "transactions",
+// Package store persists transaction records in the SQLite table "transactions",
 // using the pure-Go modernc.org/sqlite driver (no CGO required). The schema and
 // its migrations live in migrate.go.
 package store
@@ -58,7 +58,7 @@ func Open(path string) (*Store, error) {
 // Close closes the database.
 func (s *Store) Close() error { return s.db.Close() }
 
-// Create inserts a validated expense as a new row in transactions and fills in
+// Create inserts a validated transaction as a new row in transactions and fills in
 // ID and CreatedAt.
 func (s *Store) Create(ctx context.Context, e *transaction.Transaction) error {
 	scale, ok := money.MinorUnits(e.Currency)
@@ -149,7 +149,7 @@ func (s *Store) GetByUID(ctx context.Context, uid string) (transaction.Transacti
 	return e, err
 }
 
-// Update loads row id from transactions, passes it to fn and stores the expense
+// Update loads row id from transactions, passes it to fn and stores the transaction
 // fn returns, all inside one database transaction (so a PATCH's read-modify-write is atomic). fn
 // receives the current row and returns the new, already validated values; an
 // error from fn aborts the update and is returned unchanged. ID and CreatedAt

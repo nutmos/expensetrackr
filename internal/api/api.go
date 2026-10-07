@@ -46,12 +46,12 @@ func (s *Server) Router() *gin.Engine {
 	_ = r.SetTrustedProxies(nil)
 
 	api := r.Group("/api")
-	api.POST("/expenses", s.createExpense)
-	api.GET("/expenses", s.listExpenses)
-	api.GET("/expenses/:id", s.getExpense)
-	api.PUT("/expenses/:id", s.replaceExpense)
-	api.PATCH("/expenses/:id", s.patchExpense)
-	api.DELETE("/expenses/:id", s.deleteExpense)
+	api.POST("/transactions", s.createTransaction)
+	api.GET("/transactions", s.listTransactions)
+	api.GET("/transactions/:id", s.getTransaction)
+	api.PUT("/transactions/:id", s.replaceTransaction)
+	api.PATCH("/transactions/:id", s.patchTransaction)
+	api.DELETE("/transactions/:id", s.deleteTransaction)
 	s.registerBalanceRoutes(api)
 	api.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 
@@ -103,7 +103,7 @@ func writeInputError(c *gin.Context, err error) {
 	case errors.As(err, &re):
 		c.JSON(http.StatusBadRequest, errorBody{Error: re.Msg})
 	case errors.Is(err, store.ErrNotFound):
-		c.JSON(http.StatusNotFound, errorBody{Error: "expense not found"})
+		c.JSON(http.StatusNotFound, errorBody{Error: "transaction not found"})
 	default:
 		internalError(c, err)
 	}
@@ -126,7 +126,7 @@ func (s *Server) attachPaymentBalance(c *gin.Context, e *transaction.Transaction
 	return e.AttachPaymentBalance(b)
 }
 
-func (s *Server) createExpense(c *gin.Context) {
+func (s *Server) createTransaction(c *gin.Context) {
 	var in transaction.CreateInput
 	if !decodeBody(c, &in, true) {
 		return
@@ -144,13 +144,13 @@ func (s *Server) createExpense(c *gin.Context) {
 		internalError(c, err)
 		return
 	}
-	c.Header("Location", fmt.Sprintf("/api/expenses/%d", e.ID))
+	c.Header("Location", fmt.Sprintf("/api/transactions/%d", e.ID))
 	c.JSON(http.StatusCreated, e)
 }
 
-// replaceExpense handles PUT: a full replace with the same rules as create.
+// replaceTransaction handles PUT: a full replace with the same rules as create.
 // Omitted fields are treated as empty (so an omitted note clears it).
-func (s *Server) replaceExpense(c *gin.Context) {
+func (s *Server) replaceTransaction(c *gin.Context) {
 	id, ok := s.parseID(c)
 	if !ok {
 		return
@@ -162,7 +162,7 @@ func (s *Server) replaceExpense(c *gin.Context) {
 	next, err := in.Validate()
 	if err != nil {
 		// Validate before touching the DB, but report 404 first if the
-		// expense does not exist, to match the PATCH behaviour.
+		// transaction does not exist, to match the PATCH behaviour.
 		if _, gerr := s.Store.Get(c.Request.Context(), id); errors.Is(gerr, store.ErrNotFound) {
 			writeInputError(c, gerr)
 			return
@@ -188,10 +188,10 @@ func (s *Server) replaceExpense(c *gin.Context) {
 	c.JSON(http.StatusOK, updated)
 }
 
-// patchExpense handles PATCH: only fields present in the body change, then the
+// patchTransaction handles PATCH: only fields present in the body change, then the
 // merged result is validated as a whole (e.g. the amount is re-parsed against
 // the new currency's minor-unit scale when the currency changes).
-func (s *Server) patchExpense(c *gin.Context) {
+func (s *Server) patchTransaction(c *gin.Context) {
 	id, ok := s.parseID(c)
 	if !ok {
 		return
@@ -244,7 +244,7 @@ func (s *Server) patchExpense(c *gin.Context) {
 	c.JSON(http.StatusOK, updated)
 }
 
-func (s *Server) listExpenses(c *gin.Context) {
+func (s *Server) listTransactions(c *gin.Context) {
 	fields := map[string]string{}
 	var f store.ListFilter
 
@@ -288,17 +288,17 @@ func (s *Server) listExpenses(c *gin.Context) {
 		internalError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"expenses": items, "count": len(items)})
+	c.JSON(http.StatusOK, gin.H{"transactions": items, "count": len(items)})
 }
 
-func (s *Server) getExpense(c *gin.Context) {
+func (s *Server) getTransaction(c *gin.Context) {
 	id, ok := s.parseID(c)
 	if !ok {
 		return
 	}
 	e, err := s.Store.Get(c.Request.Context(), id)
 	if errors.Is(err, store.ErrNotFound) {
-		c.JSON(http.StatusNotFound, errorBody{Error: "expense not found"})
+		c.JSON(http.StatusNotFound, errorBody{Error: "transaction not found"})
 		return
 	}
 	if err != nil {
@@ -308,14 +308,14 @@ func (s *Server) getExpense(c *gin.Context) {
 	c.JSON(http.StatusOK, e)
 }
 
-func (s *Server) deleteExpense(c *gin.Context) {
+func (s *Server) deleteTransaction(c *gin.Context) {
 	id, ok := s.parseID(c)
 	if !ok {
 		return
 	}
 	err := s.Store.Delete(c.Request.Context(), id)
 	if errors.Is(err, store.ErrNotFound) {
-		c.JSON(http.StatusNotFound, errorBody{Error: "expense not found"})
+		c.JSON(http.StatusNotFound, errorBody{Error: "transaction not found"})
 		return
 	}
 	if err != nil {
@@ -325,7 +325,7 @@ func (s *Server) deleteExpense(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// parseID resolves /api/expenses/:id to a numeric id. An all-digit segment is
+// parseID resolves /api/transactions/:id to a numeric id. An all-digit segment is
 // the numeric id; anything else is looked up as the transaction uid (404 if
 // no such uid).
 func (s *Server) parseID(c *gin.Context) (int64, bool) {
@@ -333,7 +333,7 @@ func (s *Server) parseID(c *gin.Context) (int64, bool) {
 	if raw != "" && !isAllDigits(raw) {
 		e, err := s.Store.GetByUID(c.Request.Context(), raw)
 		if errors.Is(err, store.ErrNotFound) {
-			c.JSON(http.StatusNotFound, errorBody{Error: "expense not found"})
+			c.JSON(http.StatusNotFound, errorBody{Error: "transaction not found"})
 			return 0, false
 		}
 		if err != nil {

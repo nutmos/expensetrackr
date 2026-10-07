@@ -8,20 +8,20 @@ import (
 
 func create(t *testing.T, h http.Handler, body string) (string, map[string]any) {
 	t.Helper()
-	rec, m := do(t, h, "POST", "/api/expenses", body)
+	rec, m := do(t, h, "POST", "/api/transactions", body)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("seed: %d %s", rec.Code, rec.Body)
 	}
-	return "/api/expenses/" + strconv.Itoa(int(m["id"].(float64))), m
+	return "/api/transactions/" + strconv.Itoa(int(m["id"].(float64))), m
 }
 
-func TestPutReplacesExpense(t *testing.T) {
+func TestPutReplacesTransaction(t *testing.T) {
 	h := newTestServer(t)
 	uid := seedPayable(t, h, "KBank debit", "THB")
 	cash := seedPayable(t, h, "Cash", "SGD")
 	path, orig := create(t, h, `{"amount":"120.50","currency":"THB","balance_uid":"`+uid+`","spent_at":"2026-10-05T09:00:00+07:00","note":"lunch"}`)
 	if orig["updated_at"] != nil {
-		t.Errorf("new expense should have updated_at null, got %v", orig["updated_at"])
+		t.Errorf("new transaction should have updated_at null, got %v", orig["updated_at"])
 	}
 
 	rec, body := do(t, h, "PUT", path, `{"amount":"18.9","currency":"sgd","balance_uid":"`+cash+`","spent_at":"2026-10-06T12:30:00+08:00"}`)
@@ -47,9 +47,9 @@ func TestPutErrors(t *testing.T) {
 		status           int
 		field            string
 	}{
-		{"missing id", "/api/expenses/9999", valid, 404, ""},
-		{"missing id + invalid body", "/api/expenses/9999", `{"amount":"x"}`, 404, ""},
-		{"bad id", "/api/expenses/0", valid, 400, ""},
+		{"missing id", "/api/transactions/9999", valid, 404, ""},
+		{"missing id + invalid body", "/api/transactions/9999", `{"amount":"x"}`, 404, ""},
+		{"bad id", "/api/transactions/0", valid, 400, ""},
 		{"no offset", path, `{"amount":"1","currency":"USD","balance_uid":"` + uid + `","spent_at":"2026-10-06T12:30:00"}`, 422, "spent_at"},
 		{"missing fields", path, `{"amount":"1"}`, 422, "currency"},
 		{"unknown field", path, `{"amount":"1","currency":"USD","balance_uid":"` + uid + `","spent_at":"2026-10-06T12:30:00Z","id":5}`, 400, ""},
@@ -147,8 +147,8 @@ func TestPatchErrors(t *testing.T) {
 		name, path, body string
 		status           int
 	}{
-		{"missing id", "/api/expenses/9999", `{"note":"x"}`, 404},
-		{"bad id", "/api/expenses/0", `{"note":"x"}`, 400},
+		{"missing id", "/api/transactions/9999", `{"note":"x"}`, 404},
+		{"bad id", "/api/transactions/0", `{"note":"x"}`, 400},
 		{"empty object", path, `{}`, 400},
 		{"null body", path, `null`, 400},
 		{"array body", path, `[1]`, 400},

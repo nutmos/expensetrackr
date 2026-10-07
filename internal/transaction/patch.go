@@ -13,7 +13,7 @@ var patchFields = map[string]bool{
 	"amount": true, "currency": true, "balance_uid": true, "spent_at": true, "note": true,
 }
 
-// Input returns the editable fields of a stored expense as a CreateInput, so
+// Input returns the editable fields of a stored transaction as a CreateInput, so
 // that a partial update can be applied on top and re-validated as a whole.
 // Account is not editable (it is a denormalized snapshot of the balance name).
 func (e Transaction) Input() CreateInput {
