@@ -21,6 +21,7 @@ const (
 // Expense is a stored expense record.
 type Expense struct {
 	ID          int64     `json:"id"`
+	UID         string    `json:"uid"`          // server-assigned UUID v4, immutable
 	Amount      string    `json:"amount"`       // decimal string, e.g. "120.50"
 	AmountMinor int64     `json:"amount_minor"` // integer minor units, e.g. 12050
 	Currency    string    `json:"currency"`     // ISO 4217, e.g. "THB"
@@ -52,6 +53,10 @@ type CreateInput struct {
 	BalanceUID string       `json:"balance_uid"`
 	SpentAt    string       `json:"spent_at"`
 	Note       string       `json:"note"`
+
+	// IgnoredUID accepts a "uid" in PUT bodies so a previous response can be
+	// round-tripped; it is never used (the uid is server-assigned, immutable).
+	IgnoredUID string `json:"uid,omitempty"`
 }
 
 // ParseTimestamp parses a strict RFC 3339 / ISO 8601 date-time that carries an

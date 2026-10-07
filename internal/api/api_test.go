@@ -189,8 +189,12 @@ func TestListOrderingAndFilters(t *testing.T) {
 
 func TestBadIDAndIndex(t *testing.T) {
 	h := newTestServer(t)
-	if rec, _ := do(t, h, "GET", "/api/expenses/abc", ""); rec.Code != http.StatusBadRequest {
-		t.Errorf("bad id: status %d", rec.Code)
+	// Non-digit segments are treated as a uid: unknown -> 404.
+	if rec, _ := do(t, h, "GET", "/api/expenses/abc", ""); rec.Code != http.StatusNotFound {
+		t.Errorf("unknown uid: status %d", rec.Code)
+	}
+	if rec, _ := do(t, h, "GET", "/api/expenses/0", ""); rec.Code != http.StatusBadRequest {
+		t.Errorf("bad id 0: status %d", rec.Code)
 	}
 	rec, _ := do(t, h, "GET", "/", "")
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Expense Log") {

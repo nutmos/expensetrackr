@@ -151,7 +151,7 @@ func (s *Server) createExpense(c *gin.Context) {
 // replaceExpense handles PUT: a full replace with the same rules as create.
 // Omitted fields are treated as empty (so an omitted note clears it).
 func (s *Server) replaceExpense(c *gin.Context) {
-	id, ok := parseID(c)
+	id, ok := s.parseID(c)
 	if !ok {
 		return
 	}
@@ -192,7 +192,7 @@ func (s *Server) replaceExpense(c *gin.Context) {
 // merged result is validated as a whole (e.g. the amount is re-parsed against
 // the new currency's minor-unit scale when the currency changes).
 func (s *Server) patchExpense(c *gin.Context) {
-	id, ok := parseID(c)
+	id, ok := s.parseID(c)
 	if !ok {
 		return
 	}
@@ -292,7 +292,7 @@ func (s *Server) listExpenses(c *gin.Context) {
 }
 
 func (s *Server) getExpense(c *gin.Context) {
-	id, ok := parseID(c)
+	id, ok := s.parseID(c)
 	if !ok {
 		return
 	}
@@ -309,7 +309,7 @@ func (s *Server) getExpense(c *gin.Context) {
 }
 
 func (s *Server) deleteExpense(c *gin.Context) {
-	id, ok := parseID(c)
+	id, ok := s.parseID(c)
 	if !ok {
 		return
 	}
@@ -325,10 +325,26 @@ func (s *Server) deleteExpense(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-func parseID(c *gin.Context) (int64, bool) {
-	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+// parseID resolves /api/expenses/:id to a numeric id. An all-digit segment is
+// the numeric id; anything else is looked up as the transaction uid (404 if
+// no such uid).
+func (s *Server) parseID(c *gin.Context) (int64, bool) {
+	raw := strings.TrimSpace(c.Param("id"))
+	if raw != "" && !isAllDigits(raw) {
+		e, err := s.Store.GetByUID(c.Request.Context(), raw)
+		if errors.Is(err, store.ErrNotFound) {
+			c.JSON(http.StatusNotFound, errorBody{Error: "expense not found"})
+			return 0, false
+		}
+		if err != nil {
+			internalError(c, err)
+			return 0, false
+		}
+		return e.ID, true
+	}
+	id, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || id < 1 {
-		c.JSON(http.StatusBadRequest, errorBody{Error: "id must be a positive integer"})
+		c.JSON(http.StatusBadRequest, errorBody{Error: "id must be a positive integer or a uid"})
 		return 0, false
 	}
 	return id, true

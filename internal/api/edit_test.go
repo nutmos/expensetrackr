@@ -49,7 +49,7 @@ func TestPutErrors(t *testing.T) {
 	}{
 		{"missing id", "/api/expenses/9999", valid, 404, ""},
 		{"missing id + invalid body", "/api/expenses/9999", `{"amount":"x"}`, 404, ""},
-		{"bad id", "/api/expenses/abc", valid, 400, ""},
+		{"bad id", "/api/expenses/0", valid, 400, ""},
 		{"no offset", path, `{"amount":"1","currency":"USD","balance_uid":"` + uid + `","spent_at":"2026-10-06T12:30:00"}`, 422, "spent_at"},
 		{"missing fields", path, `{"amount":"1"}`, 422, "currency"},
 		{"unknown field", path, `{"amount":"1","currency":"USD","balance_uid":"` + uid + `","spent_at":"2026-10-06T12:30:00Z","id":5}`, 400, ""},

@@ -59,6 +59,7 @@ and JSON still use "expenses" (`/api/expenses`, `{"expenses": [...]}`).
 | Field         | JSON           | Stored as                                                              |
 |---------------|----------------|------------------------------------------------------------------------|
 | id            | `id`           | `INTEGER PRIMARY KEY AUTOINCREMENT`                                    |
+| uid           | `uid`          | `TEXT NOT NULL UNIQUE`, server-assigned UUID v4 (lowercase), immutable; a `uid` in PUT/PATCH bodies is ignored |
 | amount        | `amount`       | `amount_minor INTEGER` + `amount_scale INTEGER` (see below)             |
 | amount (raw)  | `amount_minor` | the integer itself, e.g. `12050`                                       |
 | currency      | `currency`     | `TEXT`, ISO 4217 alphabetic code, upper-cased (`THB`, `SGD`, `USD`, …)  |
@@ -159,6 +160,7 @@ The schema version is tracked in SQLite's `PRAGMA user_version`. The code is in
 | 3       | `CREATE TABLE IF NOT EXISTS balances (...)` with per-type CHECK constraints and `name COLLATE NOCASE UNIQUE`, plus `CREATE INDEX IF NOT EXISTS idx_balances_type ON balances (type, name)`. `transactions` is not touched. |
 | 4       | `ALTER TABLE balances ADD COLUMN uid TEXT` (if missing), backfill every empty uid with a new UUID v4, then `CREATE UNIQUE INDEX IF NOT EXISTS idx_balances_uid ON balances (uid)`. `transactions` is not touched. New databases create `uid TEXT NOT NULL UNIQUE` from the start. |
 | 5       | `ALTER TABLE transactions ADD COLUMN balance_uid TEXT` (if missing); match each free-text `account` to a payable balance name (`payment_account` / `credit_card`, case-insensitive) and set `balance_uid`; fail the migration if any row cannot be matched; `CREATE INDEX IF NOT EXISTS idx_transactions_balance_uid ON transactions (balance_uid)`. The `account` column is kept as a denormalized name snapshot. New databases create `balance_uid TEXT NOT NULL` (+ length CHECK) from the start. |
+| 6       | `ALTER TABLE transactions ADD COLUMN uid TEXT` (if missing), backfill every empty uid with a new UUID v4, then `CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_uid ON transactions (uid)`. Same style as v4; idempotent (existing uids kept). New databases create `uid TEXT NOT NULL UNIQUE` from the start. |
 
 Notes on version 2:
 
@@ -205,7 +207,7 @@ only on validation and duplicate-name errors.
 |--------|----------------------|---------|-------|
 | POST   | `/api/expenses`      | 201 + expense, `Location` header | 422 on validation errors, 400 on malformed JSON or unknown fields |
 | GET    | `/api/expenses`      | 200 `{"expenses":[...],"count":n}` | Newest first by spend time. Optional `from`, `to` (RFC 3339 with offset, both inclusive), `limit` (1–5000, default 500) |
-| GET    | `/api/expenses/:id`  | 200 + expense | 404 if missing, 400 if id is not a positive integer |
+| GET    | `/api/expenses/:id`  | 200 + expense | `:id` may be the numeric id **or** the transaction `uid` (all digits = id, otherwise uid; same for PUT/PATCH/DELETE). 404 if missing, 400 for a non-positive numeric id |
 | PUT    | `/api/expenses/:id`  | 200 + updated expense | Full replace with the same body and rules as POST. An omitted `note` clears it. 404 if missing, 422 for invalid values, 400 for malformed JSON or unknown fields |
 | PATCH  | `/api/expenses/:id`  | 200 + updated expense | Partial update: only the fields you send change, then the merged result is validated like a create. `"note": null` clears the note; `null` for any other field returns 422. Returns 400 for `{}`, unknown fields or wrong JSON types, and 404 if missing |
 | DELETE | `/api/expenses/:id`  | 204 | 404 if missing |
@@ -236,7 +238,7 @@ curl -s -X POST http://127.0.0.1:8080/api/expenses \
 ```
 
 ```json
-{"id":1,"amount":"120.50","amount_minor":12050,"currency":"THB",
+{"id":1,"uid":"5f0c2e9a-7b1d-4c3e-9a8f-2d6b1e4c7a90","amount":"120.50","amount_minor":12050,"currency":"THB",
  "balance_uid":"a1b2c3d4-e5f6-4789-a012-3456789abcde","account":"KBank debit",
  "spent_at":"2026-10-06T21:06:00+08:00","note":"Lunch","created_at":"2026-10-06T13:20:11Z"}
 ```
@@ -329,7 +331,7 @@ internal/balance/            balance domain model + per-type validation (no I/O)
 internal/store/              persistence (modernc.org/sqlite)
   store.go                   expenses in table "transactions": Open, Create, List, Get, Update, Delete
   balances.go                table "balances": CreateBalance, ListBalances, GetBalance, UpdateBalance, DeleteBalance
-  migrate.go                 current schema, versioned migrations (v0 -> … -> v5)
+  migrate.go                 current schema, versioned migrations (v0 -> … -> v6)
   store_test.go, balances_test.go   fresh DB, upgrades from v0/v1/v2, partial/ambiguous states
 internal/api/                Gin routes and handlers
   api.go                     expenses routes + shared helpers
@@ -366,6 +368,8 @@ Expenses tab:
 
 - A form to log an expense, and a table listing expenses newest first, with a
   date filter and totals per currency.
+- Each row shows the transaction `uid` in small muted monospace text under
+  the time (read-only; not in the form).
 - **Payment account** is a dropdown of payable balances (`payment_account` and
   `credit_card`, from `GET /api/balances?payable=1`). The form submits
   `balance_uid` (the UUID). The list shows the denormalized account name.

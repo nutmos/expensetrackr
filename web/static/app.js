@@ -349,6 +349,13 @@
           mark.title = "Last edited " + new Date(e.updated_at).toLocaleString() + " (" + e.updated_at + ")";
           timeTd.append(mark);
         }
+        if (e.uid) {
+          const txUid = document.createElement("div");
+          txUid.className = "uid muted";
+          txUid.textContent = e.uid;
+          txUid.title = "Transaction uid (stable id)";
+          timeTd.append(txUid);
+        }
         const acctTd = cell(e.account || "");
         if (e.balance_uid) {
           const uidEl = document.createElement("div");
