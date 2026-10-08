@@ -1,23 +1,27 @@
-// Expense Log front end: plain vanilla JS, no build step.
+// Transactions: list page (/transactions) and add/edit page
+// (/transactions/new, /transactions/<uid>/edit). Plain vanilla JS, no build step.
 // All user data is rendered with textContent / input .value (never innerHTML).
 (function () {
   "use strict";
 
-  const $ = (sel) => document.querySelector(sel);
+  const { $, cell, button, link } = App;
   const form = $("#transaction-form");
-  const formCard = form.closest(".card");
   const spentAtInput = $("#spent_at");
   const statusEl = $("#form-status");
   const tbody = $("#transaction-table tbody");
   const listStatus = $("#list-status");
   const totalsEl = $("#totals");
+  const LIST = "/transactions";
   const LS_KEY = "expense-log:last";
-  // Edit state: null when logging a new transaction, else the transaction being edited.
+  // Form state: null on the add page, else the transaction being edited.
   let editing = null;
   // All balances (for the source/destination dropdowns), from GET /api/balances.
   let allBalances = [];
-  // All categories (for the category dropdown), from GET /api/categories.
+  // All categories (dropdown + list names), from GET /api/categories.
   let allCategories = [];
+  // Bumped on every page entry so a slow response for a page we already
+  // left is ignored.
+  let gen = 0;
 
   const pad = (n, w = 2) => String(Math.abs(n)).padStart(w, "0");
 
@@ -66,24 +70,13 @@
     $("#spent-at-preview").textContent = text;
   }
 
-  function clearErrors() {
-    form.querySelectorAll(".err").forEach((el) => (el.textContent = ""));
-    form.querySelectorAll("input, select").forEach((el) => el.classList.remove("invalid"));
+  // "YYYY-MM-DD HH:MM:SS" in the device's time zone (raw value if unparsable).
+  function shownTime(rfc3339) {
+    const d = new Date(rfc3339);
+    return isNaN(d) ? rfc3339 : toLocalInputValue(d).replace("T", " ");
   }
 
-  function showFieldErrors(fields) {
-    for (const [name, msg] of Object.entries(fields || {})) {
-      const errEl = form.querySelector(`.err[data-for="${name}"]`);
-      if (errEl) errEl.textContent = msg;
-      const input = document.getElementById(name);
-      if (input) input.classList.add("invalid");
-    }
-  }
-
-  function setStatus(text, kind) {
-    statusEl.textContent = text;
-    statusEl.className = kind || "";
-  }
+  const setStatus = (text, kind) => App.setStatus(statusEl, text, kind);
 
   function rememberDefaults(currency, balanceUID) {
     try { localStorage.setItem(LS_KEY, JSON.stringify({ currency, balance_uid: balanceUID })); } catch (_) {}
@@ -149,103 +142,68 @@
     sel.value = want && [...sel.options].some((o) => o.value === want) ? want : "";
   }
 
-  async function loadTxCategories(keep) {
-    try {
-      const res = await fetch("/api/categories");
-      const body = await res.json();
-      if (res.ok) allCategories = body.categories || [];
-    } catch (_) { /* keep previous list */ }
-    fillCategories(currentType(), keep);
-  }
+  // ---- Form page: /transactions/new and /transactions/<uid>/edit ------------
 
-  // Name kept for balances.js, which calls it after balance changes.
-  async function loadPayableBalances(selected, selectedTo) {
-    try {
-      const res = await fetch("/api/balances");
-      const body = await res.json();
-      if (res.ok) allBalances = body.balances || [];
-    } catch (_) { /* keep previous list */ }
-    applyType(selected, selectedTo);
-  }
-
-  function highlightEditingRow() {
-    tbody.querySelectorAll("tr").forEach((tr) => {
-      tr.classList.toggle("editing", !!editing && tr.dataset.uid === String(editing.uid));
-    });
-  }
-
-  // ---- Edit mode ---------------------------------------------------------
-
-  async function startEdit(uid) {
-    clearErrors();
+  async function enterForm(params) {
+    const my = ++gen;
+    editing = null;
+    form.reset();
+    App.clearErrors(form);
     setStatus("");
+    form.hidden = false;
+    $("#submit-btn").disabled = false;
+    $("#type").value = "expense";
+    $("#note").value = "";
+    $("#amount").value = "";
+    $("#currency").value = "";
+    if (!params.uid) {
+      $("#form-title").textContent = "Add a transaction";
+      $("#submit-btn").textContent = "Save transaction";
+      await Promise.all([loadBalancesList(), loadCategoriesList()]);
+      if (my !== gen) return;
+      applyType("", "");
+      restoreDefaults();
+      setNow();
+      $("#amount").focus();
+      return;
+    }
+    $("#form-title").textContent = "Edit transaction";
+    $("#submit-btn").textContent = "Save changes";
+    form.hidden = true; // until loaded
     let e;
     try {
-      const res = await fetch(`/api/transactions/${uid}`);
+      const [res] = await Promise.all([fetch(`/api/transactions/${params.uid}`), loadBalancesList(), loadCategoriesList()]);
       const body = await res.json().catch(() => ({}));
+      if (my !== gen) return;
       if (!res.ok) {
-        setStatus(body.error || `Could not load transaction (${res.status})`, "bad");
-        if (res.status === 404) await loadTransactions();
+        setStatus(res.status === 404 ? "This transaction does not exist (it may have been deleted)." : body.error || `Could not load transaction (${res.status})`, "bad");
         return;
       }
       e = body;
     } catch (err) {
-      setStatus("Network error: " + err.message, "bad");
+      if (my === gen) setStatus("Network error: " + err.message, "bad");
       return;
     }
-
     editing = e;
+    form.hidden = false;
+    $("#form-title").textContent = `Edit transaction: ${e.amount} ${e.currency}, ${shownTime(e.spent_at)}`;
     $("#amount").value = e.amount;
     $("#currency").value = e.currency;
     $("#type").value = e.type || "expense";
-    await loadPayableBalances(e.balance_uid, e.to_balance_uid || "");
-    await loadTxCategories(e.category_uid || "");
+    applyType(e.balance_uid, e.to_balance_uid || "");
+    fillCategories(currentType(), e.category_uid || "");
     $("#note").value = e.note || "";
     // Show the saved instant converted to the device's local time; saving
     // re-stamps it with the device's current offset.
     const d = new Date(e.spent_at);
     spentAtInput.value = isNaN(d) ? "" : toLocalInputValue(d);
-
-    $("#form-title").textContent = `Edit transaction ${e.uid.slice(0, 8)}…`;
-    $("#submit-btn").textContent = "Save changes";
-    $("#cancel-btn").hidden = false;
-    formCard.classList.add("editing");
     updatePreview();
-    highlightEditingRow();
-    formCard.scrollIntoView({ behavior: "smooth", block: "start" });
     $("#amount").focus();
   }
 
-  async function exitEdit(resetFields) {
-    editing = null;
-    $("#form-title").textContent = "Log a transaction";
-    $("#submit-btn").textContent = "Save transaction";
-    $("#cancel-btn").hidden = true;
-    formCard.classList.remove("editing");
-    clearErrors();
-    if (resetFields) {
-      $("#amount").value = "";
-      $("#note").value = "";
-      $("#currency").value = "";
-      $("#type").value = "expense";
-      await loadPayableBalances(undefined, "");
-      restoreDefaults();
-      setNow();
-    }
-    highlightEditingRow();
-  }
-
-  async function cancelEdit() {
-    if (!editing) return;
-    await exitEdit(true);
-    setStatus("Edit cancelled.");
-  }
-
-  // ---- Submit (create or update) ----------------------------------------
-
   async function submitTransaction(ev) {
     ev.preventDefault();
-    clearErrors();
+    App.clearErrors(form);
     setStatus("");
 
     const type = currentType();
@@ -272,24 +230,16 @@
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        showFieldErrors(body.fields);
+        App.showFieldErrors(form, body.fields);
         let msg = body.error || `Request failed (${res.status})`;
         if (isEdit && res.status === 404) msg = "This transaction no longer exists (it may have been deleted).";
         setStatus(msg, "bad");
         return;
       }
-      if (isEdit) {
-        await exitEdit(true);
-        setStatus(`Updated transaction ${body.uid.slice(0, 8)}…: ${body.amount} ${body.currency}.`, "ok");
-      } else {
-        if (type === "expense") rememberDefaults(payload.currency, payload.balance_uid);
-        setStatus(`Saved ${body.amount} ${body.currency}.`, "ok");
-        $("#amount").value = "";
-        $("#note").value = "";
-        setNow();
-      }
-      $("#amount").focus();
-      await loadTransactions();
+      if (!isEdit && type === "expense") rememberDefaults(payload.currency, payload.balance_uid);
+      App.setFlash("transactions", `${isEdit ? "Updated" : "Saved"} ${body.amount} ${body.currency} (${body.type}).`, body.uid);
+      editing = null;
+      App.returnToList(LIST);
     } catch (err) {
       setStatus("Network error: " + err.message, "bad");
     } finally {
@@ -297,7 +247,9 @@
     }
   }
 
-  // ---- List ----------------------------------------------------------------
+  function cancelForm() { App.returnToList(LIST); }
+
+  // ---- List page: /transactions ---------------------------------------------
 
   function filterParams() {
     const params = new URLSearchParams();
@@ -313,13 +265,6 @@
       params.set("to", toRFC3339(new Date(y, m - 1, dd, 23, 59, 59)));
     }
     return params;
-  }
-
-  function cell(text, cls) {
-    const td = document.createElement("td");
-    td.textContent = text;
-    if (cls) td.className = cls;
-    return td;
   }
 
   function formatMinor(minor, scale) {
@@ -350,15 +295,6 @@
     totalsEl.textContent = parts.length ? "Totals (shown rows, transfers excluded): " + parts.join(" · ") : "";
   }
 
-  function button(text, cls, onClick) {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = cls;
-    b.textContent = text;
-    b.addEventListener("click", onClick);
-    return b;
-  }
-
   // Category name for a transaction, looked up client-side by category_uid
   // (transactions carry only the uid).
   function categoryName(uid) {
@@ -367,13 +303,51 @@
     return c ? c.name : "(unknown category)";
   }
 
-  async function loadTransactions() {
+  async function loadBalancesList() {
+    try {
+      const res = await fetch("/api/balances");
+      const body = await res.json();
+      if (res.ok) allBalances = body.balances || [];
+    } catch (_) { /* keep previous list */ }
+  }
+
+  async function loadCategoriesList() {
+    try {
+      const res = await fetch("/api/categories");
+      const body = await res.json();
+      if (res.ok) allCategories = body.categories || [];
+    } catch (_) { /* keep previous list */ }
+  }
+
+  // Filters live in the URL (?from=YYYY-MM-DD&to=YYYY-MM-DD) so they survive
+  // add/edit round trips, reloads and the back button.
+  async function enterList(_params, query) {
+    $("#filter-from").value = /^\d{4}-\d{2}-\d{2}$/.test(query.get("from") || "") ? query.get("from") : "";
+    $("#filter-to").value = /^\d{4}-\d{2}-\d{2}$/.test(query.get("to") || "") ? query.get("to") : "";
+    const highlight = App.takeFlash("transactions");
+    await loadTransactions(highlight);
+  }
+
+  function applyFilters() {
+    const q = new URLSearchParams();
+    if ($("#filter-from").value) q.set("from", $("#filter-from").value);
+    if ($("#filter-to").value) q.set("to", $("#filter-to").value);
+    App.replaceQuery(q.toString());
+    $("#flash-transactions").hidden = true;
+    loadTransactions();
+  }
+
+  async function loadTransactions(highlightUID) {
+    const my = ++gen;
     listStatus.textContent = "Loading…";
-    await categoriesReady;
     try {
       const params = filterParams();
-      const res = await fetch("/api/transactions" + (params.toString() ? "?" + params : ""));
+      const [res] = await Promise.all([
+        fetch("/api/transactions" + (params.toString() ? "?" + params : "")),
+        loadCategoriesList(),
+      ]);
       const body = await res.json();
+      if (my !== gen) return;
       if (!res.ok) {
         listStatus.textContent = body.error + (body.fields ? ": " + Object.values(body.fields).join("; ") : "");
         return;
@@ -382,8 +356,8 @@
       for (const e of body.transactions) {
         const tr = document.createElement("tr");
         tr.dataset.uid = String(e.uid);
-        const shown = new Date(e.spent_at);
-        const timeTd = cell(isNaN(shown) ? e.spent_at : toLocalInputValue(shown).replace("T", " "), "time");
+        if (highlightUID && e.uid === highlightUID) tr.classList.add("just-saved");
+        const timeTd = cell(shownTime(e.spent_at), "time");
         timeTd.title = "Stored as " + e.spent_at + " (shown in your device's time zone)";
         if (e.updated_at) {
           const mark = document.createElement("span");
@@ -392,28 +366,14 @@
           mark.title = "Last edited " + new Date(e.updated_at).toLocaleString() + " (" + e.updated_at + ")";
           timeTd.append(mark);
         }
-        if (e.uid) {
-          const txUid = document.createElement("div");
-          txUid.className = "uid muted";
-          txUid.textContent = e.uid;
-          txUid.title = "Transaction uid (stable id)";
-          timeTd.append(txUid);
-        }
         const t = e.type || "expense";
         const typeTd = cell(t, "type type-" + t);
         const acctTd = cell(t === "transfer" ? `${e.account || "?"} → ${e.to_account || "?"}` : (e.account || ""));
-        if (e.balance_uid) {
-          const uidEl = document.createElement("div");
-          uidEl.className = "uid muted";
-          uidEl.textContent = e.balance_uid;
-          uidEl.title = "balance uid";
-          acctTd.append(uidEl);
-        }
         tr.append(timeTd, typeTd, cell(e.amount, "num"), cell(e.currency), acctTd, cell(categoryName(e.category_uid)), cell(e.note || "", "note"));
         const actions = document.createElement("td");
         actions.className = "actions-cell";
         actions.append(
-          button("Edit", "edit", () => startEdit(e.uid)),
+          link("Edit", `/transactions/${encodeURIComponent(e.uid)}/edit`, "button edit"),
           button("Delete", "danger", () => deleteTransaction(e)),
         );
         tr.append(actions);
@@ -421,22 +381,19 @@
       }
       listStatus.textContent = body.count === 0 ? "No transactions yet." : `${body.count} transaction(s), newest first.`;
       renderTotals(body.transactions);
-      highlightEditingRow();
     } catch (err) {
-      listStatus.textContent = "Failed to load transactions: " + err.message;
+      if (my === gen) listStatus.textContent = "Failed to load transactions: " + err.message;
     }
   }
 
   async function deleteTransaction(e) {
-    if (!confirm(`Delete ${e.amount} ${e.currency} (${e.account || e.balance_uid}) at ${e.spent_at}?`)) return;
+    const acct = e.type === "transfer" ? `${e.account || "?"} → ${e.to_account || "?"}` : e.account || "unknown account";
+    if (!confirm(`Delete ${e.amount} ${e.currency} (${acct}) at ${shownTime(e.spent_at)}?`)) return;
     const res = await fetch(`/api/transactions/${e.uid}`, { method: "DELETE" });
     if (!res.ok && res.status !== 404) {
       alert("Delete failed (" + res.status + ")");
     }
-    if (editing && editing.uid === e.uid) {
-      await exitEdit(true);
-      setStatus("The transaction you were editing was deleted.");
-    }
+    $("#flash-transactions").hidden = true;
     await loadTransactions();
   }
 
@@ -445,26 +402,21 @@
   let tzName = "";
   try { tzName = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (_) {}
   $("#tz-label").textContent = `(your device's time zone: ${tzName ? tzName + ", " : ""}UTC${offsetString(new Date())})`;
-  window.loadPayableBalances = loadPayableBalances;
-  // categories.js calls this after a category changes: refresh the dropdown
-  // and re-render the list so renamed categories show their new name.
-  window.loadTxCategories = async () => { await loadTxCategories(); await loadTransactions(); };
-  const categoriesReady = loadTxCategories();
-  loadPayableBalances().then(restoreDefaults);
-  setNow();
   spentAtInput.addEventListener("input", updatePreview);
   $("#type").addEventListener("change", () => applyType());
   $("#now-btn").addEventListener("click", setNow);
-  $("#cancel-btn").addEventListener("click", cancelEdit);
-  document.addEventListener("keydown", (ev) => {
-    if (ev.key === "Escape" && !$("#view-transactions").hidden) cancelEdit();
-  });
+  $("#cancel-btn").addEventListener("click", cancelForm);
   form.addEventListener("submit", submitTransaction);
-  $("#filter-form").addEventListener("submit", (ev) => { ev.preventDefault(); loadTransactions(); });
+  $("#filter-form").addEventListener("submit", (ev) => { ev.preventDefault(); applyFilters(); });
   $("#filter-clear").addEventListener("click", () => {
     $("#filter-from").value = "";
     $("#filter-to").value = "";
-    loadTransactions();
+    applyFilters();
   });
-  loadTransactions();
+
+  const list = { view: "#view-transactions", section: "transactions", title: "", enter: enterList };
+  App.route("/transactions", list);
+  const formRoute = { view: "#view-transaction-form", section: "transactions", enter: enterForm, onEscape: cancelForm };
+  App.route("/transactions/new", { ...formRoute, title: "Add transaction" });
+  App.route("/transactions/:uid/edit", { ...formRoute, title: "Edit transaction" });
 })();
