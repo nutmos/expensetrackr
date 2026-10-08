@@ -340,50 +340,23 @@ func TestVersionChecks(t *testing.T) {
 	}
 }
 
-func TestManualAdjustmentsRecorded(t *testing.T) {
+// Manual PUT/PATCH values override what transactions did; later transactions
+// continue from the manual value.
+func TestManualOverride(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	f.create(f.tx("expense", "30", "THB", f.card, nil)) // debt 130, v2
-	set := func(b balance.Balance, opts WriteOptions, mut func(*balance.Input)) balance.Balance {
-		t.Helper()
-		got, err := f.st.UpdateBalanceWith(ctx, b.ID, opts, func(cur balance.Balance) (balance.Balance, error) {
-			in := cur.Input()
-			mut(&in)
-			return in.ValidateUpdate(cur.Type)
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return got
+	got, err := f.st.UpdateBalanceWith(ctx, f.card.ID, WriteOptions{Version: 2}, func(cur balance.Balance) (balance.Balance, error) {
+		in := cur.Input()
+		in.Debt = dec("125")
+		return in.ValidateUpdate(cur.Type)
+	})
+	if err != nil || *got.Debt != "125.00" || got.Version != 3 {
+		t.Fatalf("manual debt: %+v %v", got, err)
 	}
-	// The manual value overrides what the transaction did.
-	got := set(f.card, WriteOptions{Version: 2, Note: "statement says 125"}, func(in *balance.Input) { in.Debt = dec("125") })
-	if *got.Debt != "125.00" || got.Version != 3 {
-		t.Errorf("manual debt: %s v%d", *got.Debt, got.Version)
-	}
-	// Name-only change: no adjustment row. Limit change: one row.
-	set(f.card, WriteOptions{}, func(in *balance.Input) { in.Name = "Card" })
-	set(f.card, WriteOptions{}, func(in *balance.Input) { in.Limit = dec("2000") })
-	// Re-scale only (THB -> KWD, same value) is not an adjustment.
-	set(f.gold, WriteOptions{}, func(in *balance.Input) { in.Currency = "KWD" })
-
-	adj, err := f.st.ListBalanceAdjustments(ctx, f.card.UID)
-	if err != nil || len(adj) != 2 {
-		t.Fatalf("adjustments: %+v %v", adj, err)
-	}
-	if a := adj[1]; a.Field != "debt" || a.Old != "130.00" || a.New != "125.00" || a.Change == nil || *a.Change != "-5.00" ||
-		a.Note != "statement says 125" || a.Version != 3 || a.Currency != "THB" || !looksLikeUUID(a.UID) {
-		t.Errorf("debt adjustment: %+v", a)
-	}
-	if a := adj[0]; a.Field != "limit" || a.Old != "1000.00" || a.New != "2000.00" || a.Version != 5 {
-		t.Errorf("limit adjustment: %+v", a)
-	}
-	if g, _ := f.st.ListBalanceAdjustments(ctx, f.gold.UID); len(g) != 0 {
-		t.Errorf("re-scale recorded: %+v", g)
-	}
-	// Later transactions keep working from the manual value.
+	f.want(f.card, "125.00", 3)
 	f.create(f.tx("expense", "5", "THB", f.card, nil))
-	f.want(f.card, "130.00", 6)
+	f.want(f.card, "130.00", 4)
 }
 
 func TestConcurrentWritesStayConsistent(t *testing.T) {
@@ -456,7 +429,7 @@ DELETE FROM balances WHERE name = 'Gone';
 PRAGMA user_version = 10;
 `
 
-func TestMigrationV10ToV11(t *testing.T) {
+func TestMigrationV10ToV12(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "v10.db")
 	rawDB(t, path, schemaV10)
@@ -525,7 +498,7 @@ func TestMigrationV10ToV11(t *testing.T) {
 	st.Close()
 	assertCurrentSchema(t, path)
 
-	// Idempotent: running the v11 migration again on a v11 database changes nothing.
+	// Idempotent: running the v11 and v12 migrations again changes nothing.
 	db, err := sql.Open("sqlite", "file:"+path)
 	if err != nil {
 		t.Fatal(err)
@@ -535,8 +508,11 @@ func TestMigrationV10ToV11(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := addVersionsAndAdjustments(tx); err != nil {
+	if err := addVersions(tx); err != nil {
 		t.Fatalf("re-run v11: %v", err)
+	}
+	if err := dropBalanceAdjustments(tx); err != nil {
+		t.Fatalf("re-run v12: %v", err)
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
@@ -570,4 +546,78 @@ UPDATE balances SET version = 7 WHERE name = 'Gold';
 	}
 	st.Close()
 	assertCurrentSchema(t, path)
+}
+
+// preReleaseAdjustmentsSchema is the balance_adjustments table that a
+// pre-release build of v11 created (removed before release; v12 drops it).
+const preReleaseAdjustmentsSchema = `
+CREATE TABLE balance_adjustments (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    uid          TEXT    NOT NULL UNIQUE CHECK (length(uid) = 36),
+    balance_uid  TEXT    NOT NULL CHECK (length(balance_uid) = 36),
+    field        TEXT    NOT NULL CHECK (field IN ('balance', 'debt', 'limit')),
+    old_minor    INTEGER NOT NULL,
+    old_scale    INTEGER NOT NULL CHECK (old_scale BETWEEN 0 AND 4),
+    old_currency TEXT    NOT NULL CHECK (length(old_currency) = 3),
+    new_minor    INTEGER NOT NULL,
+    new_scale    INTEGER NOT NULL CHECK (new_scale BETWEEN 0 AND 4),
+    new_currency TEXT    NOT NULL CHECK (length(new_currency) = 3),
+    note         TEXT    NOT NULL DEFAULT '',
+    version      INTEGER NOT NULL,
+    created_at   TEXT    NOT NULL
+);
+CREATE INDEX idx_balance_adjustments_balance_uid ON balance_adjustments (balance_uid, id);
+INSERT INTO balance_adjustments (uid, balance_uid, field, old_minor, old_scale, old_currency, new_minor, new_scale, new_currency, note, version, created_at)
+  VALUES ('55555555-5555-4555-8555-555555555555', '11111111-1111-4111-8111-111111111111', 'balance', 100000, 2, 'THB', 90000, 2, 'THB', 'x', 2, '2026-10-08T00:00:00Z');
+PRAGMA user_version = 11;
+`
+
+// A database migrated by the pre-release v11 (with balance_adjustments) is
+// upgraded to v12: the table, its index and its sequence row are dropped;
+// balances are untouched.
+func TestMigrationV12DropsBalanceAdjustments(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v11pre.db")
+	rawDB(t, path, schemaV10)
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := addVersions(tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(preReleaseAdjustmentsSchema); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("open pre-release v11: %v", err)
+	}
+	kbank, err := st.GetBalanceByUID(context.Background(), "11111111-1111-4111-8111-111111111111")
+	if err != nil || *kbank.Balance != "1000.00" || kbank.Version != 1 {
+		t.Errorf("kbank: %+v %v", kbank, err)
+	}
+	st.Close()
+	assertCurrentSchema(t, path)
+
+	db, err = sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name LIKE '%balance_adjustments%'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("balance_adjustments objects left: %d %v", n, err)
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_sequence WHERE name = 'balance_adjustments'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("sequence row left: %d %v", n, err)
+	}
 }

@@ -1,4 +1,4 @@
-# Balances: automatic adjustment, manual edits and versioning (schema v11)
+# Balances: automatic adjustment, manual edits and versioning (schema v11–v12)
 
 Balances now follow the transactions recorded against them. You can still set
 the amount by hand when it has to match a statement. Every balance and
@@ -77,46 +77,15 @@ rejected with **422** and nothing is written:
 
 ## 2. Manual adjustment (PUT/PATCH on a balance)
 
-You can still set `balance`, `debt` or `limit` directly. **A manual value
-overrides** whatever transactions did. Later transactions then move the
-balance from the new value.
+You can still set `balance`, `debt` or `limit` directly with the existing
+`PUT`/`PATCH /api/balances/:uid` (versioned like every other write, see
+below). **A manual value overrides** whatever transactions did. Later
+transactions then move the balance from the new value.
 
-Each manual change of an amount is recorded in the **`balance_adjustments`**
-table, one row per changed field:
-
-| Column | Meaning |
-|---|---|
-| `uid` | UUID of the adjustment |
-| `balance_uid` | which balance (no FK: the trail survives deleting the balance) |
-| `field` | `balance`, `debt` or `limit` |
-| `old_minor`, `old_scale`, `old_currency` | value before |
-| `new_minor`, `new_scale`, `new_currency` | value after |
-| `note` | the optional `adjustment_note` sent with the PUT/PATCH (≤ 500 characters, else 422) |
-| `version` | the balance version this change created |
-| `created_at` | RFC 3339 UTC |
-
-- Values are compared as exact decimals, so a re-scale caused by a currency
-  change (12.00 THB → 12.000 KWD) is not an adjustment.
-- Name or description edits are not recorded.
-- Changes made by transactions are not recorded here either; the transactions
-  are the record.
-
-API:
-
-- Send `"adjustment_note": "Matched bank statement"` in a PUT or PATCH body.
-  It is not stored on the balance itself.
-- `GET /api/balances/:uid/adjustments` returns `{"adjustments":[...],"count":n}`,
-  newest first:
-
-  ```json
-  {"uid":"…","balance_uid":"…","field":"balance","old":"9700.00","new":"9690.50","change":"-9.50",
-   "currency":"THB","old_currency":"THB","note":"bank fee","version":3,"created_at":"…"}
-  ```
-
-  `change` is null if the currency changed in the same edit.
-
-The web edit page has an optional **Reason for a manual change** field, and a
-hint explaining that balances otherwise update automatically.
+There is no separate adjustments API or audit table: the balance's `version`
+and `updated_at` change, and the transactions remain the record of automatic
+changes. The web edit page shows a short hint that typed amounts override the
+automatic ones.
 
 ## 3. Optimistic locking (versions)
 
@@ -170,7 +139,7 @@ Typical flow:
 curl -si http://127.0.0.1:8080/api/balances/$UID | grep -i etag     # ETag: "4"
 curl -s -X PATCH http://127.0.0.1:8080/api/balances/$UID \
   -H 'Content-Type: application/json' -H 'If-Match: "4"' \
-  -d '{"balance":"1200.50","adjustment_note":"statement 2026-10"}'   # 200, version 5
+  -d '{"balance":"1200.50"}'                                         # 200, version 5
 # Same request again (still If-Match "4"):
 # 409 {"error":"version conflict: …","code":"version_conflict","fields":{"version":"is stale; the current version is 5"},"current":{…}}
 ```
@@ -194,9 +163,11 @@ pages send it with Delete. On a 409:
 - **List page:** an alert explains that nothing was deleted, and the list is
   refreshed.
 
-## 4. Migration v11
+## 4. Migrations v11 and v12
 
-Migration v11 runs in one SQL transaction and is idempotent:
+Each migration runs in one SQL transaction and is idempotent.
+
+**v11:**
 
 1. **`balances` is rebuilt.** Rows, ids, uids and amounts are copied
    unchanged, and the AUTOINCREMENT sequence is kept. The rebuild adds
@@ -207,8 +178,10 @@ Migration v11 runs in one SQL transaction and is idempotent:
 2. **`transactions` gets new columns:** `version` (existing rows 1) and
    `balance_applied` (existing rows 0, i.e. "never moved a balance"; shown as
    `adjusts_balances`), plus an index on `to_balance_uid`.
-3. **`balance_adjustments` is created**, with an index on
-   `(balance_uid, id)`.
+
+**v12:** drops `balance_adjustments` (and its index and AUTOINCREMENT
+counter) if present. Only a pre-release build of v11 created that table; on
+any other database v12 is a no-op.
 
 **Existing balances are not recomputed** from existing transactions. Their
 amounts stay exactly as entered.
@@ -216,7 +189,5 @@ amounts stay exactly as entered.
 ## Follow-ups
 
 - FX: allow cross-currency transactions and transfers with a rate.
-- Optional "recompute from transactions" tool, or a reconciliation report
-  (manual adjustments vs. transaction history).
+- Optional "recompute from transactions" tool, or a reconciliation report.
 - Versioning for categories and users.
-- A UI view of the adjustments trail.

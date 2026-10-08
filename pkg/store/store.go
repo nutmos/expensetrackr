@@ -28,15 +28,12 @@ var ErrNotFound = errors.New("transaction not found")
 // else changed it since the caller read it. Nothing is written.
 var ErrVersionConflict = errors.New("version conflict: the record was changed since it was read")
 
-// WriteOptions controls optimistic locking (and audit notes) for updates and
-// deletes.
+// WriteOptions controls optimistic locking for updates and deletes.
 type WriteOptions struct {
 	// Version, if > 0, must equal the stored version or the write fails with
 	// ErrVersionConflict. 0 skips the check (internal callers and tests; the
 	// API always sends the client's version for PUT/PATCH).
 	Version int64
-	// Note is stored with manual balance adjustments (UpdateBalanceWith only).
-	Note string
 }
 
 // Store wraps the SQLite database.

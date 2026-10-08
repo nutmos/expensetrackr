@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"math/big"
 	"time"
 
 	"github.com/nutmos/expensetrackr/pkg/balance"
@@ -156,7 +155,7 @@ func (s *Store) GetBalanceByUID(ctx context.Context, uid string) (balance.Balanc
 	return b, err
 }
 
-// UpdateBalance is UpdateBalanceWith without a version check or note.
+// UpdateBalance is UpdateBalanceWith without a version check.
 func (s *Store) UpdateBalance(ctx context.Context, id int64, fn func(cur balance.Balance) (balance.Balance, error)) (balance.Balance, error) {
 	return s.UpdateBalanceWith(ctx, id, WriteOptions{}, fn)
 }
@@ -165,8 +164,7 @@ func (s *Store) UpdateBalance(ctx context.Context, id int64, fn func(cur balance
 // returns, in one database transaction. This is the manual edit path (PUT /
 // PATCH): the amounts fn returns overwrite whatever transactions have done to
 // the balance. ID, UID and CreatedAt are preserved, UpdatedAt is set to now
-// (UTC) and Version is incremented. Each changed amount (balance, debt,
-// limit) is recorded in balance_adjustments with opts.Note.
+// (UTC) and Version is incremented.
 //
 // Returns ErrNotFound, ErrVersionConflict (opts.Version > 0 and stale),
 // ErrDuplicateName, ErrBalanceInUse (currency change while transactions
@@ -229,75 +227,10 @@ func (s *Store) UpdateBalanceWith(ctx context.Context, id int64, opts WriteOptio
 	if n, err := res.RowsAffected(); err != nil || n != 1 {
 		return balance.Balance{}, ErrVersionConflict
 	}
-	if err := recordAdjustments(ctx, tx, cur, next, opts.Note, now); err != nil {
-		return balance.Balance{}, err
-	}
 	if err := tx.Commit(); err != nil {
 		return balance.Balance{}, fmt.Errorf("update balance: %w", err)
 	}
 	return next, nil
-}
-
-// recordAdjustments inserts one balance_adjustments row per amount field
-// whose value differs between cur and next (compared as exact decimals, so a
-// pure re-scale such as 12.00 THB -> 12.000 KWD is not an adjustment).
-func recordAdjustments(ctx context.Context, tx *sql.Tx, cur, next balance.Balance, note, now string) error {
-	for _, f := range []struct {
-		name     string
-		old, new *int64
-	}{{"balance", cur.BalanceMinor, next.BalanceMinor}, {"debt", cur.DebtMinor, next.DebtMinor}, {"limit", cur.LimitMinor, next.LimitMinor}} {
-		if f.old == nil || f.new == nil {
-			continue
-		}
-		if decimal(*f.old, cur.Scale).Cmp(decimal(*f.new, next.Scale)) == 0 {
-			continue
-		}
-		uid, err := newUID()
-		if err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO balance_adjustments (uid, balance_uid, field, old_minor, old_scale, old_currency, new_minor, new_scale, new_currency, note, version, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			uid, cur.UID, f.name, *f.old, cur.Scale, cur.Currency, *f.new, next.Scale, next.Currency, note, next.Version, now); err != nil {
-			return fmt.Errorf("record balance adjustment: %w", err)
-		}
-	}
-	return nil
-}
-
-func decimal(minor int64, scale int) *big.Rat {
-	return new(big.Rat).SetFrac(big.NewInt(minor), new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(scale)), nil))
-}
-
-// ListBalanceAdjustments returns the manual adjustments of a balance, newest
-// first. It does not check that the balance still exists.
-func (s *Store) ListBalanceAdjustments(ctx context.Context, balanceUID string) ([]balance.Adjustment, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, uid, balance_uid, field, old_minor, old_scale, old_currency, new_minor, new_scale, new_currency, note, version, created_at
-		   FROM balance_adjustments WHERE balance_uid = ? ORDER BY id DESC`, balanceUID)
-	if err != nil {
-		return nil, fmt.Errorf("list balance adjustments: %w", err)
-	}
-	defer rows.Close()
-	out := []balance.Adjustment{}
-	for rows.Next() {
-		var a balance.Adjustment
-		var oldMinor, newMinor int64
-		var oldScale, newScale int
-		if err := rows.Scan(&a.ID, &a.UID, &a.BalanceUID, &a.Field, &oldMinor, &oldScale, &a.OldCurrency,
-			&newMinor, &newScale, &a.Currency, &a.Note, &a.Version, &a.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan balance adjustment: %w", err)
-		}
-		a.Old = money.FormatAmount(oldMinor, oldScale)
-		a.New = money.FormatAmount(newMinor, newScale)
-		if a.OldCurrency == a.Currency && oldScale == newScale {
-			c := money.FormatAmount(newMinor-oldMinor, newScale)
-			a.Change = &c
-		}
-		out = append(out, a)
-	}
-	return out, rows.Err()
 }
 
 // DeleteBalance is DeleteBalanceWith without a version check.

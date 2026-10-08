@@ -41,7 +41,9 @@ import (
 //	v9  drop transactions.category (name snapshot from a pre-release v8) if present
 //	v10 users + user_identities tables (profiles, preferences JSON, auth-ready fields)
 //	v11 balances.version (rebuilt to also drop CHECK debt_minor >= 0),
-//	    transactions.version + balance_applied, table balance_adjustments
+//	    transactions.version + balance_applied
+//	v12 drop table balance_adjustments if present (created only by a
+//	    pre-release build of v11)
 //
 // A brand-new database is created directly at the latest version from
 // currentSchema. An existing database is upgraded by running the pending
@@ -83,7 +85,7 @@ CREATE UNIQUE INDEX idx_transactions_uid ON transactions (uid);
 CREATE INDEX idx_transactions_type ON transactions (type, spent_at_unix DESC);
 CREATE INDEX idx_transactions_category_uid ON transactions (category_uid);
 CREATE INDEX idx_transactions_to_balance_uid ON transactions (to_balance_uid);
-` + balancesSchemaCurrent + categoriesSchema + usersSchema + balanceAdjustmentsSchema
+` + balancesSchemaCurrent + categoriesSchema + usersSchema
 
 // balancesSchemaV3 creates the balances table as shipped at version 3
 // (no uid yet). Used only by migration v2 -> v3. Do not edit once shipped.
@@ -233,29 +235,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_balances_uid ON balances (uid);
 // Keep in sync with the result of applying every migration.
 var balancesSchemaCurrent = balancesTable("balances") + balancesIndexes
 
-// balanceAdjustmentsSchema (v11+) is the audit trail of manual balance edits:
-// one row per changed amount field (balance, debt or limit) of a PUT/PATCH.
-// Amounts are minor units with their own scale and currency (the currency may
-// change in the same edit). No FK: the trail is kept if the balance is deleted.
-const balanceAdjustmentsSchema = `
-CREATE TABLE IF NOT EXISTS balance_adjustments (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    uid          TEXT    NOT NULL UNIQUE CHECK (length(uid) = 36),
-    balance_uid  TEXT    NOT NULL CHECK (length(balance_uid) = 36),
-    field        TEXT    NOT NULL CHECK (field IN ('balance', 'debt', 'limit')),
-    old_minor    INTEGER NOT NULL,
-    old_scale    INTEGER NOT NULL CHECK (old_scale BETWEEN 0 AND 4),
-    old_currency TEXT    NOT NULL CHECK (length(old_currency) = 3),
-    new_minor    INTEGER NOT NULL,
-    new_scale    INTEGER NOT NULL CHECK (new_scale BETWEEN 0 AND 4),
-    new_currency TEXT    NOT NULL CHECK (length(new_currency) = 3),
-    note         TEXT    NOT NULL DEFAULT '',
-    version      INTEGER NOT NULL,
-    created_at   TEXT    NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_balance_adjustments_balance_uid ON balance_adjustments (balance_uid, id);
-`
-
 // migration upgrades the schema by one version inside a SQL transaction.
 type migration func(tx *sql.Tx) error
 
@@ -285,9 +264,12 @@ var migrations = []migration{
 	// v9 -> v10: add users (profiles + preferences + auth-ready fields) and
 	// user_identities (future SSO links).
 	addUsers,
-	// v10 -> v11: optimistic-locking versions, automatic balance adjustment
-	// bookkeeping and the manual-adjustment audit table.
-	addVersionsAndAdjustments,
+	// v10 -> v11: optimistic-locking versions and automatic balance
+	// adjustment bookkeeping.
+	addVersions,
+	// v11 -> v12: drop the balance_adjustments audit table that a pre-release
+	// build of v11 created. No-op otherwise.
+	dropBalanceAdjustments,
 }
 
 // SchemaVersion is the user_version a fully migrated database has.
@@ -687,7 +669,7 @@ func addUsers(tx *sql.Tx) error {
 	return nil
 }
 
-// addVersionsAndAdjustments is migration v10 -> v11. In one SQL transaction:
+// addVersions is migration v10 -> v11. In one SQL transaction:
 //
 //  1. balances is rebuilt (create new table, copy rows, drop, rename,
 //     recreate indexes) to add version (existing rows get 1) and drop the
@@ -696,11 +678,10 @@ func addUsers(tx *sql.Tx) error {
 //     if balances already has version and no debt check.
 //  2. transactions gets version (1) and balance_applied (0: rows recorded
 //     before v11 never moved a balance) plus an index on to_balance_uid.
-//  3. balance_adjustments is created.
 //
 // Idempotent. No foreign key references balances, so the rebuild is safe with
 // foreign_keys on.
-func addVersionsAndAdjustments(tx *sql.Tx) error {
+func addVersions(tx *sql.Tx) error {
 	if err := rebuildBalancesV11(tx); err != nil {
 		return err
 	}
@@ -715,8 +696,29 @@ func addVersionsAndAdjustments(tx *sql.Tx) error {
 	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_transactions_to_balance_uid ON transactions (to_balance_uid)`); err != nil {
 		return fmt.Errorf("create to_balance_uid index: %w", err)
 	}
-	if _, err := tx.Exec(balanceAdjustmentsSchema); err != nil {
-		return fmt.Errorf("create balance_adjustments: %w", err)
+	return nil
+}
+
+// dropBalanceAdjustments is migration v11 -> v12. A pre-release build of v11
+// also created a balance_adjustments audit table (manual balance edits); the
+// feature was dropped before release, so remove the table, its index and its
+// AUTOINCREMENT counter if present. Idempotent; a no-op on databases migrated
+// by the released v11.
+func dropBalanceAdjustments(tx *sql.Tx) error {
+	if _, err := tx.Exec(`DROP INDEX IF EXISTS idx_balance_adjustments_balance_uid`); err != nil {
+		return fmt.Errorf("drop balance_adjustments index: %w", err)
+	}
+	if _, err := tx.Exec(`DROP TABLE IF EXISTS balance_adjustments`); err != nil {
+		return fmt.Errorf("drop balance_adjustments: %w", err)
+	}
+	hasSeq, err := objectExists(tx, "table", "sqlite_sequence")
+	if err != nil {
+		return err
+	}
+	if hasSeq {
+		if _, err := tx.Exec(`DELETE FROM sqlite_sequence WHERE name = 'balance_adjustments'`); err != nil {
+			return fmt.Errorf("clear balance_adjustments sequence: %w", err)
+		}
 	}
 	return nil
 }

@@ -138,9 +138,6 @@ type Input struct {
 	// Version is the optimistic-locking version for PUT (alternative to the
 	// If-Match header). Ignored on create.
 	Version *int64 `json:"version,omitempty"`
-	// AdjustmentNote is an optional reason recorded in balance_adjustments
-	// when a PUT/PATCH changes balance, debt or limit. Not stored on the balance.
-	AdjustmentNote string `json:"adjustment_note,omitempty"`
 }
 
 func provided(d *money.DecimalInput) bool {
@@ -287,11 +284,10 @@ func isNull(raw json.RawMessage) bool { return bytes.Equal(bytes.TrimSpace(raw),
 // type; the caller must run ValidateUpdate (which enforces that) on the result.
 func (in *Input) ApplyPatch(patch map[string]json.RawMessage) error {
 	// uid is immutable; drop it so round-tripping a previous response is fine.
-	// "version" and "adjustment_note" are request metadata, read by the API
-	// before this point, not fields of the balance.
+	// "version" is request metadata, read by the API before this point, not a
+	// field of the balance.
 	delete(patch, "uid")
 	delete(patch, "version")
-	delete(patch, "adjustment_note")
 	if len(patch) == 0 {
 		return &validate.RequestError{Msg: "patch must contain at least one of: name, type, currency, description, balance, debt, limit"}
 	}
@@ -389,28 +385,6 @@ func addChecked(a, b int64) (int64, bool) {
 		return 0, false
 	}
 	return c, true
-}
-
-// MaxAdjustmentNoteLen bounds the optional reason of a manual adjustment.
-const MaxAdjustmentNoteLen = 500
-
-// Adjustment is one manual change of a balance amount (balance, debt or
-// limit) made through PUT/PATCH, kept as an audit trail in the
-// balance_adjustments table. Changes made by transactions are not recorded
-// here (the transactions themselves are the record).
-type Adjustment struct {
-	ID          int64   `json:"-"`
-	UID         string  `json:"uid"`
-	BalanceUID  string  `json:"balance_uid"`
-	Field       string  `json:"field"`  // balance | debt | limit
-	Old         string  `json:"old"`    // decimal string in OldCurrency
-	New         string  `json:"new"`    // decimal string in Currency
-	Change      *string `json:"change"` // New - Old; null if the currency changed too
-	Currency    string  `json:"currency"`
-	OldCurrency string  `json:"old_currency"`
-	Note        string  `json:"note"`
-	Version     int64   `json:"version"` // the balance version this change created
-	CreatedAt   string  `json:"created_at"`
 }
 
 // Totals aggregates balances of one currency.

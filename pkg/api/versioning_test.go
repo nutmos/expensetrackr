@@ -178,31 +178,34 @@ func TestTransactionsMoveBalancesAPI(t *testing.T) {
 	if cur, _ := b["current"].(map[string]any); rec.Code != 409 || cur["balance"] != "9700.00" {
 		t.Errorf("stale manual edit: %d %v", rec.Code, b)
 	}
-	// After reloading, the manual value overrides and is recorded.
-	rec, b = doH(t, h, "PUT", "/api/balances/"+cash, `{"name":"Cash","type":"payment_account","currency":"THB","balance":"9690.5","adjustment_note":"bank fee"}`, ifMatch(`"2"`))
+	// After reloading, the manual value overrides what transactions did.
+	rec, b = doH(t, h, "PUT", "/api/balances/"+cash, `{"name":"Cash","type":"payment_account","currency":"THB","balance":"9690.5"}`, ifMatch(`"2"`))
 	if rec.Code != 200 || b["balance"] != "9690.50" || b["version"].(float64) != 3 {
 		t.Errorf("manual edit: %d %v", rec.Code, b)
 	}
-	rec, b = doH(t, h, "GET", "/api/balances/"+cash+"/adjustments", "", nil)
-	items, _ := b["adjustments"].([]any)
-	if rec.Code != 200 || len(items) != 1 {
-		t.Fatalf("adjustments: %d %v", rec.Code, b)
+	if rec, b := doH(t, h, "PATCH", "/api/balances/"+cash, `{"balance":"9690.25"}`, ifMatch(`"3"`)); rec.Code != 200 || b["balance"] != "9690.25" || b["version"].(float64) != 4 {
+		t.Errorf("manual PATCH: %d %v", rec.Code, b)
 	}
-	if a := items[0].(map[string]any); a["field"] != "balance" || a["old"] != "9700.00" || a["new"] != "9690.50" || a["change"] != "-9.50" || a["note"] != "bank fee" || a["version"].(float64) != 3 {
-		t.Errorf("adjustment: %v", a)
+	// There is no separate adjustments API or note field: unknown fields are
+	// rejected as for any other body, and nothing changes.
+	if rec, b := doH(t, h, "PUT", "/api/balances/"+cash, `{"name":"Cash","type":"payment_account","currency":"THB","balance":"1","adjustment_note":"x"}`, ifMatch(`"4"`)); rec.Code != 400 {
+		t.Errorf("PUT with adjustment_note: %d %v", rec.Code, b)
 	}
-	// PATCH with a note; note too long -> 422; note without amount change -> no row.
-	if rec, b := doH(t, h, "PATCH", "/api/balances/"+cash, `{"balance":"1","adjustment_note":"`+strings.Repeat("x", 501)+`"}`, ifMatch(`"3"`)); rec.Code != 422 || fieldsOf(b)["adjustment_note"] == nil {
-		t.Errorf("long note: %d %v", rec.Code, b)
+	if rec, b := doH(t, h, "PATCH", "/api/balances/"+cash, `{"balance":"1","adjustment_note":"x"}`, ifMatch(`"4"`)); rec.Code < 400 || rec.Code > 422 {
+		t.Errorf("PATCH with adjustment_note: %d %v", rec.Code, b)
 	}
-	if rec, b := doH(t, h, "PATCH", "/api/balances/"+cash, `{"description":"main","adjustment_note":"just a rename"}`, ifMatch(`"3"`)); rec.Code != 200 {
-		t.Errorf("PATCH description: %d %v", rec.Code, b)
+	if rec, _ := doH(t, h, "GET", "/api/balances/"+cash+"/adjustments", "", nil); rec.Code != 404 {
+		t.Errorf("adjustments route still exists: %d", rec.Code)
 	}
-	if _, b := doH(t, h, "GET", "/api/balances/"+cash+"/adjustments", "", nil); b["count"].(float64) != 1 {
-		t.Errorf("non-amount edit recorded: %v", b)
+	if b := get(cash); b["balance"] != "9690.25" || b["version"].(float64) != 4 {
+		t.Errorf("rejected edits changed the balance: %v", b)
 	}
-	if rec, _ := doH(t, h, "GET", "/api/balances/00000000-0000-4000-8000-000000000001/adjustments", "", nil); rec.Code != 404 {
-		t.Errorf("adjustments of unknown balance: %d", rec.Code)
+	// Later transactions continue from the manual value.
+	if c, b := post(`{"amount":"0.25","currency":"THB","balance_uid":"` + cash + `"` + at); *c != 201 {
+		t.Fatalf("expense after manual edit: %d %v", *c, b)
+	}
+	if b := get(cash); b["balance"] != "9690.00" || b["version"].(float64) != 5 {
+		t.Errorf("after manual edit + expense: %v", b)
 	}
 
 	// Currency mismatch: 422, nothing written.
@@ -217,7 +220,7 @@ func TestTransactionsMoveBalancesAPI(t *testing.T) {
 		t.Errorf("rejected transactions moved the balance: %v -> %v", before, after)
 	}
 	// A balance with transactions cannot change currency.
-	rec, b = doH(t, h, "PATCH", "/api/balances/"+cash, `{"currency":"USD"}`, ifMatch(`"4"`))
+	rec, b = doH(t, h, "PATCH", "/api/balances/"+cash, `{"currency":"USD"}`, ifMatch(`"5"`))
 	if rec.Code != 409 || code(b) != "balance_in_use" || fieldsOf(b)["currency"] == nil {
 		t.Errorf("currency change in use: %d %v", rec.Code, b)
 	}

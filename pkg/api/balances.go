@@ -3,11 +3,9 @@ package api
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/nutmos/expensetrackr/pkg/balance"
 	"github.com/nutmos/expensetrackr/pkg/store"
@@ -22,7 +20,6 @@ func (s *Server) registerBalanceRoutes(api *gin.RouterGroup) {
 	api.PUT("/balances/:uid", s.replaceBalance)
 	api.PATCH("/balances/:uid", s.patchBalance)
 	api.DELETE("/balances/:uid", s.deleteBalance)
-	api.GET("/balances/:uid/adjustments", s.listBalanceAdjustments)
 }
 
 // writeBalanceError maps balance errors: 404 not found, 409 duplicate name or
@@ -148,18 +145,6 @@ func (s *Server) balanceConflict(c *gin.Context, uid string) {
 	writeVersionConflict(c, "balance", cur, cur.Version)
 }
 
-// checkAdjustmentNote validates the optional reason of a manual adjustment.
-func checkAdjustmentNote(c *gin.Context, note string) (string, bool) {
-	note = strings.TrimSpace(note)
-	if utf8.RuneCountInString(note) > balance.MaxAdjustmentNoteLen {
-		c.JSON(http.StatusUnprocessableEntity, errorBody{Error: "validation failed", Fields: map[string]string{
-			"adjustment_note": fmt.Sprintf("must be at most %d characters", balance.MaxAdjustmentNoteLen),
-		}})
-		return "", false
-	}
-	return note, true
-}
-
 // saveBalance runs a manual update with optimistic locking and writes the
 // response: 200 + ETag, 409 on a stale version, or the mapped error.
 func (s *Server) saveBalance(c *gin.Context, cur balance.Balance, opts store.WriteOptions, fn func(existing balance.Balance) (balance.Balance, error)) {
@@ -185,7 +170,7 @@ func (s *Server) saveBalance(c *gin.Context, cur balance.Balance, opts store.Wri
 // stored type (422 on "type" otherwise). uid in the body is ignored; the
 // existing uid is kept. Requires the client's version (If-Match or
 // "version"): 428 if missing, 409 if stale. The amounts sent override what
-// transactions did to the balance; changes are recorded as adjustments.
+// transactions did to the balance (manual override).
 func (s *Server) replaceBalance(c *gin.Context) {
 	cur, ok := s.resolveBalance(c)
 	if !ok {
@@ -199,11 +184,7 @@ func (s *Server) replaceBalance(c *gin.Context) {
 	if !ok {
 		return
 	}
-	note, ok := checkAdjustmentNote(c, in.AdjustmentNote)
-	if !ok {
-		return
-	}
-	s.saveBalance(c, cur, store.WriteOptions{Version: version, Note: note}, func(existing balance.Balance) (balance.Balance, error) {
+	s.saveBalance(c, cur, store.WriteOptions{Version: version}, func(existing balance.Balance) (balance.Balance, error) {
 		return in.ValidateUpdate(existing.Type)
 	})
 }
@@ -233,19 +214,7 @@ func (s *Server) patchBalance(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var rawNote string
-	if raw, has := patch["adjustment_note"]; has {
-		if string(raw) != "null" && json.Unmarshal(raw, &rawNote) != nil {
-			c.JSON(http.StatusBadRequest, errorBody{Error: `field "adjustment_note" must be a string`})
-			return
-		}
-		delete(patch, "adjustment_note")
-	}
-	note, ok := checkAdjustmentNote(c, rawNote)
-	if !ok {
-		return
-	}
-	s.saveBalance(c, cur, store.WriteOptions{Version: version, Note: note}, func(existing balance.Balance) (balance.Balance, error) {
+	s.saveBalance(c, cur, store.WriteOptions{Version: version}, func(existing balance.Balance) (balance.Balance, error) {
 		in := existing.Input()
 		if err := in.ApplyPatch(patch); err != nil {
 			return balance.Balance{}, err
@@ -275,19 +244,4 @@ func (s *Server) deleteBalance(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
-}
-
-// listBalanceAdjustments handles GET /api/balances/:uid/adjustments: the
-// manual changes of balance/debt/limit made via PUT/PATCH, newest first.
-func (s *Server) listBalanceAdjustments(c *gin.Context) {
-	b, ok := s.resolveBalance(c)
-	if !ok {
-		return
-	}
-	items, err := s.Store.ListBalanceAdjustments(c.Request.Context(), b.UID)
-	if err != nil {
-		internalError(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"adjustments": items, "count": len(items)})
 }

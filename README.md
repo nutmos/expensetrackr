@@ -165,11 +165,11 @@ a transaction moves its balances in the same database transaction:
 - a transfer moves value from source to destination.
 
 The transaction currency must match the balance currency (422 otherwise; no
-FX yet). Manual PUT/PATCH still sets amounts directly, overrides those
-changes, and is recorded in `balance_adjustments`. Every balance and
+FX yet). Manual PUT/PATCH still sets amounts directly and overrides those
+changes (no separate adjustments API). Every balance and
 transaction has a `version`; PUT/PATCH must send it (`If-Match` or
 `"version"`), else 428, and get 409 when stale. Sign rules, manual
-adjustments and versioning are covered in [docs/balances.md](docs/balances.md).
+overrides and versioning are covered in [docs/balances.md](docs/balances.md).
 
 - Amounts use the same integer minor units + `amount_scale` scheme as transactions.
 - Sending an amount that the type does not use returns 422. Absent, `null` or
@@ -318,7 +318,8 @@ The schema version is tracked in SQLite's `PRAGMA user_version`. The code is in
 | 8       | `CREATE TABLE IF NOT EXISTS categories (...)` + `CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_type_name ON categories (type, name COLLATE NOCASE)`, then `ALTER TABLE transactions ADD COLUMN category_uid TEXT` (only if missing; existing rows get no category) and `CREATE INDEX IF NOT EXISTS idx_transactions_category_uid ON transactions (category_uid)`. One SQL transaction, idempotent. |
 | 9       | Drop `transactions.category` if present (`ALTER TABLE transactions DROP COLUMN category`, SQLite ≥ 3.35). Only databases created by a pre-release build of v8, which stored a category name copy, have it; otherwise a no-op. One SQL transaction, idempotent. |
 | 10      | `CREATE TABLE IF NOT EXISTS users (...)` (uid, username, email, email_verified_at, display_name, preferences JSON object, password_hash, password_updated_at, status, last_login_at, timestamps) + unique NOCASE indexes on username and email; `CREATE TABLE IF NOT EXISTS user_identities (...)` (user_uid → users.uid ON DELETE CASCADE, provider, provider_subject, email, timestamps, UNIQUE(provider, provider_subject)) + index on user_uid. No change to existing tables. One SQL transaction, idempotent. |
-| 11      | `balances` rebuilt (copy rows → drop → rename, indexes recreated, AUTOINCREMENT sequence kept) to add `version INTEGER NOT NULL DEFAULT 1` and drop `CHECK (debt_minor >= 0)` (negative debt = in credit); `transactions.version` (1) and `transactions.balance_applied` (0 for existing rows: they never moved a balance) + index on `to_balance_uid`; table `balance_adjustments` (audit of manual amount edits). Existing balances are **not** recomputed. One SQL transaction, idempotent. See [docs/balances.md](docs/balances.md). |
+| 11      | `balances` rebuilt (copy rows → drop → rename, indexes recreated, AUTOINCREMENT sequence kept) to add `version INTEGER NOT NULL DEFAULT 1` and drop `CHECK (debt_minor >= 0)` (negative debt = in credit); `transactions.version` (1) and `transactions.balance_applied` (0 for existing rows: they never moved a balance) + index on `to_balance_uid`. Existing balances are **not** recomputed. One SQL transaction, idempotent. See [docs/balances.md](docs/balances.md). |
+| 12      | `DROP TABLE IF EXISTS balance_adjustments` (plus its index and sequence row). Only a pre-release build of v11 created that table (manual-edit audit, removed before release); otherwise a no-op. One SQL transaction, idempotent. |
 
 Notes on version 2:
 
@@ -387,10 +388,9 @@ only on validation, conflict and duplicate-name errors.
 | POST   | `/api/balances`      | 201 + balance, `Location` header | 422 on validation errors (incl. per-type amount rules), 409 if the name is already used (case-insensitive), 400 on malformed JSON or unknown fields |
 | GET    | `/api/balances`      | 200 `{"balances":[...],"count":n,"totals":[...]}` | Grouped by type, then by name. Optional `type=` filter (400 if invalid). Optional `payable=1` / `payable=true` returns only `payment_account` and `credit_card` (cannot combine with `type=`). `totals` covers the returned rows, per currency |
 | GET    | `/api/balances/:uid`  | 200 + balance | `:uid` is the balance UUID. 400 if not UUID-shaped (numeric ids are no longer accepted), 404 if missing. Same for PUT/PATCH/DELETE |
-| PUT    | `/api/balances/:uid`  | 200 + updated balance | Full replace (manual override of the amounts). `type` is required and must equal the stored type (422 on `type` otherwise). `uid` in the body is ignored. Requires `If-Match` or `"version"` (428 / 409). Optional `adjustment_note` (≤ 500). 409 `balance_in_use` for a currency change while transactions reference it. Returns 404, 409, 422 or 400 as for POST |
-| PATCH  | `/api/balances/:uid`  | 200 + updated balance | Partial update. `type` may be sent only with the stored value (422 on `type` otherwise). `"description": null` clears it; `"balance"`/`"debt"`/`"limit": null` removes that amount. A currency change re-reads the amounts using the new currency's decimals. `uid` in the body is ignored. Versioning, `adjustment_note` and `balance_in_use` as for PUT |
+| PUT    | `/api/balances/:uid`  | 200 + updated balance | Full replace (manual override of the amounts). `type` is required and must equal the stored type (422 on `type` otherwise). `uid` in the body is ignored. Requires `If-Match` or `"version"` (428 / 409). 409 `balance_in_use` for a currency change while transactions reference it. Returns 404, 409, 422 or 400 as for POST |
+| PATCH  | `/api/balances/:uid`  | 200 + updated balance | Partial update. `type` may be sent only with the stored value (422 on `type` otherwise). `"description": null` clears it; `"balance"`/`"debt"`/`"limit": null` removes that amount. A currency change re-reads the amounts using the new currency's decimals. `uid` in the body is ignored. Versioning and `balance_in_use` as for PUT |
 | DELETE | `/api/balances/:uid`  | 204 | Optional `If-Match` (409 if stale). 404 if missing |
-| GET    | `/api/balances/:uid/adjustments` | 200 `{"adjustments":[...],"count":n}` | Manual changes of balance/debt/limit (old, new, change, note, version), newest first |
 | POST   | `/api/categories`      | 201 + category, `Location: /api/categories/<uid>` | 422 on validation errors, 409 duplicate name within the type, 400 malformed JSON / unknown fields |
 | GET    | `/api/categories`      | 200 `{"categories":[...],"count":n}` | Expense first, then income, by name. Optional `type=expense\|income` (400 if invalid) |
 | GET    | `/api/categories/:uid` | 200 + category | 400 if not UUID-shaped, 404 if missing |
@@ -521,7 +521,7 @@ curl -s 'http://127.0.0.1:8080/api/balances'
 #    "credit_limit":"550000.00","available_credit":"198000.00"}, ...]}
 
 curl -s -X PATCH http://127.0.0.1:8080/api/balances/$BAL_UID -H 'Content-Type: application/json' \
-  -H 'If-Match: "1"' -d '{"balance":"1200.50","adjustment_note":"statement"}'   # partial update (ETag of the last GET)
+  -H 'If-Match: "1"' -d '{"balance":"1200.50"}'   # partial update (ETag of the last GET)
 
 curl -s -X PATCH http://127.0.0.1:8080/api/balances/$BAL_UID -H 'Content-Type: application/json' \
   -d '{"version":2,"type":"credit_card"}'
@@ -560,15 +560,15 @@ pkg/balance/                       balance domain model + per-type validation (n
 pkg/store/                         persistence (modernc.org/sqlite)
   store.go                         transactions in table "transactions": Open, Create, List, Get, Update(With), Delete(With); WriteOptions, ErrVersionConflict
   effects.go                       applyBalanceEffects: move balances for a transaction write (same DB transaction)
-  balances.go                      table "balances": CreateBalance, ListBalances, GetBalance, UpdateBalance(With), DeleteBalance(With), ListBalanceAdjustments
+  balances.go                      table "balances": CreateBalance, ListBalances, GetBalance, UpdateBalance(With), DeleteBalance(With)
   categories.go                    table "categories": CreateCategory, ListCategories, GetCategoryByUID, UpdateCategory, DeleteCategory
   users.go                         tables "users", "user_identities": CreateUser, ListUsers, GetUserByUID, UpdateUser, DeleteUser, SetPasswordHash, CreateIdentity, ListIdentities, FindUserByIdentity
-  migrate.go                       current schema, versioned migrations (v0 -> … -> v11)
+  migrate.go                       current schema, versioned migrations (v0 -> … -> v12)
   store_test.go, balances_test.go  fresh DB, upgrades from v0/v1/v2, partial/ambiguous states
 pkg/api/                           Gin routes and handlers
   api.go                           router setup + shared helpers
   transactions.go                  /api/transactions routes
-  balances.go                      /api/balances routes (+ /adjustments)
+  balances.go                      /api/balances routes
   version.go                       optimistic locking: If-Match / "version", ETag, 428 / 409
   categories.go                    /api/categories routes
   users.go                         /api/users routes (+ read-only /identities)
@@ -655,8 +655,8 @@ confirmations use human labels instead. For example, an edit page is titled
 - The form's amount fields follow the type: **Balance** for assets,
   **Debt** + **Limit** for liabilities. Hidden fields are not sent.
 - On the edit page the **Type** selector is disabled, because types can't
-  change after creation. An optional **Reason for a manual change** is
-  recorded with any amount change. If the balance changed since the page was
+  change after creation. A hint notes that typed amounts override the
+  automatic ones. If the balance changed since the page was
   loaded (e.g. a transaction was saved), saving shows a conflict message with
   a **Reload latest values** button instead of overwriting.
 

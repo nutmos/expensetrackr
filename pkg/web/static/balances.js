@@ -42,7 +42,7 @@
     typeSel.value = "payment_account";
     typeSel.disabled = false;
     $("#b-type-note").hidden = true;
-    $("#b-adjust-field").hidden = true;
+    $("#b-edit-hint").hidden = true;
     App.hideConflict(conflictBox);
     syncTypeFields();
     App.clearErrors(form);
@@ -88,8 +88,7 @@
     $("#b-balance").value = b.balance ?? "";
     $("#b-debt").value = b.debt ?? "";
     $("#b-limit").value = b.limit ?? "";
-    $("#b-adjust-note").value = "";
-    $("#b-adjust-field").hidden = false;
+    $("#b-edit-hint").hidden = false;
     syncTypeFields();
     $("#b-name").focus();
   }
@@ -108,8 +107,6 @@
       p.debt = $("#b-debt").value.trim();
       p.limit = $("#b-limit").value.trim();
     }
-    const note = $("#b-adjust-note").value.trim();
-    if (editing && note) p.adjustment_note = note;
     return p;
   }
 

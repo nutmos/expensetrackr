@@ -110,7 +110,7 @@ func assertCurrentSchema(t *testing.T, path string) {
 		"balances": "table", "idx_balances_type": "index", "idx_balances_uid": "index",
 		"users": "table", "idx_users_username": "index", "idx_users_email": "index",
 		"user_identities": "table", "idx_user_identities_user_uid": "index",
-		"idx_transactions_to_balance_uid": "index", "balance_adjustments": "table", "idx_balance_adjustments_balance_uid": "index",
+		"idx_transactions_to_balance_uid": "index",
 	}
 	if len(got) != len(want) {
 		t.Errorf("schema objects = %v, want exactly %v", got, want)
@@ -120,8 +120,8 @@ func assertCurrentSchema(t *testing.T, path string) {
 			t.Errorf("missing %s %q; have %v", typ, name, got)
 		}
 	}
-	if v := userVersion(t, path); v != 11 || SchemaVersion != 11 {
-		t.Errorf("user_version = %d (SchemaVersion %d), want 11", v, SchemaVersion)
+	if v := userVersion(t, path); v != 12 || SchemaVersion != 12 {
+		t.Errorf("user_version = %d (SchemaVersion %d), want 12", v, SchemaVersion)
 	}
 	// Every table has the same columns as a brand-new database (name, type,
 	// NOT NULL, default; for transactions only names and types, since columns
@@ -134,7 +134,7 @@ func assertCurrentSchema(t *testing.T, path string) {
 			t.Fatal(err)
 		}
 		st.Close()
-		for _, table := range []string{"transactions", "balances", "categories", "users", "user_identities", "balance_adjustments"} {
+		for _, table := range []string{"transactions", "balances", "categories", "users", "user_identities"} {
 			full := table != "transactions"
 			if got, want := tableColumns(t, path, table, full), tableColumns(t, fresh, table, full); got != want {
 				t.Errorf("%s columns after migration:\n got %s\nwant %s", table, got, want)
@@ -142,7 +142,7 @@ func assertCurrentSchema(t *testing.T, path string) {
 		}
 	}
 	if ddl := tableSQL(t, path, "balances"); strings.Contains(ddl, "debt_minor >= 0") || !strings.Contains(ddl, "version") {
-		t.Errorf("balances DDL not at v11: %s", ddl)
+		t.Errorf("balances DDL not at v11+: %s", ddl)
 	}
 }
 
