@@ -112,7 +112,8 @@ uses `/api/transactions` and the list key `transactions` (the old
 | amount        | `amount`       | `amount_minor INTEGER` + `amount_scale INTEGER` (see below)             |
 | amount (raw)  | `amount_minor` | the integer itself, e.g. `12050`                                       |
 | currency      | `currency`     | `TEXT`, ISO 4217 alphabetic code, upper-cased (`THB`, `SGD`, `USD`, …)  |
-| type          | `type`         | `TEXT NOT NULL DEFAULT 'expense'`: `expense`, `income` or `transfer` (see "Transaction types") |
+| type          | `type`         | `TEXT NOT NULL DEFAULT 'expense'`: `expense`, `income`, `transfer`, or `balance_adjustment` (server-created only; see "Transaction types") |
+| adj. direction | `adjustment_direction` | `TEXT`, `increase` / `decrease` on `balance_adjustment` rows, `NULL` (JSON `null`) otherwise |
 | payment acct  | `balance_uid`  | `TEXT` UUID of the balance paid from (expense), received into (income) or moved from (transfer); no FK |
 | destination   | `to_balance_uid` | `TEXT`, transfers only (else `null`); UUID of the destination balance; no FK |
 | dest. name    | `to_account`   | denormalized destination name snapshot (transfers only, else `null`)    |
@@ -166,7 +167,8 @@ a transaction moves its balances in the same database transaction:
 
 The transaction currency must match the balance currency (422 otherwise; no
 FX yet). Manual PUT/PATCH still sets amounts directly and overrides those
-changes (no separate adjustments API). Every balance and
+changes (no separate adjustments API); a change of the balance/debt amount
+is recorded as a read-only `balance_adjustment` transaction. Every balance and
 transaction has a `version`; PUT/PATCH must send it (`If-Match` or
 `"version"`), else 428, and get 409 when stale. Sign rules, manual
 overrides and versioning are covered in [docs/balances.md](docs/balances.md).
@@ -234,6 +236,20 @@ adjusts its balances automatically:
 | `expense` | asset `balance −= amount`; card `debt += amount` | n/a |
 | `income` | asset `balance += amount` | n/a |
 | `transfer` | source: asset `balance −= amount`, liability `debt += amount` (drawing a loan / cash advance) | destination: asset `balance += amount`, liability `debt −= amount` (card payment / loan repayment) |
+| `balance_adjustment` ("Balance Adjustment") | none: records a manual balance edit that already set the value | n/a |
+
+**Balance adjustments** are created only by the server, in the same database
+transaction as a manual `PUT`/`PATCH /api/balances/:uid` that changes the
+`balance` (assets) or `debt` (liabilities):
+- `amount` = the absolute difference; `adjustment_direction` = `increase` or
+  `decrease` of that balance/debt; `currency` = the balance's;
+  `spent_at` = the server's local time of the edit (with its offset); a
+  generated `note` such as `Manual edit of debt: 100.00 → 175.00`; no
+  category or destination.
+- Limit-only changes, no-op edits and currency changes record nothing.
+- They never move a balance (`"adjusts_balances": false`).
+- Read-only: POST/PUT/PATCH with `"type":"balance_adjustment"` → 422;
+  PUT/PATCH/DELETE of an existing one → 409 `balance_adjustment_readonly`.
 
 Details (updates, deletes, older transactions, currency rule) are in
 [docs/balances.md](docs/balances.md). The table below says which balance
@@ -320,6 +336,7 @@ The schema version is tracked in SQLite's `PRAGMA user_version`. The code is in
 | 10      | `CREATE TABLE IF NOT EXISTS users (...)` (uid, username, email, email_verified_at, display_name, preferences JSON object, password_hash, password_updated_at, status, last_login_at, timestamps) + unique NOCASE indexes on username and email; `CREATE TABLE IF NOT EXISTS user_identities (...)` (user_uid → users.uid ON DELETE CASCADE, provider, provider_subject, email, timestamps, UNIQUE(provider, provider_subject)) + index on user_uid. No change to existing tables. One SQL transaction, idempotent. |
 | 11      | `balances` rebuilt (copy rows → drop → rename, indexes recreated, AUTOINCREMENT sequence kept) to add `version INTEGER NOT NULL DEFAULT 1` and drop `CHECK (debt_minor >= 0)` (negative debt = in credit); `transactions.version` (1) and `transactions.balance_applied` (0 for existing rows: they never moved a balance) + index on `to_balance_uid`. Existing balances are **not** recomputed. One SQL transaction, idempotent. See [docs/balances.md](docs/balances.md). |
 | 12      | `DROP TABLE IF EXISTS balance_adjustments` (plus its index and sequence row). Only a pre-release build of v11 created that table (manual-edit audit, removed before release); otherwise a no-op. One SQL transaction, idempotent. |
+| 13      | `transactions` rebuilt (create new → copy every row with the same ids/uids/values → drop → rename → recreate all indexes incl. unique uid → restore the AUTOINCREMENT counter) so `type` may be `balance_adjustment`; adds `adjustment_direction` (`increase`/`decrease`, NULL for existing rows) and table CHECKs tying it to that type (no destination/category, `balance_applied = 0`). One SQL transaction, idempotent. See [docs/balances.md](docs/balances.md). |
 
 Notes on version 2:
 
@@ -366,8 +383,8 @@ All responses are JSON. Every error looks like
 `{"error": "message", "fields": {"field": "problem", ...}}`. `fields` appears
 only on validation, conflict and duplicate-name errors.
 - Some errors also carry a machine-readable `"code"`: `version_required`,
-  `version_conflict` (with `"current"`, the record as it is now), or
-  `balance_in_use`.
+  `version_conflict` (with `"current"`, the record as it is now),
+  `balance_in_use`, or `balance_adjustment_readonly`.
 
 **Versioning** applies to balances and transactions (details in
 [docs/balances.md](docs/balances.md#3-optimistic-locking-versions)):
@@ -379,16 +396,16 @@ only on validation, conflict and duplicate-name errors.
 
 | Method | Path                 | Success | Notes |
 |--------|----------------------|---------|-------|
-| POST   | `/api/transactions`      | 201 + transaction, `Location` + `ETag` headers | Moves the balance(s) in the same DB transaction. 422 on validation errors (incl. currency ≠ balance currency), 400 on malformed JSON or unknown fields |
-| GET    | `/api/transactions`      | 200 `{"transactions":[...],"count":n}` | Newest first by spend time. Optional `from`, `to` (RFC 3339 with offset, both inclusive), `limit` (1–5000, default 500), `type` (`expense`/`income`/`transfer`; 400 if invalid), `category_uid` (UUID; 400 if malformed) |
+| POST   | `/api/transactions`      | 201 + transaction, `Location` + `ETag` headers | Moves the balance(s) in the same DB transaction. 422 on validation errors (incl. currency ≠ balance currency, `type` `balance_adjustment`), 400 on malformed JSON or unknown fields |
+| GET    | `/api/transactions`      | 200 `{"transactions":[...],"count":n}` | Newest first by spend time. Optional `from`, `to` (RFC 3339 with offset, both inclusive), `limit` (1–5000, default 500), `type` (`expense`/`income`/`transfer`/`balance_adjustment`; 400 if invalid), `category_uid` (UUID; 400 if malformed) |
 | GET    | `/api/transactions/:uid`  | 200 + transaction | `:uid` is the transaction UUID (case-insensitive). **400** if it is not UUID-shaped (including numeric ids such as `/api/transactions/1`), **404** if no such uid. Same for PUT/PATCH/DELETE |
-| PUT    | `/api/transactions/:uid`  | 200 + updated transaction | Full replace with the same body and rules as POST. An omitted `note` clears it. Requires `If-Match` or `"version"` (428 / 409). Reverses the old balance effect and applies the new one. 404 if missing, 422 for invalid values, 400 for malformed JSON or unknown fields |
+| PUT    | `/api/transactions/:uid`  | 200 + updated transaction | Full replace with the same body and rules as POST. An omitted `note` clears it. Requires `If-Match` or `"version"` (428 / 409). Reverses the old balance effect and applies the new one. 409 `balance_adjustment_readonly` on a balance adjustment (also PATCH/DELETE). 404 if missing, 422 for invalid values, 400 for malformed JSON or unknown fields |
 | PATCH  | `/api/transactions/:uid`  | 200 + updated transaction | Partial update: only the fields you send change, then the merged result is validated like a create. `"note": null` clears the note; `null` for any other field returns 422. Returns 400 for `{}`, unknown fields or wrong JSON types, and 404 if missing. Requires `If-Match` or `"version"` (428 / 409) |
 | DELETE | `/api/transactions/:uid`  | 204 | Reverses the balance effect. Optional `If-Match` (409 if stale). 404 if missing |
 | POST   | `/api/balances`      | 201 + balance, `Location` header | 422 on validation errors (incl. per-type amount rules), 409 if the name is already used (case-insensitive), 400 on malformed JSON or unknown fields |
 | GET    | `/api/balances`      | 200 `{"balances":[...],"count":n,"totals":[...]}` | Grouped by type, then by name. Optional `type=` filter (400 if invalid). Optional `payable=1` / `payable=true` returns only `payment_account` and `credit_card` (cannot combine with `type=`). `totals` covers the returned rows, per currency |
 | GET    | `/api/balances/:uid`  | 200 + balance | `:uid` is the balance UUID. 400 if not UUID-shaped (numeric ids are no longer accepted), 404 if missing. Same for PUT/PATCH/DELETE |
-| PUT    | `/api/balances/:uid`  | 200 + updated balance | Full replace (manual override of the amounts). `type` is required and must equal the stored type (422 on `type` otherwise). `uid` in the body is ignored. Requires `If-Match` or `"version"` (428 / 409). 409 `balance_in_use` for a currency change while transactions reference it. Returns 404, 409, 422 or 400 as for POST |
+| PUT    | `/api/balances/:uid`  | 200 + updated balance | Full replace (manual override of the amounts; a balance/debt change records a `balance_adjustment` transaction). `type` is required and must equal the stored type (422 on `type` otherwise). `uid` in the body is ignored. Requires `If-Match` or `"version"` (428 / 409). 409 `balance_in_use` for a currency change while transactions reference it. Returns 404, 409, 422 or 400 as for POST |
 | PATCH  | `/api/balances/:uid`  | 200 + updated balance | Partial update. `type` may be sent only with the stored value (422 on `type` otherwise). `"description": null` clears it; `"balance"`/`"debt"`/`"limit": null` removes that amount. A currency change re-reads the amounts using the new currency's decimals. `uid` in the body is ignored. Versioning and `balance_in_use` as for PUT |
 | DELETE | `/api/balances/:uid`  | 204 | Optional `If-Match` (409 if stale). 404 if missing |
 | POST   | `/api/categories`      | 201 + category, `Location: /api/categories/<uid>` | 422 on validation errors, 409 duplicate name within the type, 400 malformed JSON / unknown fields |
@@ -462,7 +479,8 @@ curl -s -X POST http://127.0.0.1:8080/api/transactions -H 'Content-Type: applica
 ```
 
 Expense and income rows return `"to_balance_uid":null,"to_account":null`.
-`GET /api/transactions?type=income` lists only income.
+`GET /api/transactions?type=income` lists only income;
+`?type=balance_adjustment` lists only balance adjustments.
 
 Unknown or non-payable `balance_uid` → HTTP 422 on that field:
 
@@ -561,9 +579,10 @@ pkg/store/                         persistence (modernc.org/sqlite)
   store.go                         transactions in table "transactions": Open, Create, List, Get, Update(With), Delete(With); WriteOptions, ErrVersionConflict
   effects.go                       applyBalanceEffects: move balances for a transaction write (same DB transaction)
   balances.go                      table "balances": CreateBalance, ListBalances, GetBalance, UpdateBalance(With), DeleteBalance(With)
+  adjustments.go                   balance_adjustment transactions recorded by manual balance edits
   categories.go                    table "categories": CreateCategory, ListCategories, GetCategoryByUID, UpdateCategory, DeleteCategory
   users.go                         tables "users", "user_identities": CreateUser, ListUsers, GetUserByUID, UpdateUser, DeleteUser, SetPasswordHash, CreateIdentity, ListIdentities, FindUserByIdentity
-  migrate.go                       current schema, versioned migrations (v0 -> … -> v12)
+  migrate.go                       current schema, versioned migrations (v0 -> … -> v13)
   store_test.go, balances_test.go  fresh DB, upgrades from v0/v1/v2, partial/ambiguous states
 pkg/api/                           Gin routes and handlers
   api.go                           router setup + shared helpers
@@ -625,14 +644,18 @@ confirmations use human labels instead. For example, an edit page is titled
 **Transactions**
 
 - The list is newest first, with a date filter (whole days in the device's time
-  zone) and per-currency totals. Expenses and income are summed separately, and
-  transfers are excluded from both.
+  zone), a Type filter and per-currency totals. Expenses and income are summed
+  separately; transfers and balance adjustments are excluded from both.
+- **Balance Adjustment** rows (recorded by manual balance edits) have their
+  own style and label, a signed amount (+/−), and "Automatic" instead of
+  Edit/Delete; their edit URL shows a read-only message.
 - Columns: time (shown in the device's time zone, with the stored value on
   hover, and an "edited" marker), Type, Amount,
   Currency, Account ("from → to" for transfers), Category, Note.
 - The category name is looked up client-side from `/api/categories` by
   `category_uid`.
-- The form has a **Type** selector (Expense / Income / Transfer). The source
+- The form has a **Type** selector (Expense / Income / Transfer; balance
+  adjustments cannot be entered). The source
   dropdown lists only the balance types allowed for that type. Its label
   changes to "Payment account", "Received into" or "From (source)". A **To
   (destination)** dropdown appears only for transfers.
@@ -656,7 +679,8 @@ confirmations use human labels instead. For example, an edit page is titled
   **Debt** + **Limit** for liabilities. Hidden fields are not sent.
 - On the edit page the **Type** selector is disabled, because types can't
   change after creation. A hint notes that typed amounts override the
-  automatic ones. If the balance changed since the page was
+  automatic ones and that a balance/debt change is recorded as a Balance
+  Adjustment transaction. If the balance changed since the page was
   loaded (e.g. a transaction was saved), saving shows a conflict message with
   a **Reload latest values** button instead of overwriting.
 

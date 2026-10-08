@@ -103,6 +103,8 @@
     income: "Payment accounts and other assets.",
     transfer: "Any balance.",
   };
+  // Display names of transaction types (the API uses the lowercase values).
+  const TYPE_LABEL = { expense: "Expense", income: "Income", transfer: "Transfer", balance_adjustment: "Balance Adjustment" };
   const KIND = { payment_account: "account", credit_card: "card", other_asset: "asset", other_liability: "liability" };
 
   function fillSelect(sel, types, keep) {
@@ -184,6 +186,12 @@
       e = body;
     } catch (err) {
       if (my === gen) setStatus("Network error: " + err.message, "bad");
+      return;
+    }
+    if (e.type === "balance_adjustment") {
+      // Recorded automatically by a manual balance edit; read-only in the API.
+      $("#form-title").textContent = "Balance Adjustment";
+      setStatus("Balance adjustments are recorded automatically when a balance or debt is edited by hand, and can't be edited or deleted. Edit the balance instead.", "bad");
       return;
     }
     editing = e;
@@ -277,6 +285,7 @@
       const [y, m, dd] = to.split("-").map(Number);
       params.set("to", toRFC3339(new Date(y, m - 1, dd, 23, 59, 59)));
     }
+    if ($("#filter-type").value) params.set("type", $("#filter-type").value);
     return params;
   }
 
@@ -290,7 +299,8 @@
   }
 
   // Per-currency totals of the shown rows, exact via BigInt minor units.
-  // Expenses and income are summed separately; transfers are excluded.
+  // Expenses and income are summed separately; transfers and balance
+  // adjustments (manual corrections, not spending or income) are excluded.
   function renderTotals(items) {
     const sums = new Map(); // currency -> {scale, expense, income}
     for (const e of items) {
@@ -305,7 +315,7 @@
     for (const [code, { scale, expense, income }] of sums) {
       parts.push(`${code}: expenses ${formatMinor(expense, scale)}, income ${formatMinor(income, scale)}`);
     }
-    totalsEl.textContent = parts.length ? "Totals (shown rows, transfers excluded): " + parts.join(" · ") : "";
+    totalsEl.textContent = parts.length ? "Totals (shown rows, transfers and balance adjustments excluded): " + parts.join(" · ") : "";
   }
 
   // Category name for a transaction, looked up client-side by category_uid
@@ -337,6 +347,8 @@
   async function enterList(_params, query) {
     $("#filter-from").value = /^\d{4}-\d{2}-\d{2}$/.test(query.get("from") || "") ? query.get("from") : "";
     $("#filter-to").value = /^\d{4}-\d{2}-\d{2}$/.test(query.get("to") || "") ? query.get("to") : "";
+    const ft = query.get("type") || "";
+    $("#filter-type").value = [...$("#filter-type").options].some((o) => o.value === ft) ? ft : "";
     const highlight = App.takeFlash("transactions");
     await loadTransactions(highlight);
   }
@@ -345,6 +357,7 @@
     const q = new URLSearchParams();
     if ($("#filter-from").value) q.set("from", $("#filter-from").value);
     if ($("#filter-to").value) q.set("to", $("#filter-to").value);
+    if ($("#filter-type").value) q.set("type", $("#filter-type").value);
     App.replaceQuery(q.toString());
     $("#flash-transactions").hidden = true;
     loadTransactions();
@@ -380,15 +393,32 @@
           timeTd.append(mark);
         }
         const t = e.type || "expense";
-        const typeTd = cell(t, "type type-" + t);
+        const isAdj = t === "balance_adjustment";
+        const typeTd = cell(TYPE_LABEL[t] || t, "type type-" + t);
         const acctTd = cell(t === "transfer" ? `${e.account || "?"} → ${e.to_account || "?"}` : (e.account || ""));
-        tr.append(timeTd, typeTd, cell(e.amount, "num"), cell(e.currency), acctTd, cell(categoryName(e.category_uid)), cell(e.note || "", "note"));
+        // An adjustment shows its direction as a sign: + the edited balance
+        // or debt went up, − it went down.
+        const amountTd = cell(isAdj ? (e.adjustment_direction === "decrease" ? "−" : "+") + e.amount : e.amount, "num");
+        if (isAdj) {
+          tr.classList.add("row-adjustment");
+          amountTd.title = `Manual balance edit: ${e.adjustment_direction === "decrease" ? "decreased" : "increased"} by ${e.amount} ${e.currency}`;
+        }
+        tr.append(timeTd, typeTd, amountTd, cell(e.currency), acctTd, cell(categoryName(e.category_uid)), cell(e.note || "", "note"));
         const actions = document.createElement("td");
         actions.className = "actions-cell";
-        actions.append(
-          link("Edit", `/transactions/${encodeURIComponent(e.uid)}/edit`, "button edit"),
-          button("Delete", "danger", () => deleteTransaction(e)),
-        );
+        if (isAdj) {
+          // Read-only: recorded automatically, no Edit/Delete.
+          const auto = document.createElement("span");
+          auto.className = "auto-label";
+          auto.textContent = "Automatic";
+          auto.title = "Recorded when the balance was edited by hand; edit the balance to correct it.";
+          actions.append(auto);
+        } else {
+          actions.append(
+            link("Edit", `/transactions/${encodeURIComponent(e.uid)}/edit`, "button edit"),
+            button("Delete", "danger", () => deleteTransaction(e)),
+          );
+        }
         tr.append(actions);
         tbody.append(tr);
       }
@@ -432,6 +462,7 @@
   $("#filter-clear").addEventListener("click", () => {
     $("#filter-from").value = "";
     $("#filter-to").value = "";
+    $("#filter-type").value = "";
     applyFilters();
   });
 

@@ -249,4 +249,8 @@ func TestConcurrentBalancePatchesOneWins(t *testing.T) {
 	if got[200] != 1 || got[409] != n-1 {
 		t.Errorf("status counts = %v, want one 200 and %d 409", got, n-1)
 	}
+	// Only the winning edit recorded a balance adjustment.
+	if _, b := doH(t, h, "GET", "/api/transactions?type=balance_adjustment", "", nil); b["count"].(float64) != 1 {
+		t.Errorf("adjustments after concurrent edits: %v", b)
+	}
 }

@@ -164,7 +164,10 @@ func (s *Store) UpdateBalance(ctx context.Context, id int64, fn func(cur balance
 // returns, in one database transaction. This is the manual edit path (PUT /
 // PATCH): the amounts fn returns overwrite whatever transactions have done to
 // the balance. ID, UID and CreatedAt are preserved, UpdatedAt is set to now
-// (UTC) and Version is incremented.
+// (UTC) and Version is incremented. A change of the balance (asset) or debt
+// (liability) amount is recorded as a balance_adjustment transaction in the
+// same database transaction (see recordBalanceAdjustment); limit-only,
+// name/description and currency changes record nothing.
 //
 // Returns ErrNotFound, ErrVersionConflict (opts.Version > 0 and stale),
 // ErrDuplicateName, ErrBalanceInUse (currency change while transactions
@@ -226,6 +229,9 @@ func (s *Store) UpdateBalanceWith(ctx context.Context, id int64, opts WriteOptio
 	}
 	if n, err := res.RowsAffected(); err != nil || n != 1 {
 		return balance.Balance{}, ErrVersionConflict
+	}
+	if err := recordBalanceAdjustment(ctx, tx, cur, next, now); err != nil {
+		return balance.Balance{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return balance.Balance{}, fmt.Errorf("update balance: %w", err)

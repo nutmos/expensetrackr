@@ -186,13 +186,22 @@ func TestBalancePutAndPatch(t *testing.T) {
 			t.Errorf("PATCH type change %s: %d %v", b, rec.Code, body)
 		}
 	}
-	// PATCH currency re-scale / rejection.
-	rec, body = do(t, h, "PATCH", path, `{"currency":"KWD"}`)
+	// The amount edits above recorded balance adjustments, so KBank's
+	// currency is now fixed (409 balance_in_use).
+	if rec, body := do(t, h, "PATCH", path, `{"currency":"KWD"}`); rec.Code != 409 || code(body) != "balance_in_use" {
+		t.Errorf("PATCH currency of referenced balance: %d %v", rec.Code, body)
+	}
+	// PATCH currency re-scale / rejection on a balance nothing references
+	// (a currency change records no adjustment, so it stays unreferenced).
+	rpath, _ := createBal(t, h, `{"name":"Rescale","type":"payment_account","currency":"THB","balance":"-12"}`)
+	rec, body = do(t, h, "PATCH", rpath, `{"currency":"KWD"}`)
 	if rec.Code != 200 || body["balance"] != "-12.000" || body["balance_minor"].(float64) != -12000 {
 		t.Errorf("PATCH KWD: %d %v", rec.Code, body)
 	}
-	do(t, h, "PATCH", path, `{"currency":"THB","balance":"-12.5"}`)
-	rec, body = do(t, h, "PATCH", path, `{"currency":"JPY"}`)
+	if rec, body := do(t, h, "PATCH", rpath, `{"currency":"THB","balance":"-12.5"}`); rec.Code != 200 {
+		t.Errorf("PATCH back to THB: %d %v", rec.Code, body)
+	}
+	rec, body = do(t, h, "PATCH", rpath, `{"currency":"JPY"}`)
 	if rec.Code != 422 || fieldsOf(body)["balance"] == nil {
 		t.Errorf("PATCH JPY with fractional balance: %d %v", rec.Code, body)
 	}
@@ -216,7 +225,7 @@ func TestBalancePutAndPatch(t *testing.T) {
 		}
 	}
 	_, got := do(t, h, "GET", path, "")
-	if got["balance"] != "-12.50" || got["currency"] != "THB" {
+	if got["balance"] != "-12.00" || got["currency"] != "THB" {
 		t.Errorf("failed PATCHes changed the record: %v", got)
 	}
 }

@@ -100,6 +100,8 @@ func writeInputError(c *gin.Context, err error) {
 		c.JSON(http.StatusBadRequest, errorBody{Error: re.Msg})
 	case errors.Is(err, store.ErrNotFound):
 		c.JSON(http.StatusNotFound, errorBody{Error: "transaction not found"})
+	case errors.Is(err, store.ErrReadOnly):
+		c.JSON(http.StatusConflict, errorBody{Error: err.Error(), Code: "balance_adjustment_readonly"})
 	default:
 		internalError(c, err)
 	}

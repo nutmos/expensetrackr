@@ -28,6 +28,12 @@ var ErrNotFound = errors.New("transaction not found")
 // else changed it since the caller read it. Nothing is written.
 var ErrVersionConflict = errors.New("version conflict: the record was changed since it was read")
 
+// ErrReadOnly is returned when an update or delete targets a
+// balance_adjustment transaction, or a write tries to give a transaction that
+// type. Balance adjustments are created automatically by manual balance edits
+// (UpdateBalanceWith) and are never changed afterwards.
+var ErrReadOnly = errors.New("balance adjustments are created automatically and cannot be created, edited or deleted directly")
+
 // WriteOptions controls optimistic locking for updates and deletes.
 type WriteOptions struct {
 	// Version, if > 0, must equal the stored version or the write fails with
@@ -77,6 +83,9 @@ func (s *Store) Close() error { return s.db.Close() }
 // balance that is missing or in another currency is a *validate.ValidationError
 // and nothing is written.
 func (s *Store) Create(ctx context.Context, e *transaction.Transaction) error {
+	if e.Type == transaction.BalanceAdjustment {
+		return ErrReadOnly
+	}
 	scale, ok := money.MinorUnits(e.Currency)
 	if !ok {
 		return fmt.Errorf("unknown currency %q", e.Currency)
@@ -125,7 +134,7 @@ type ListFilter struct {
 	Limit       int
 }
 
-const selectCols = `id, uid, type, amount_minor, amount_scale, currency, balance_uid, account, to_balance_uid, to_account, category_uid, spent_at, note, created_at, updated_at, version, balance_applied`
+const selectCols = `id, uid, type, amount_minor, amount_scale, currency, balance_uid, account, to_balance_uid, to_account, category_uid, spent_at, note, created_at, updated_at, version, balance_applied, adjustment_direction`
 
 // List returns rows from transactions newest first (by spend time, then ID).
 func (s *Store) List(ctx context.Context, f ListFilter) ([]transaction.Transaction, error) {
@@ -220,6 +229,9 @@ func (s *Store) UpdateWith(ctx context.Context, id int64, opts WriteOptions, fn 
 	if err != nil {
 		return transaction.Transaction{}, err
 	}
+	if cur.Type == transaction.BalanceAdjustment {
+		return transaction.Transaction{}, ErrReadOnly
+	}
 	if opts.Version > 0 && cur.Version != opts.Version {
 		return transaction.Transaction{}, ErrVersionConflict
 	}
@@ -227,6 +239,10 @@ func (s *Store) UpdateWith(ctx context.Context, id int64, opts WriteOptions, fn 
 	if err != nil {
 		return transaction.Transaction{}, err
 	}
+	if next.Type == transaction.BalanceAdjustment {
+		return transaction.Transaction{}, ErrReadOnly
+	}
+	next.AdjustmentDirection = nil
 	scale, ok := money.MinorUnits(next.Currency)
 	if !ok {
 		return transaction.Transaction{}, fmt.Errorf("unknown currency %q", next.Currency)
@@ -278,6 +294,9 @@ func (s *Store) DeleteWith(ctx context.Context, id int64, opts WriteOptions) err
 	if err != nil {
 		return err
 	}
+	if cur.Type == transaction.BalanceAdjustment {
+		return ErrReadOnly
+	}
 	if opts.Version > 0 && cur.Version != opts.Version {
 		return ErrVersionConflict
 	}
@@ -298,10 +317,10 @@ type scanner interface{ Scan(dest ...any) error }
 func scan(r scanner) (transaction.Transaction, error) {
 	var e transaction.Transaction
 	var scale int
-	var updated, toUID, toName, catUID sql.NullString
+	var updated, toUID, toName, catUID, dir sql.NullString
 	var typ string
 	if err := r.Scan(&e.ID, &e.UID, &typ, &e.AmountMinor, &scale, &e.Currency, &e.BalanceUID, &e.Account, &toUID, &toName, &catUID, &e.SpentAt, &e.Note, &e.CreatedAt, &updated,
-		&e.Version, &e.AdjustsBalances); err != nil {
+		&e.Version, &e.AdjustsBalances, &dir); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return e, err
 		}
@@ -320,6 +339,10 @@ func scan(r scanner) (transaction.Transaction, error) {
 	}
 	if catUID.Valid {
 		e.CategoryUID = &catUID.String
+	}
+	if dir.Valid {
+		d := transaction.Direction(dir.String)
+		e.AdjustmentDirection = &d
 	}
 	if t, err := time.Parse(time.RFC3339, e.SpentAt); err == nil {
 		e.SpentTime = t

@@ -147,6 +147,10 @@ func (s *Server) replaceTransaction(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if cur.Type == transaction.BalanceAdjustment { // read-only, whatever the body or version
+		writeInputError(c, store.ErrReadOnly)
+		return
+	}
 	var in transaction.CreateInput
 	if !decodeBody(c, &in, true) {
 		return
@@ -178,6 +182,10 @@ func (s *Server) replaceTransaction(c *gin.Context) {
 func (s *Server) patchTransaction(c *gin.Context) {
 	cur, ok := s.resolveTransaction(c)
 	if !ok {
+		return
+	}
+	if cur.Type == transaction.BalanceAdjustment { // read-only, whatever the body or version
+		writeInputError(c, store.ErrReadOnly)
 		return
 	}
 	var patch map[string]json.RawMessage
@@ -256,10 +264,10 @@ func (s *Server) listTransactions(c *gin.Context) {
 	}
 
 	if raw := c.Query("type"); raw != "" {
-		if t, ok := transaction.ParseType(raw); ok {
+		if t, ok := transaction.ParseFilterType(raw); ok {
 			f.Type = t
 		} else {
-			fields["type"] = "must be one of: expense, income, transfer"
+			fields["type"] = "must be one of: expense, income, transfer, balance_adjustment"
 		}
 	}
 
@@ -307,6 +315,10 @@ func (s *Server) getTransaction(c *gin.Context) {
 func (s *Server) deleteTransaction(c *gin.Context) {
 	cur, ok := s.resolveTransaction(c)
 	if !ok {
+		return
+	}
+	if cur.Type == transaction.BalanceAdjustment { // read-only, whatever the body or version
+		writeInputError(c, store.ErrReadOnly)
 		return
 	}
 	version, ok := clientVersion(c, nil, false)

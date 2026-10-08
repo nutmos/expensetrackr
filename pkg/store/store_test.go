@@ -120,13 +120,13 @@ func assertCurrentSchema(t *testing.T, path string) {
 			t.Errorf("missing %s %q; have %v", typ, name, got)
 		}
 	}
-	if v := userVersion(t, path); v != 12 || SchemaVersion != 12 {
-		t.Errorf("user_version = %d (SchemaVersion %d), want 12", v, SchemaVersion)
+	if v := userVersion(t, path); v != 13 || SchemaVersion != 13 {
+		t.Errorf("user_version = %d (SchemaVersion %d), want 13", v, SchemaVersion)
 	}
 	// Every table has the same columns as a brand-new database (name, type,
-	// NOT NULL, default; for transactions only names and types, since columns
-	// added by ALTER TABLE in v4-v6 stay nullable, see addTransactionUID), and
-	// balances no longer forbids a negative debt.
+	// NOT NULL, default; transactions too, since v13 rebuilds it from the
+	// current definition), balances no longer forbids a negative debt, and
+	// transactions accepts balance adjustments.
 	fresh := filepath.Join(t.TempDir(), "fresh-compare.db")
 	if path != fresh {
 		st, err := Open(fresh)
@@ -135,14 +135,16 @@ func assertCurrentSchema(t *testing.T, path string) {
 		}
 		st.Close()
 		for _, table := range []string{"transactions", "balances", "categories", "users", "user_identities"} {
-			full := table != "transactions"
-			if got, want := tableColumns(t, path, table, full), tableColumns(t, fresh, table, full); got != want {
+			if got, want := tableColumns(t, path, table, true), tableColumns(t, fresh, table, true); got != want {
 				t.Errorf("%s columns after migration:\n got %s\nwant %s", table, got, want)
 			}
 		}
 	}
 	if ddl := tableSQL(t, path, "balances"); strings.Contains(ddl, "debt_minor >= 0") || !strings.Contains(ddl, "version") {
 		t.Errorf("balances DDL not at v11+: %s", ddl)
+	}
+	if ddl := tableSQL(t, path, "transactions"); !strings.Contains(ddl, "'balance_adjustment'") || !strings.Contains(ddl, "adjustment_direction") {
+		t.Errorf("transactions DDL not at v13: %s", ddl)
 	}
 }
 

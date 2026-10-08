@@ -44,6 +44,8 @@ import (
 //	    transactions.version + balance_applied
 //	v12 drop table balance_adjustments if present (created only by a
 //	    pre-release build of v11)
+//	v13 transactions rebuilt: type may be 'balance_adjustment', new column
+//	    adjustment_direction, table CHECKs for adjustment rows
 //
 // A brand-new database is created directly at the latest version from
 // currentSchema. An existing database is upgraded by running the pending
@@ -57,9 +59,19 @@ import (
 // transactions.version: optimistic-locking counter (1 on insert, +1 per update).
 // transactions.balance_applied: 1 if the row moved its balances (all rows
 // written by v11+); 0 for rows recorded before v11, whose edits/deletes
-// therefore never touch balances.
-var currentSchema = `
-CREATE TABLE transactions (
+// therefore never touch balances, and for balance_adjustment rows.
+var currentSchema = transactionsTable("transactions") + transactionsIndexes + balancesSchemaCurrent + categoriesSchema + usersSchema
+
+// transactionsTable returns the CREATE TABLE statement of the current (v13+)
+// transactions table under the given name (also used by the v13 rebuild).
+//
+// adjustment_direction is set exactly for type 'balance_adjustment' rows,
+// which are written by the server when a balance amount is edited by hand:
+// they never carry a destination or category and never moved a balance
+// (balance_applied = 0), so editing history can't double-count them.
+func transactionsTable(name string) string {
+	return `
+CREATE TABLE ` + name + ` (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     uid           TEXT    NOT NULL UNIQUE CHECK (length(uid) = 36),
     amount_minor  INTEGER NOT NULL CHECK (amount_minor > 0),
@@ -67,7 +79,7 @@ CREATE TABLE transactions (
     currency      TEXT    NOT NULL CHECK (length(currency) = 3),
     balance_uid   TEXT    NOT NULL CHECK (length(balance_uid) = 36),
     account       TEXT    NOT NULL CHECK (length(account) > 0),
-    type          TEXT    NOT NULL DEFAULT 'expense' CHECK (type IN ('expense', 'income', 'transfer')),
+    type          TEXT    NOT NULL DEFAULT 'expense' CHECK (type IN ('expense', 'income', 'transfer', 'balance_adjustment')),
     to_balance_uid TEXT   CHECK (to_balance_uid IS NULL OR length(to_balance_uid) = 36),
     to_account    TEXT,
     category_uid  TEXT    CHECK (category_uid IS NULL OR length(category_uid) = 36),
@@ -77,15 +89,23 @@ CREATE TABLE transactions (
     created_at    TEXT    NOT NULL,
     updated_at    TEXT,
     version       INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
-    balance_applied INTEGER NOT NULL DEFAULT 0 CHECK (balance_applied IN (0, 1))
+    balance_applied INTEGER NOT NULL DEFAULT 0 CHECK (balance_applied IN (0, 1)),
+    adjustment_direction TEXT CHECK (adjustment_direction IS NULL OR adjustment_direction IN ('increase', 'decrease')),
+    CHECK ((type = 'balance_adjustment') = (adjustment_direction IS NOT NULL)),
+    CHECK (type <> 'balance_adjustment' OR (to_balance_uid IS NULL AND category_uid IS NULL AND balance_applied = 0))
 );
-CREATE INDEX idx_transactions_spent_at_unix ON transactions (spent_at_unix DESC, id DESC);
-CREATE INDEX idx_transactions_balance_uid ON transactions (balance_uid);
-CREATE UNIQUE INDEX idx_transactions_uid ON transactions (uid);
-CREATE INDEX idx_transactions_type ON transactions (type, spent_at_unix DESC);
-CREATE INDEX idx_transactions_category_uid ON transactions (category_uid);
-CREATE INDEX idx_transactions_to_balance_uid ON transactions (to_balance_uid);
-` + balancesSchemaCurrent + categoriesSchema + usersSchema
+`
+}
+
+// transactionsIndexes are the indexes of the transactions table.
+const transactionsIndexes = `
+CREATE INDEX IF NOT EXISTS idx_transactions_spent_at_unix ON transactions (spent_at_unix DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_transactions_balance_uid ON transactions (balance_uid);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_uid ON transactions (uid);
+CREATE INDEX IF NOT EXISTS idx_transactions_type ON transactions (type, spent_at_unix DESC);
+CREATE INDEX IF NOT EXISTS idx_transactions_category_uid ON transactions (category_uid);
+CREATE INDEX IF NOT EXISTS idx_transactions_to_balance_uid ON transactions (to_balance_uid);
+`
 
 // balancesSchemaV3 creates the balances table as shipped at version 3
 // (no uid yet). Used only by migration v2 -> v3. Do not edit once shipped.
@@ -270,6 +290,9 @@ var migrations = []migration{
 	// v11 -> v12: drop the balance_adjustments audit table that a pre-release
 	// build of v11 created. No-op otherwise.
 	dropBalanceAdjustments,
+	// v12 -> v13: allow type 'balance_adjustment' (rebuild of transactions,
+	// since SQLite cannot alter a CHECK) and add adjustment_direction.
+	rebuildTransactionsV13,
 }
 
 // SchemaVersion is the user_version a fully migrated database has.
@@ -768,6 +791,71 @@ func rebuildBalancesV11(tx *sql.Tx) error {
 		}
 		if _, err := tx.Exec(`INSERT INTO sqlite_sequence (name, seq) VALUES ('balances', max(?, (SELECT coalesce(max(id), 0) FROM balances)))`, seq.Int64); err != nil {
 			return fmt.Errorf("restore balances sequence: %w", err)
+		}
+	}
+	return nil
+}
+
+// rebuildTransactionsV13 is migration v12 -> v13. SQLite cannot change a
+// CHECK constraint in place, so transactions is rebuilt inside the migration's
+// SQL transaction: create the new table, copy every row (same ids, uids and
+// values; adjustment_direction NULL), drop the old table, rename, recreate
+// the indexes (including the unique uid index) and restore the AUTOINCREMENT
+// counter so ids of deleted rows are never reused. No foreign key references
+// transactions. Skipped if the table already has adjustment_direction and
+// allows 'balance_adjustment' (idempotent).
+func rebuildTransactionsV13(tx *sql.Tx) error {
+	hasDir, err := columnExists(tx, "transactions", "adjustment_direction")
+	if err != nil {
+		return err
+	}
+	var ddl string
+	if err := tx.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'transactions'`).Scan(&ddl); err != nil {
+		return fmt.Errorf("read transactions schema: %w", err)
+	}
+	if hasDir && strings.Contains(ddl, "'balance_adjustment'") {
+		return nil // already rebuilt
+	}
+	cols := []string{"id", "uid", "amount_minor", "amount_scale", "currency", "balance_uid", "account", "type",
+		"to_balance_uid", "to_account", "category_uid", "spent_at", "spent_at_unix", "note", "created_at",
+		"updated_at", "version", "balance_applied"}
+	if err := requireColumns(tx, "transactions", cols...); err != nil {
+		return err
+	}
+	var seq sql.NullInt64
+	if err := tx.QueryRow(`SELECT seq FROM sqlite_sequence WHERE name = 'transactions'`).Scan(&seq); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("read transactions sequence: %w", err)
+	}
+	list := strings.Join(cols, ", ")
+	dir := "NULL"
+	if hasDir {
+		dir = "adjustment_direction"
+	}
+	const tmp = "transactions_v13_rebuild"
+	stmts := []string{
+		`DROP TABLE IF EXISTS ` + tmp,
+		transactionsTable(tmp),
+		`INSERT INTO ` + tmp + ` (` + list + `, adjustment_direction) SELECT ` + list + `, ` + dir + ` FROM transactions`,
+		`DROP TABLE transactions`,
+		`ALTER TABLE ` + tmp + ` RENAME TO transactions`,
+		transactionsIndexes,
+	}
+	for _, q := range stmts {
+		if _, err := tx.Exec(q); err != nil {
+			return fmt.Errorf("rebuild transactions: %w", err)
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM sqlite_sequence WHERE name IN ('transactions', '` + tmp + `')`); err != nil {
+		return fmt.Errorf("restore transactions sequence: %w", err)
+	}
+	var maxID sql.NullInt64
+	if err := tx.QueryRow(`SELECT max(id) FROM transactions`).Scan(&maxID); err != nil {
+		return fmt.Errorf("restore transactions sequence: %w", err)
+	}
+	if seq.Valid || maxID.Valid {
+		next := max(seq.Int64, maxID.Int64)
+		if _, err := tx.Exec(`INSERT INTO sqlite_sequence (name, seq) VALUES ('transactions', ?)`, next); err != nil {
+			return fmt.Errorf("restore transactions sequence: %w", err)
 		}
 	}
 	return nil

@@ -429,7 +429,7 @@ DELETE FROM balances WHERE name = 'Gone';
 PRAGMA user_version = 10;
 `
 
-func TestMigrationV10ToV12(t *testing.T) {
+func TestMigrationV10ToCurrent(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "v10.db")
 	rawDB(t, path, schemaV10)
@@ -498,7 +498,7 @@ func TestMigrationV10ToV12(t *testing.T) {
 	st.Close()
 	assertCurrentSchema(t, path)
 
-	// Idempotent: running the v11 and v12 migrations again changes nothing.
+	// Idempotent: running the v11-v13 migrations again changes nothing.
 	db, err := sql.Open("sqlite", "file:"+path)
 	if err != nil {
 		t.Fatal(err)
@@ -513,6 +513,9 @@ func TestMigrationV10ToV12(t *testing.T) {
 	}
 	if err := dropBalanceAdjustments(tx); err != nil {
 		t.Fatalf("re-run v12: %v", err)
+	}
+	if err := rebuildTransactionsV13(tx); err != nil {
+		t.Fatalf("re-run v13: %v", err)
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)

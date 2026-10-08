@@ -1,7 +1,8 @@
-# Balances: automatic adjustment, manual edits and versioning (schema v11–v12)
+# Balances: automatic adjustment, manual edits and versioning (schema v11–v13)
 
 Balances now follow the transactions recorded against them. You can still set
-the amount by hand when it has to match a statement. Every balance and
+the amount by hand when it has to match a statement; that edit is recorded as
+a read-only **Balance Adjustment** transaction. Every balance and
 transaction has a **version**, so two edits based on the same data cannot
 silently overwrite each other.
 
@@ -25,6 +26,7 @@ is always > 0.
 | `income` | `balance_uid` (payment_account / other_asset) | `balance += amount` | n/a (not allowed) | salary into a bank account |
 | `transfer` (source) | `balance_uid` (any type) | `balance −= amount` | `debt += amount` | moving savings out; drawing a loan; cash advance |
 | `transfer` (destination) | `to_balance_uid` (any type) | `balance += amount` | `debt −= amount` | topping up an account; paying a card; repaying a loan |
+| `balance_adjustment` | `balance_uid` (any type) | none | none | recorded by a manual balance edit, which already set the value (§2) |
 
 The code is `transaction.Effects` (signs) and
 `store.applyBalanceEffects` (writes).
@@ -77,15 +79,61 @@ rejected with **422** and nothing is written:
 
 ## 2. Manual adjustment (PUT/PATCH on a balance)
 
-You can still set `balance`, `debt` or `limit` directly with the existing
-`PUT`/`PATCH /api/balances/:uid` (versioned like every other write, see
-below). **A manual value overrides** whatever transactions did. Later
-transactions then move the balance from the new value.
+You can still set `balance` (assets) or `debt` (liabilities) directly with
+the existing `PUT`/`PATCH /api/balances/:uid` (versioned like every other
+write, see §3). **A manual value overrides** whatever transactions did; later
+transactions move the balance from the new value. There is no separate
+adjustments API.
 
-There is no separate adjustments API or audit table: the balance's `version`
-and `updated_at` change, and the transactions remain the record of automatic
-changes. The web edit page shows a short hint that typed amounts override the
-automatic ones.
+### Balance Adjustment transactions
+
+When a manual edit changes the amount, the server records a transaction of
+type **`balance_adjustment`** (shown as **"Balance Adjustment"**) in the
+**same database transaction** as the balance update: both are saved or
+neither is (a stale or invalid edit records nothing).
+
+| Field | Value |
+|---|---|
+| `type` | `balance_adjustment` |
+| `amount` | the absolute difference, always > 0 (e.g. 1000.00 → 950.00 gives `50.00`) |
+| `adjustment_direction` | `increase` or `decrease` of the edited amount: `balance` for an asset, `debt` for a liability (so `decrease` on a card means its debt went down). `null` on every other type |
+| `balance_uid`, `account` | the edited balance and its (new) name |
+| `currency` | the balance's currency |
+| `spent_at` | the time of the edit: the **server's** current local time with its UTC offset (e.g. `2026-10-08T21:30:00+08:00`), whole seconds |
+| `note` | generated, e.g. `Manual edit of balance: 1000.00 → 950.00` |
+| `category_uid`, `to_balance_uid` | `null` |
+| `adjusts_balances` | `false`: it never moves a balance (no double counting) |
+| `version` | 1 (it never changes) |
+
+When nothing is recorded:
+- **Limit changes** (`limit` is not money moving): a limit-only edit records
+  nothing; an edit of debt and limit records only the debt change.
+- **No change in the amount**: renames, description edits, or re-sending the
+  same value.
+- **Currency change in the same edit**: the old and new amounts are in
+  different currencies. This is only possible while no transaction references
+  the balance; afterwards the currency is fixed (409 `balance_in_use`), and a
+  recorded adjustment counts as a reference.
+
+**Read-only via the API.** Adjustments are created only by balance edits:
+- `POST /api/transactions` with `"type":"balance_adjustment"`, or a PUT/PATCH
+  that changes a transaction to that type: **422** on `type`.
+- `PUT`, `PATCH` or `DELETE` on an existing adjustment: **409** with
+  `"code":"balance_adjustment_readonly"` (whatever the body or version).
+  To correct one, edit the balance again (which records another adjustment).
+- They appear in `GET /api/transactions` and can be filtered with
+  `?type=balance_adjustment`.
+
+Guarded in the database too: transactions `CHECK`s require
+`adjustment_direction` exactly on `balance_adjustment` rows, and forbid
+those rows a destination, a category or `balance_applied = 1`.
+
+**Web UI.** The balance edit page notes that a typed balance/debt is recorded
+as a Balance Adjustment. On the transactions list, adjustments have their own
+style, the label "Balance Adjustment", a signed amount (+/−), "Automatic"
+instead of Edit/Delete, and are **excluded from the expense/income totals**
+(like transfers). The list has a Type filter. Opening an adjustment's edit URL
+shows a read-only message.
 
 ## 3. Optimistic locking (versions)
 
@@ -163,7 +211,7 @@ pages send it with Delete. On a 409:
 - **List page:** an alert explains that nothing was deleted, and the list is
   refreshed.
 
-## 4. Migrations v11 and v12
+## 4. Migrations v11–v13
 
 Each migration runs in one SQL transaction and is idempotent.
 
@@ -182,6 +230,16 @@ Each migration runs in one SQL transaction and is idempotent.
 **v12:** drops `balance_adjustments` (and its index and AUTOINCREMENT
 counter) if present. Only a pre-release build of v11 created that table; on
 any other database v12 is a no-op.
+
+**v13:** `transactions` is rebuilt, since SQLite cannot change a `CHECK` in
+place: create the new table, copy every row (same ids, uids and values;
+`adjustment_direction` NULL), drop the old table, rename, recreate all
+indexes (including the unique uid index) and restore the AUTOINCREMENT
+counter so ids of deleted rows are not reused. The new table allows type
+`balance_adjustment`, adds `adjustment_direction` and the table `CHECK`s
+above. Nothing references `transactions` by foreign key. Skipped if already
+done. A row violating the current constraints would abort the migration (and
+roll it back) rather than be altered.
 
 **Existing balances are not recomputed** from existing transactions. Their
 amounts stay exactly as entered.
