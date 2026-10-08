@@ -45,7 +45,7 @@ func (s *Server) Router() *gin.Engine {
 	api.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 
 	if s.Static != nil {
-		r.GET("/", s.index)
+		s.registerPageRoutes(r)
 		r.StaticFS("/static", http.FS(s.Static))
 	}
 	r.NoRoute(func(c *gin.Context) {
@@ -54,6 +54,7 @@ func (s *Server) Router() *gin.Engine {
 	return r
 }
 
+// index serves the single-page web app (index.html) for every page URL.
 func (s *Server) index(c *gin.Context) {
 	b, err := fs.ReadFile(s.Static, "index.html")
 	if err != nil {

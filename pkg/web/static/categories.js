@@ -1,58 +1,69 @@
-// Categories view. Plain vanilla JS, no build step.
+// Categories: list page (/categories) and add/edit page (/categories/new,
+// /categories/<uid>/edit). Plain vanilla JS, no build step.
 // All user data is rendered with textContent / input .value (never innerHTML).
 (function () {
   "use strict";
 
-  const $ = (sel) => document.querySelector(sel);
+  const { $, cell, button, link } = App;
   const form = $("#category-form");
-  const formCard = form.closest(".card");
   const statusEl = $("#c-form-status");
   const listStatus = $("#c-list-status");
   const groupsEl = $("#c-groups");
+  const LIST = "/categories";
   const TYPES = [
     { id: "expense", label: "Expense categories" },
     { id: "income", label: "Income categories" },
   ];
 
-  let editing = null; // category being edited, or null
+  let editing = null; // category being edited (edit page), or null
+  let gen = 0; // ignore responses for pages we already left
 
-  function clearErrors() {
-    form.querySelectorAll(".err").forEach((el) => (el.textContent = ""));
-    form.querySelectorAll("input, select").forEach((el) => el.classList.remove("invalid"));
-  }
+  const setStatus = (text, kind) => App.setStatus(statusEl, text, kind);
 
-  function showFieldErrors(fields) {
-    for (const [name, msg] of Object.entries(fields || {})) {
-      const errEl = form.querySelector(`.err[data-for="${name}"]`);
-      if (errEl) errEl.textContent = msg;
-      const input = form.querySelector(`[name="${name}"]`);
-      if (input) input.classList.add("invalid");
-    }
-  }
+  // ---- Form page: /categories/new and /categories/<uid>/edit -----------------
 
-  function setStatus(text, kind) {
-    statusEl.textContent = text;
-    statusEl.className = kind || "";
-  }
-
-  function notifyTransactions() {
-    if (typeof window.loadTxCategories === "function") window.loadTxCategories();
-  }
-
-  function exitEdit() {
+  async function enterForm(params, query) {
+    const my = ++gen;
     editing = null;
-    $("#c-form-title").textContent = "Add a category";
-    $("#c-submit-btn").textContent = "Save category";
-    $("#c-cancel-btn").hidden = true;
-    formCard.classList.remove("editing");
     form.reset();
-    clearErrors();
-    highlightRow();
+    App.clearErrors(form);
+    setStatus("");
+    form.hidden = false;
+    if (!params.uid) {
+      $("#c-form-title").textContent = "Add a category";
+      $("#c-submit-btn").textContent = "Save category";
+      if (query.get("type") === "income") $("#c-type").value = "income";
+      $("#c-name").focus();
+      return;
+    }
+    $("#c-form-title").textContent = "Edit category";
+    $("#c-submit-btn").textContent = "Save changes";
+    form.hidden = true; // until loaded
+    let c;
+    try {
+      const res = await fetch(`/api/categories/${params.uid}`);
+      c = await res.json().catch(() => ({}));
+      if (my !== gen) return;
+      if (!res.ok) {
+        setStatus(res.status === 404 ? "This category does not exist (it may have been deleted)." : c.error || `Could not load category (${res.status})`, "bad");
+        return;
+      }
+    } catch (err) {
+      if (my === gen) setStatus("Network error: " + err.message, "bad");
+      return;
+    }
+    editing = c;
+    form.hidden = false;
+    $("#c-form-title").textContent = `Edit category “${c.name}”`;
+    $("#c-name").value = c.name;
+    $("#c-type").value = c.type;
+    $("#c-description").value = c.description || "";
+    $("#c-name").focus();
   }
 
   async function submit(ev) {
     ev.preventDefault();
-    clearErrors();
+    App.clearErrors(form);
     setStatus("");
     const isEdit = !!editing;
     const payload = {
@@ -70,17 +81,15 @@
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        showFieldErrors(body.fields);
+        App.showFieldErrors(form, body.fields);
         let msg = body.error || `Request failed (${res.status})`;
         if (isEdit && res.status === 404) msg = "This category no longer exists (it may have been deleted).";
         setStatus(msg, "bad");
         return;
       }
-      exitEdit();
-      setStatus(`${isEdit ? "Updated" : "Saved"} “${body.name}”.`, "ok");
-      $("#c-name").focus();
-      await loadCategories();
-      notifyTransactions();
+      App.setFlash("categories", `${isEdit ? "Updated" : "Saved"} “${body.name}”.`, body.uid);
+      editing = null;
+      App.returnToList(LIST);
     } catch (err) {
       setStatus("Network error: " + err.message, "bad");
     } finally {
@@ -88,73 +97,29 @@
     }
   }
 
-  async function startEdit(uid) {
-    clearErrors();
-    setStatus("");
-    const res = await fetch(`/api/categories/${uid}`);
-    const c = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      setStatus(c.error || `Could not load category (${res.status})`, "bad");
-      if (res.status === 404) await loadCategories();
-      return;
-    }
-    editing = c;
-    $("#c-name").value = c.name;
-    $("#c-type").value = c.type;
-    $("#c-description").value = c.description || "";
-    $("#c-form-title").textContent = `Edit category “${c.name}”`;
-    $("#c-submit-btn").textContent = "Save changes";
-    $("#c-cancel-btn").hidden = false;
-    formCard.classList.add("editing");
-    highlightRow();
-    formCard.scrollIntoView({ behavior: "smooth", block: "start" });
-    $("#c-name").focus();
-  }
+  function cancelForm() { App.returnToList(LIST); }
 
-  function cancelEdit() {
-    if (!editing) return;
-    exitEdit();
-    setStatus("Edit cancelled.");
-  }
+  // ---- List page: /categories -------------------------------------------------
 
   async function remove(c) {
     if (!confirm(`Delete ${c.type} category “${c.name}”?`)) return;
-    setStatus("");
+    const flashEl = $("#flash-categories");
     const res = await fetch(`/api/categories/${c.uid}`, { method: "DELETE" });
     if (!res.ok && res.status !== 404) {
+      // e.g. 409: still used by transactions.
       const body = await res.json().catch(() => ({}));
-      setStatus(body.error || `Delete failed (${res.status})`, "bad");
+      flashEl.textContent = body.error || `Delete failed (${res.status})`;
+      flashEl.className = "flash bad";
+      flashEl.hidden = false;
       return;
     }
-    if (editing && editing.uid === c.uid) exitEdit();
-    setStatus(`Deleted “${c.name}”.`, "ok");
+    flashEl.textContent = `Deleted “${c.name}”.`;
+    flashEl.className = "flash";
+    flashEl.hidden = false;
     await loadCategories();
-    notifyTransactions();
   }
 
-  function cell(text, cls) {
-    const td = document.createElement("td");
-    td.textContent = text;
-    if (cls) td.className = cls;
-    return td;
-  }
-
-  function button(text, cls, onClick) {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = cls;
-    b.textContent = text;
-    b.addEventListener("click", onClick);
-    return b;
-  }
-
-  function highlightRow() {
-    groupsEl.querySelectorAll("tr[data-uid]").forEach((tr) => {
-      tr.classList.toggle("editing", !!editing && tr.dataset.uid === editing.uid);
-    });
-  }
-
-  function render(items) {
+  function render(items, highlightUID) {
     groupsEl.replaceChildren();
     for (const t of TYPES) {
       const rows = items.filter((c) => c.type === t.id);
@@ -182,6 +147,7 @@
       for (const c of rows) {
         const tr = document.createElement("tr");
         tr.dataset.uid = c.uid;
+        if (highlightUID && c.uid === highlightUID) tr.classList.add("just-saved");
         const nameTd = cell(c.name);
         const uidEl = document.createElement("div");
         uidEl.className = "uid muted";
@@ -189,7 +155,10 @@
         nameTd.append(uidEl);
         const actions = document.createElement("td");
         actions.className = "actions-cell";
-        actions.append(button("Edit", "edit", () => startEdit(c.uid)), button("Delete", "danger", () => remove(c)));
+        actions.append(
+          link("Edit", `/categories/${encodeURIComponent(c.uid)}/edit`, "button edit"),
+          button("Delete", "danger", () => remove(c)),
+        );
         tr.append(nameTd, cell(c.description || "", "note"), actions);
         tbody.append(tr);
       }
@@ -199,29 +168,33 @@
       wrap.append(table);
       groupsEl.append(wrap);
     }
-    highlightRow();
   }
 
-  async function loadCategories() {
+  async function loadCategories(highlightUID) {
+    const my = ++gen;
     listStatus.textContent = "Loading…";
     try {
       const res = await fetch("/api/categories");
       const body = await res.json();
+      if (my !== gen) return;
       if (!res.ok) {
         listStatus.textContent = body.error || `Failed (${res.status})`;
         return;
       }
-      render(body.categories);
+      render(body.categories, highlightUID);
       listStatus.textContent = body.count === 0 ? "No categories yet." : `${body.count} categor${body.count === 1 ? "y" : "ies"}.`;
     } catch (err) {
-      listStatus.textContent = "Failed to load categories: " + err.message;
+      if (my === gen) listStatus.textContent = "Failed to load categories: " + err.message;
     }
   }
 
-  window.loadCategoriesView = loadCategories;
+  // ---- Init ----------------------------------------------------------------
+
   form.addEventListener("submit", submit);
-  $("#c-cancel-btn").addEventListener("click", cancelEdit);
-  document.addEventListener("keydown", (ev) => {
-    if (ev.key === "Escape" && !$("#view-categories").hidden) cancelEdit();
-  });
+  $("#c-cancel-btn").addEventListener("click", cancelForm);
+
+  App.route("/categories", { view: "#view-categories", section: "categories", title: "Categories", enter: () => loadCategories(App.takeFlash("categories")) });
+  const formRoute = { view: "#view-category-form", section: "categories", enter: enterForm, onEscape: cancelForm };
+  App.route("/categories/new", { ...formRoute, title: "Add category" });
+  App.route("/categories/:uid/edit", { ...formRoute, title: "Edit category" });
 })();

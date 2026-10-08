@@ -345,7 +345,8 @@ only on validation and duplicate-name errors.
 | PATCH  | `/api/categories/:uid` | 200 + updated category | Partial update of `name`, `type`, `description` (`null` clears description). Same 409 rules |
 | DELETE | `/api/categories/:uid` | 204 | 409 if any transaction references it; 404 if missing |
 | GET    | `/api/healthz`       | 200 `{"status":"ok"}` | |
-| GET    | `/`                  | HTML page | Static assets under `/static/` |
+| GET    | `/`, `/transactions`, `/balances`, `/categories` | HTML page (list) | Same `index.html` for every page path; the client-side router picks the view. Static assets under `/static/` |
+| GET    | `/<res>/new`, `/<res>/:uid/edit` | HTML page (add / edit form) | `<res>` = `transactions`, `balances` or `categories`. `:uid` must be UUID-shaped (any case), else 404; an unknown uid is reported by the page itself. Other paths → 404 JSON |
 
 ### Examples
 
@@ -506,65 +507,89 @@ pkg/api/                           Gin routes and handlers
   transactions.go                  /api/transactions routes
   balances.go                      /api/balances routes
   categories.go                    /api/categories routes
+  pages.go                         web page routes (list / new / edit paths → index.html)
   *_test.go                        handler tests (throwaway DB per test)
 pkg/web/embed.go                   embeds web/static into the binary
-pkg/web/static/                    index.html, style.css, app.js (transactions), balances.js (balances + tabs), categories.js (categories)
+pkg/web/static/                    index.html (all views), style.css, router.js (history router + shared helpers),
+                                   transactions.js, balances.js, categories.js (list + form page each)
 ```
 
 ## Web page
 
-Three tabs: **Transactions** (`/#transactions`, the default), **Balances**
-(`/#balances`) and **Categories** (`/#categories`).
+A small single-page app (vanilla JS, no build step) with real,
+history-friendly URLs. Gin serves the same embedded `index.html` for every page
+path, and `router.js` shows the view for `location.pathname`:
 
-Categories tab: a form (name, type, description), the list grouped into
-expense and income categories (with each uid in small muted text), **Edit**
-(saves with PUT) and **Delete** (a 409 for a category still in use is shown
-in the form status). Changes refresh the transaction form's dropdown.
+| URL                          | Page |
+|------------------------------|------|
+| `/`, `/transactions`         | Transactions list (browse only). Date filters live in the query: `/transactions?from=2026-10-01&to=2026-10-31` |
+| `/transactions/new`          | Add a transaction |
+| `/transactions/<uid>/edit`   | Edit a transaction (same form) |
+| `/balances`, `/balances/new`, `/balances/<uid>/edit` | Balances list / add / edit |
+| `/categories`, `/categories/new`, `/categories/<uid>/edit` | Categories list / add / edit |
 
-Balances tab:
+Old hash links (`/#balances`, `/#categories`, `/#transactions`) are rewritten
+to the matching path.
 
-- A form with name, type, base currency, description, and amount fields that
-  change with the type: **Balance** for payment accounts and other assets,
-  **Debt** + **Limit** for credit cards and other liabilities. Hidden fields
-  are not sent.
-- Validation errors appear next to each field, including the duplicate-name
-  error (409).
-- The list is grouped by type, with a count in each heading. Assets show their
-  balance; liabilities show debt, limit and available (limit − debt). A red
-  "over limit" badge marks debt above the limit, and negative amounts are red.
-  Each row shows the balance's `uid` in small muted monospace text (for
-  debugging; the edit form does not expose it).
-- **Edit** loads the balance into the form (saving sends a PUT); the **Type**
-  selector is disabled while editing (types can't change after creation).
-  **Cancel edit** or Esc leaves edit mode. **Delete** asks for confirmation.
-- A per-currency totals table shows assets, liabilities, net, credit limit and
-  available credit.
+**Navigation**
 
-Transactions tab:
+- List pages are browse-only: list, filters, totals, and per-row **Edit** /
+  **Delete** actions. There is no inline form.
+- The **+ Add …** button at the top right of each list opens its add page.
+  **Edit** on a row opens the edit page. Both are real links, so they can also
+  open in a new tab.
+- On a form page, **Save** (on success), **Cancel**, **← List** and **Esc**
+  return to the list you came from, with its filters. The list then shows a
+  confirmation message and highlights the saved row. This steps back in
+  history, so the add/edit page does not stay in the back stack. A form page
+  opened directly (bookmark/reload) replaces itself with the plain list
+  instead.
+- In-app links use `history.pushState`, so the browser back and forward
+  buttons move between lists and form pages as expected. Every page can be
+  reloaded or bookmarked.
+- Validation errors (422/409) stay on the form page, shown next to each field.
+- An edit page for a uid that no longer exists shows "does not exist" and
+  hides the form.
 
-- A form to log a transaction, and a table listing transactions newest first, with a
-  date filter and totals per currency.
-- Each row shows the transaction `uid` in small muted monospace text under
-  the time (read-only; not in the form).
-- A **Type** selector (Expense / Income / Transfer). The source dropdown
-  lists only the balance types allowed for that type (label changes to
-  "Payment account", "Received into" or "From (source)"). A **To
-  (destination)** dropdown with all balances appears only for transfers. The
-  form submits `type`, `balance_uid` and (for transfers) `to_balance_uid`.
-- A **Category** dropdown lists only categories of the selected type
-  ("No category" by default) and is hidden for transfers.
-- The list has a Category column; the name is looked up client-side from
-  the categories list by `category_uid` (re-rendered after a category changes).
-- The list has a Type column and shows "from → to" names for transfers.
-- Totals per currency show expenses and income separately; transfers are
-  excluded from both.
-- **Edit** loads the transaction into the same form: the card is highlighted, the
-  heading reads "Edit transaction <first 8 chars of uid>…", and the button reads "Save changes". Saving
-  sends a PUT, and validation errors appear next to each field. **Cancel edit**
-  or Esc leaves edit mode without saving. Edited rows show a small "edited"
-  marker; hover over it to see when.
-- User data is only inserted with `textContent` / input `.value` (never
-  `innerHTML`), so HTML in notes or account names is shown as text.
+**Transactions**
+
+- The list is newest first, with a date filter (whole days in the device's time
+  zone) and per-currency totals. Expenses and income are summed separately, and
+  transfers are excluded from both.
+- Columns: time (shown in the device's time zone, with the stored value on
+  hover, an "edited" marker, and the uid in small muted text), Type, Amount,
+  Currency, Account ("from → to" for transfers), Category, Note.
+- The category name is looked up client-side from `/api/categories` by
+  `category_uid`.
+- The form has a **Type** selector (Expense / Income / Transfer). The source
+  dropdown lists only the balance types allowed for that type. Its label
+  changes to "Payment account", "Received into" or "From (source)". A **To
+  (destination)** dropdown appears only for transfers.
+- **Category** lists only categories of the selected type and is hidden for
+  transfers.
+- Time is entered in the device's local time zone. A preview shows the exact
+  RFC 3339 value that will be saved, with the device's offset for that date.
+- The add page remembers the last expense currency and account.
+
+**Balances**
+
+- The list is grouped by type, with counts. Assets show their balance.
+  Liabilities show debt, limit and available. A red "over limit" badge marks
+  debt above the limit, and negative amounts are red. There is also a
+  per-currency totals table.
+- The form's amount fields follow the type: **Balance** for assets,
+  **Debt** + **Limit** for liabilities. Hidden fields are not sent.
+- On the edit page the **Type** selector is disabled, because types can't
+  change after creation.
+
+**Categories**
+
+- The list is grouped into expense and income categories.
+- **Delete** of a category still used by transactions shows the 409 message
+  on the list.
+
+User data is only inserted with `textContent` / input `.value` (never
+`innerHTML`), so HTML in notes or names is shown as text.
 
 ## Open questions
 

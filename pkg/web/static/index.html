@@ -9,15 +9,55 @@
 <body>
   <main>
     <h1>Expense Log</h1>
-    <nav class="tabs" role="tablist">
-      <a href="#transactions" id="tab-transactions" role="tab" class="tab">Transactions</a>
-      <a href="#balances" id="tab-balances" role="tab" class="tab">Balances</a>
-      <a href="#categories" id="tab-categories" role="tab" class="tab">Categories</a>
+    <nav class="tabs" aria-label="Sections">
+      <a href="/transactions" id="tab-transactions" class="tab">Transactions</a>
+      <a href="/balances" id="tab-balances" class="tab">Balances</a>
+      <a href="/categories" id="tab-categories" class="tab">Categories</a>
     </nav>
 
-    <div id="view-transactions" class="view" role="tabpanel">
+    <!-- Views: the router (router.js) shows exactly one, chosen from the URL path. -->
+
+    <!-- /transactions (and /): browse only -->
+    <div id="view-transactions" class="view" hidden>
     <section class="card">
-      <h2 id="form-title">Log a transaction</h2>
+      <div class="list-header">
+        <h2>Transactions</h2>
+        <form id="filter-form" class="filters">
+          <label>From <input type="date" id="filter-from"></label>
+          <label>To <input type="date" id="filter-to"></label>
+          <button type="submit" class="secondary">Filter</button>
+          <button type="button" id="filter-clear" class="secondary">Clear</button>
+        </form>
+        <a href="/transactions/new" id="tx-add-btn" class="button add-btn" title="Add a transaction">+ Add transaction</a>
+      </div>
+      <p id="flash-transactions" class="flash" role="status" hidden></p>
+      <p id="list-status" class="muted"></p>
+      <div class="table-wrap">
+        <table id="transaction-table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Type</th>
+              <th class="num">Amount</th>
+              <th>Currency</th>
+              <th>Account</th>
+              <th>Category</th>
+              <th>Note</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="totals" class="muted"></div>
+    </section>
+    </div>
+
+    <!-- /transactions/new and /transactions/:uid/edit -->
+    <div id="view-transaction-form" class="view" hidden>
+    <section class="card form-card">
+      <p class="back"><a href="/transactions" class="back-link">← Transactions</a></p>
+      <h2 id="form-title">Add a transaction</h2>
       <form id="transaction-form" novalidate>
         <div class="grid">
           <label>Amount
@@ -44,14 +84,14 @@
             <select id="balance_uid" name="balance_uid" required>
               <option value="">Select a balance…</option>
             </select>
-            <small class="muted"><span id="balance-hint">Payment accounts and credit cards.</span> <a href="#balances">Manage balances</a></small>
+            <small class="muted"><span id="balance-hint">Payment accounts and credit cards.</span> <a href="/balances">Manage balances</a></small>
             <small class="err" data-for="balance_uid"></small>
           </label>
           <label id="category-field">Category (optional)
             <select id="category_uid" name="category_uid">
               <option value="">No category</option>
             </select>
-            <small class="muted"><a href="#categories">Manage categories</a></small>
+            <small class="muted"><a href="/categories">Manage categories</a></small>
             <small class="err" data-for="category_uid"></small>
           </label>
           <label id="to-field" hidden>To (destination)
@@ -77,46 +117,47 @@
         <div class="actions">
           <button type="submit" id="submit-btn">Save transaction</button>
           <button type="button" id="now-btn" class="secondary">Set time to now</button>
-          <button type="button" id="cancel-btn" class="secondary" hidden>Cancel edit</button>
+          <button type="button" id="cancel-btn" class="secondary">Cancel</button>
           <span id="form-status" role="status"></span>
         </div>
       </form>
     </section>
+    </div>
 
+    <!-- /balances: browse only -->
+    <div id="view-balances" class="view" hidden>
     <section class="card">
       <div class="list-header">
-        <h2>Transactions</h2>
-        <form id="filter-form" class="filters">
-          <label>From <input type="date" id="filter-from"></label>
-          <label>To <input type="date" id="filter-to"></label>
-          <button type="submit" class="secondary">Filter</button>
-          <button type="button" id="filter-clear" class="secondary">Clear</button>
-        </form>
+        <h2>Balances</h2>
+        <a href="/balances/new" id="b-add-btn" class="button add-btn" title="Add a balance">+ Add balance</a>
       </div>
-      <p id="list-status" class="muted"></p>
+      <p id="flash-balances" class="flash" role="status" hidden></p>
+      <p id="b-list-status" class="muted"></p>
+      <div id="b-groups"></div>
+      <h3>Totals per currency</h3>
+      <p class="muted small">Assets = sum of balances; liabilities = sum of debts; available credit = limits − debts. No currency conversion.</p>
       <div class="table-wrap">
-        <table id="transaction-table">
+        <table id="b-totals">
           <thead>
             <tr>
-              <th>Time</th>
-              <th>Type</th>
-              <th class="num">Amount</th>
               <th>Currency</th>
-              <th>Account</th>
-              <th>Category</th>
-              <th>Note</th>
-              <th></th>
+              <th class="num">Assets</th>
+              <th class="num">Liabilities</th>
+              <th class="num">Net</th>
+              <th class="num">Credit limit</th>
+              <th class="num">Available credit</th>
             </tr>
           </thead>
           <tbody></tbody>
         </table>
       </div>
-      <div id="totals" class="muted"></div>
     </section>
     </div>
 
-    <div id="view-balances" class="view" role="tabpanel" hidden>
-    <section class="card">
+    <!-- /balances/new and /balances/:uid/edit -->
+    <div id="view-balance-form" class="view" hidden>
+    <section class="card form-card">
+      <p class="back"><a href="/balances" class="back-link">← Balances</a></p>
       <h2 id="b-form-title">Add a balance</h2>
       <form id="balance-form" novalidate>
         <div class="grid">
@@ -157,38 +198,30 @@
         </label>
         <div class="actions">
           <button type="submit" id="b-submit-btn">Save balance</button>
-          <button type="button" id="b-cancel-btn" class="secondary" hidden>Cancel edit</button>
+          <button type="button" id="b-cancel-btn" class="secondary">Cancel</button>
           <span id="b-form-status" role="status"></span>
         </div>
       </form>
     </section>
+    </div>
 
+    <!-- /categories: browse only -->
+    <div id="view-categories" class="view" hidden>
     <section class="card">
-      <h2>Balances</h2>
-      <p id="b-list-status" class="muted"></p>
-      <div id="b-groups"></div>
-      <h3>Totals per currency</h3>
-      <p class="muted small">Assets = sum of balances; liabilities = sum of debts; available credit = limits − debts. No currency conversion.</p>
-      <div class="table-wrap">
-        <table id="b-totals">
-          <thead>
-            <tr>
-              <th>Currency</th>
-              <th class="num">Assets</th>
-              <th class="num">Liabilities</th>
-              <th class="num">Net</th>
-              <th class="num">Credit limit</th>
-              <th class="num">Available credit</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
+      <div class="list-header">
+        <h2>Categories</h2>
+        <a href="/categories/new" id="c-add-btn" class="button add-btn" title="Add a category">+ Add category</a>
       </div>
+      <p id="flash-categories" class="flash" role="status" hidden></p>
+      <p id="c-list-status" class="muted"></p>
+      <div id="c-groups"></div>
     </section>
     </div>
 
-    <div id="view-categories" class="view" role="tabpanel" hidden>
-    <section class="card">
+    <!-- /categories/new and /categories/:uid/edit -->
+    <div id="view-category-form" class="view" hidden>
+    <section class="card form-card">
+      <p class="back"><a href="/categories" class="back-link">← Categories</a></p>
       <h2 id="c-form-title">Add a category</h2>
       <form id="category-form" novalidate>
         <div class="grid">
@@ -210,21 +243,23 @@
         </label>
         <div class="actions">
           <button type="submit" id="c-submit-btn">Save category</button>
-          <button type="button" id="c-cancel-btn" class="secondary" hidden>Cancel edit</button>
+          <button type="button" id="c-cancel-btn" class="secondary">Cancel</button>
           <span id="c-form-status" role="status"></span>
         </div>
       </form>
     </section>
+    </div>
 
+    <div id="view-notfound" class="view" hidden>
     <section class="card">
-      <h2>Categories</h2>
-      <p id="c-list-status" class="muted"></p>
-      <div id="c-groups"></div>
+      <h2>Page not found</h2>
+      <p><a href="/transactions">Go to transactions</a></p>
     </section>
     </div>
   </main>
-  <script src="/static/app.js"></script>
-  <script src="/static/categories.js"></script>
+  <script src="/static/router.js"></script>
+  <script src="/static/transactions.js"></script>
   <script src="/static/balances.js"></script>
+  <script src="/static/categories.js"></script>
 </body>
 </html>

@@ -1,16 +1,17 @@
-// Balances view + tab switching. Plain vanilla JS, no build step.
+// Balances: list page (/balances) and add/edit page (/balances/new,
+// /balances/<uid>/edit). Plain vanilla JS, no build step.
 // All user data is rendered with textContent / input .value (never innerHTML).
 (function () {
   "use strict";
 
-  const $ = (sel) => document.querySelector(sel);
+  const { $, cell, button, link } = App;
   const form = $("#balance-form");
-  const formCard = form.closest(".card");
   const typeSel = $("#b-type");
   const statusEl = $("#b-form-status");
   const listStatus = $("#b-list-status");
   const groupsEl = $("#b-groups");
   const totalsBody = $("#b-totals tbody");
+  const LIST = "/balances";
 
   const TYPES = [
     { id: "payment_account", label: "Payment accounts", kind: "asset" },
@@ -20,28 +21,12 @@
   ];
   const kindOf = (type) => (TYPES.find((t) => t.id === type) || {}).kind;
 
-  let editing = null; // balance being edited, or null
-  let loaded = false;
+  let editing = null; // balance being edited (edit page), or null
+  let gen = 0; // ignore responses for pages we already left
 
-  // ---- Tabs ----------------------------------------------------------------
+  const setStatus = (text, kind) => App.setStatus(statusEl, text, kind);
 
-  const VIEWS = { transactions: "", balances: "Balances · ", categories: "Categories · " };
-
-  function showView() {
-    const h = location.hash.replace("#", "");
-    const view = h in VIEWS ? h : "transactions";
-    for (const v of Object.keys(VIEWS)) {
-      $(`#view-${v}`).hidden = v !== view;
-      $(`#tab-${v}`).classList.toggle("active", v === view);
-      $(`#tab-${v}`).setAttribute("aria-selected", String(v === view));
-    }
-    document.title = VIEWS[view] + "Expense Log";
-    if (view === "balances" && !loaded) loadBalances();
-    if (view === "categories" && typeof window.loadCategoriesView === "function") window.loadCategoriesView();
-  }
-  window.addEventListener("hashchange", showView);
-
-  // ---- Form ------------------------------------------------------------------
+  // ---- Form page: /balances/new and /balances/<uid>/edit ----------------------
 
   // Show the amount fields for the selected type; hidden fields are not sent.
   function syncTypeFields() {
@@ -50,30 +35,57 @@
     form.querySelectorAll(".liability-only").forEach((el) => (el.hidden = kind !== "liability"));
   }
 
-  function clearErrors() {
-    form.querySelectorAll(".err").forEach((el) => (el.textContent = ""));
-    form.querySelectorAll("input, select").forEach((el) => el.classList.remove("invalid"));
-  }
-
-  function showFieldErrors(fields) {
-    for (const [name, msg] of Object.entries(fields || {})) {
-      const errEl = form.querySelector(`.err[data-for="${name}"]`);
-      if (errEl) errEl.textContent = msg;
-      const input = form.querySelector(`[name="${name}"]`);
-      if (input) input.classList.add("invalid");
-    }
-  }
-
-  function setStatus(text, kind) {
-    statusEl.textContent = text;
-    statusEl.className = kind || "";
-  }
-
   function resetForm() {
     form.reset();
     typeSel.value = "payment_account";
+    typeSel.disabled = false;
+    $("#b-type-note").hidden = true;
     syncTypeFields();
-    clearErrors();
+    App.clearErrors(form);
+    setStatus("");
+  }
+
+  async function enterForm(params) {
+    const my = ++gen;
+    editing = null;
+    resetForm();
+    form.hidden = false;
+    if (!params.uid) {
+      $("#b-form-title").textContent = "Add a balance";
+      $("#b-submit-btn").textContent = "Save balance";
+      $("#b-name").focus();
+      return;
+    }
+    $("#b-form-title").textContent = "Edit balance";
+    $("#b-submit-btn").textContent = "Save changes";
+    form.hidden = true; // until loaded
+    try {
+      const res = await fetch(`/api/balances/${params.uid}`);
+      const b = await res.json().catch(() => ({}));
+      if (my !== gen) return;
+      if (!res.ok) {
+        setStatus(res.status === 404 ? "This balance does not exist (it may have been deleted)." : b.error || `Could not load balance (${res.status})`, "bad");
+        return;
+      }
+      editing = b;
+    } catch (err) {
+      if (my === gen) setStatus("Network error: " + err.message, "bad");
+      return;
+    }
+    const b = editing;
+    form.hidden = false;
+    $("#b-form-title").textContent = `Edit balance “${b.name}”`;
+    $("#b-name").value = b.name;
+    typeSel.value = b.type;
+    typeSel.disabled = true; // type is immutable once created
+    $("#b-type-note").hidden = false;
+    $("#b-currency").value = b.currency;
+    $("#b-description").value = b.description || "";
+    $("#b-balance").value = b.balance ?? "";
+    $("#b-debt").value = b.debt ?? "";
+    $("#b-limit").value = b.limit ?? "";
+    syncTypeFields();
+    $("#b-name").focus();
   }
 
   function payload() {
@@ -95,7 +107,7 @@
 
   async function submit(ev) {
     ev.preventDefault();
-    clearErrors();
+    App.clearErrors(form);
     setStatus("");
     const isEdit = !!editing;
     const btn = $("#b-submit-btn");
@@ -108,18 +120,15 @@
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        showFieldErrors(body.fields);
+        App.showFieldErrors(form, body.fields);
         let msg = body.error || `Request failed (${res.status})`;
         if (isEdit && res.status === 404) msg = "This balance no longer exists (it may have been deleted).";
         setStatus(msg, "bad");
         return;
       }
-      exitEdit();
-      resetForm();
-      setStatus(`${isEdit ? "Updated" : "Saved"} “${body.name}”.`, "ok");
-      $("#b-name").focus();
-      await loadBalances();
-      if (typeof window.loadPayableBalances === "function") window.loadPayableBalances();
+      App.setFlash("balances", `${isEdit ? "Updated" : "Saved"} “${body.name}”.`, body.uid);
+      editing = null;
+      App.returnToList(LIST);
     } catch (err) {
       setStatus("Network error: " + err.message, "bad");
     } finally {
@@ -127,73 +136,16 @@
     }
   }
 
-  async function startEdit(uid) {
-    clearErrors();
-    setStatus("");
-    const res = await fetch(`/api/balances/${uid}`);
-    const b = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      setStatus(b.error || `Could not load balance (${res.status})`, "bad");
-      if (res.status === 404) await loadBalances();
-      return;
-    }
-    editing = b;
-    $("#b-name").value = b.name;
-    typeSel.value = b.type;
-    typeSel.disabled = true; // type is immutable once created
-    $("#b-type-note").hidden = false;
-    $("#b-currency").value = b.currency;
-    $("#b-description").value = b.description || "";
-    $("#b-balance").value = b.balance ?? "";
-    $("#b-debt").value = b.debt ?? "";
-    $("#b-limit").value = b.limit ?? "";
-    syncTypeFields();
-    $("#b-form-title").textContent = `Edit balance “${b.name}”`;
-    $("#b-submit-btn").textContent = "Save changes";
-    $("#b-cancel-btn").hidden = false;
-    formCard.classList.add("editing");
-    highlightRow();
-    formCard.scrollIntoView({ behavior: "smooth", block: "start" });
-    $("#b-name").focus();
-  }
+  function cancelForm() { App.returnToList(LIST); }
 
-  function exitEdit() {
-    editing = null;
-    typeSel.disabled = false;
-    $("#b-type-note").hidden = true;
-    $("#b-form-title").textContent = "Add a balance";
-    $("#b-submit-btn").textContent = "Save balance";
-    $("#b-cancel-btn").hidden = true;
-    formCard.classList.remove("editing");
-    highlightRow();
-  }
-
-  function cancelEdit() {
-    if (!editing) return;
-    exitEdit();
-    resetForm();
-    setStatus("Edit cancelled.");
-  }
+  // ---- List page: /balances ---------------------------------------------------
 
   async function remove(b) {
     if (!confirm(`Delete balance “${b.name}” (${b.currency})?`)) return;
     const res = await fetch(`/api/balances/${b.uid}`, { method: "DELETE" });
     if (!res.ok && res.status !== 404) alert("Delete failed (" + res.status + ")");
-    if (editing && editing.uid === b.uid) {
-      exitEdit();
-      resetForm();
-      setStatus("The balance you were editing was deleted.");
-    }
+    $("#flash-balances").hidden = true;
     await loadBalances();
-  }
-
-  // ---- List ----------------------------------------------------------------
-
-  function cell(text, cls) {
-    const td = document.createElement("td");
-    td.textContent = text;
-    if (cls) td.className = cls;
-    return td;
   }
 
   function moneyCell(value) {
@@ -202,22 +154,7 @@
     return td;
   }
 
-  function button(text, cls, onClick) {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = cls;
-    b.textContent = text;
-    b.addEventListener("click", onClick);
-    return b;
-  }
-
-  function highlightRow() {
-    groupsEl.querySelectorAll("tr[data-uid]").forEach((tr) => {
-      tr.classList.toggle("editing", !!editing && tr.dataset.uid === String(editing.uid));
-    });
-  }
-
-  function renderGroups(items) {
+  function renderGroups(items, highlightUID) {
     groupsEl.replaceChildren();
     for (const t of TYPES) {
       const rows = items.filter((b) => b.type === t.id);
@@ -250,6 +187,7 @@
       for (const b of rows) {
         const tr = document.createElement("tr");
         tr.dataset.uid = String(b.uid);
+        if (highlightUID && b.uid === highlightUID) tr.classList.add("just-saved");
         const nameTd = cell(b.name);
         if (b.over_limit) {
           const badge = document.createElement("span");
@@ -274,7 +212,10 @@
         tr.append(cell(b.description || "", "note"));
         const actions = document.createElement("td");
         actions.className = "actions-cell";
-        actions.append(button("Edit", "edit", () => startEdit(b.uid)), button("Delete", "danger", () => remove(b)));
+        actions.append(
+          link("Edit", `/balances/${encodeURIComponent(b.uid)}/edit`, "button edit"),
+          button("Delete", "danger", () => remove(b)),
+        );
         tr.append(actions);
         tbody.append(tr);
       }
@@ -284,7 +225,6 @@
       wrap.append(table);
       groupsEl.append(wrap);
     }
-    highlightRow();
   }
 
   function renderTotals(totals) {
@@ -305,21 +245,22 @@
     }
   }
 
-  async function loadBalances() {
+  async function loadBalances(highlightUID) {
+    const my = ++gen;
     listStatus.textContent = "Loading…";
     try {
       const res = await fetch("/api/balances");
       const body = await res.json();
+      if (my !== gen) return;
       if (!res.ok) {
         listStatus.textContent = body.error || `Failed (${res.status})`;
         return;
       }
-      loaded = true;
-      renderGroups(body.balances);
+      renderGroups(body.balances, highlightUID);
       renderTotals(body.totals);
       listStatus.textContent = body.count === 0 ? "No balances yet." : `${body.count} balance(s).`;
     } catch (err) {
-      listStatus.textContent = "Failed to load balances: " + err.message;
+      if (my === gen) listStatus.textContent = "Failed to load balances: " + err.message;
     }
   }
 
@@ -327,10 +268,11 @@
 
   typeSel.addEventListener("change", syncTypeFields);
   form.addEventListener("submit", submit);
-  $("#b-cancel-btn").addEventListener("click", cancelEdit);
-  document.addEventListener("keydown", (ev) => {
-    if (ev.key === "Escape" && !$("#view-balances").hidden) cancelEdit();
-  });
+  $("#b-cancel-btn").addEventListener("click", cancelForm);
   syncTypeFields();
-  showView();
+
+  App.route("/balances", { view: "#view-balances", section: "balances", title: "Balances", enter: () => loadBalances(App.takeFlash("balances")) });
+  const formRoute = { view: "#view-balance-form", section: "balances", enter: enterForm, onEscape: cancelForm };
+  App.route("/balances/new", { ...formRoute, title: "Add balance" });
+  App.route("/balances/:uid/edit", { ...formRoute, title: "Edit balance" });
 })();
