@@ -86,7 +86,8 @@ func TestMigrationV2ToV3AddsBalances(t *testing.T) {
 	}
 	defer st.Close()
 	got, err := st.GetBalance(ctx, 1)
-	if err != nil || got.Balance == nil || *got.Balance != "1500.25" || !looksLikeUUID(got.UID) {
+	// The 120.50 expense was taken off the balance when it was created.
+	if err != nil || got.Balance == nil || *got.Balance != "1379.75" || got.Version != 2 || !looksLikeUUID(got.UID) {
 		t.Errorf("balance after reopen: %+v %v", got, err)
 	}
 	if byUID, err := st.GetBalanceByUID(ctx, got.UID); err != nil || byUID.ID != 1 {
@@ -196,14 +197,19 @@ func TestBalanceCRUDAndConstraints(t *testing.T) {
 	db, _ := sql.Open("sqlite", "file:"+path)
 	defer db.Close()
 	for name, q := range map[string]string{
-		"asset with debt":    `INSERT INTO balances (name,type,currency,amount_scale,balance_minor,debt_minor,created_at) VALUES ('x','payment_account','THB',2,1,1,'t')`,
-		"liability no limit": `INSERT INTO balances (name,type,currency,amount_scale,debt_minor,created_at) VALUES ('y','credit_card','THB',2,1,'t')`,
-		"negative debt":      `INSERT INTO balances (name,type,currency,amount_scale,debt_minor,limit_minor,created_at) VALUES ('z','credit_card','THB',2,-1,5,'t')`,
-		"bad type":           `INSERT INTO balances (name,type,currency,amount_scale,balance_minor,created_at) VALUES ('w','wallet','THB',2,1,'t')`,
+		"asset with debt":    `INSERT INTO balances (uid,name,type,currency,amount_scale,balance_minor,debt_minor,created_at) VALUES ('aaaaaaaa-0000-4000-8000-000000000001','x','payment_account','THB',2,1,1,'t')`,
+		"liability no limit": `INSERT INTO balances (uid,name,type,currency,amount_scale,debt_minor,created_at) VALUES ('aaaaaaaa-0000-4000-8000-000000000002','y','credit_card','THB',2,1,'t')`,
+		"negative limit":     `INSERT INTO balances (uid,name,type,currency,amount_scale,debt_minor,limit_minor,created_at) VALUES ('aaaaaaaa-0000-4000-8000-000000000003','z','credit_card','THB',2,1,-5,'t')`,
+		"bad type":           `INSERT INTO balances (uid,name,type,currency,amount_scale,balance_minor,created_at) VALUES ('aaaaaaaa-0000-4000-8000-000000000004','w','wallet','THB',2,1,'t')`,
+		"version 0":          `INSERT INTO balances (uid,name,type,currency,amount_scale,balance_minor,created_at,version) VALUES ('aaaaaaaa-0000-4000-8000-000000000005','v','payment_account','THB',2,1,'t',0)`,
 	} {
 		if _, err := db.Exec(q); err == nil {
 			t.Errorf("CHECK constraint did not reject %s", name)
 		}
+	}
+	// v11: a negative debt (overpaid card, in credit) is allowed.
+	if _, err := db.Exec(`INSERT INTO balances (uid,name,type,currency,amount_scale,debt_minor,limit_minor,created_at) VALUES ('aaaaaaaa-0000-4000-8000-000000000006','neg','credit_card','THB',2,-100,500,'t')`); err != nil {
+		t.Errorf("negative debt rejected: %v", err)
 	}
 }
 

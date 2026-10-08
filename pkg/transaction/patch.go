@@ -47,6 +47,9 @@ func (in *CreateInput) ApplyPatch(patch map[string]json.RawMessage) error {
 	}
 	var unknown []string
 	delete(patch, "uid") // server-assigned and immutable; ignored like balances
+	// "version" is the optimistic-locking precondition, not a field to change;
+	// the API reads it before calling ApplyPatch.
+	delete(patch, "version")
 	if len(patch) == 0 {
 		return &RequestError{Msg: "patch must contain at least one of: amount, currency, type, balance_uid, to_balance_uid, category_uid, spent_at, note"}
 	}

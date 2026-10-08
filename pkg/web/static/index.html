@@ -114,6 +114,11 @@
           <input id="note" name="note" type="text" maxlength="1000" placeholder="Lunch with team">
           <small class="err" data-for="note"></small>
         </label>
+        <p class="muted small" id="auto-adjust-note">Saving updates the selected balance(s) automatically: an expense lowers an account’s balance or raises a card’s debt, income raises a balance, a transfer moves the amount from source to destination. The currency must match the balance’s currency.</p>
+        <div class="conflict" id="conflict" role="alert" hidden>
+          <p class="conflict-msg"></p>
+          <button type="button" class="conflict-reload">Reload latest transaction</button>
+        </div>
         <div class="actions">
           <button type="submit" id="submit-btn">Save transaction</button>
           <button type="button" id="now-btn" class="secondary">Set time to now</button>
@@ -196,6 +201,15 @@
           <input id="b-description" name="description" type="text" maxlength="1000" placeholder="Salary account">
           <small class="err" data-for="description"></small>
         </label>
+        <label id="b-adjust-field" hidden>Reason for a manual change (optional)
+          <input id="b-adjust-note" name="adjustment_note" type="text" maxlength="500" placeholder="Matched bank statement" autocomplete="off">
+          <small class="muted">Balances update automatically from transactions. A balance, debt or limit you type here overrides that and is recorded as a manual adjustment.</small>
+          <small class="err" data-for="adjustment_note"></small>
+        </label>
+        <div class="conflict" id="b-conflict" role="alert" hidden>
+          <p class="conflict-msg"></p>
+          <button type="button" class="conflict-reload">Reload latest values</button>
+        </div>
         <div class="actions">
           <button type="submit" id="b-submit-btn">Save balance</button>
           <button type="button" id="b-cancel-btn" class="secondary">Cancel</button>

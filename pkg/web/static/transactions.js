@@ -77,6 +77,7 @@
   }
 
   const setStatus = (text, kind) => App.setStatus(statusEl, text, kind);
+  const conflictBox = $("#conflict");
 
   function rememberDefaults(currency, balanceUID) {
     try { localStorage.setItem(LS_KEY, JSON.stringify({ currency, balance_uid: balanceUID })); } catch (_) {}
@@ -149,6 +150,7 @@
     editing = null;
     form.reset();
     App.clearErrors(form);
+    App.hideConflict(conflictBox);
     setStatus("");
     form.hidden = false;
     $("#submit-btn").disabled = false;
@@ -222,13 +224,24 @@
     const url = isEdit ? `/api/transactions/${editing.uid}` : "/api/transactions";
     const btn = $("#submit-btn");
     btn.disabled = true;
+    App.hideConflict(conflictBox);
     try {
       const res = await fetch(url, {
         method: isEdit ? "PUT" : "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(isEdit ? App.ifMatch(editing.version) : {}) },
         body: JSON.stringify(payload),
       });
       const body = await res.json().catch(() => ({}));
+      if (isEdit && res.status === 409 && body.code === "version_conflict") {
+        const cur = body.current || {};
+        const uid = editing.uid;
+        App.showConflict(conflictBox,
+          `This transaction was changed after you opened this page (in another tab or by someone else), so your changes were not saved. ` +
+          `It is now ${cur.amount} ${cur.currency} (${cur.type}). Reload to see the latest values, then make your change again.`,
+          () => enterForm({ uid }));
+        setStatus("Not saved: changed elsewhere.", "bad");
+        return;
+      }
       if (!res.ok) {
         App.showFieldErrors(form, body.fields);
         let msg = body.error || `Request failed (${res.status})`;
@@ -389,8 +402,10 @@
   async function deleteTransaction(e) {
     const acct = e.type === "transfer" ? `${e.account || "?"} → ${e.to_account || "?"}` : e.account || "unknown account";
     if (!confirm(`Delete ${e.amount} ${e.currency} (${acct}) at ${shownTime(e.spent_at)}?`)) return;
-    const res = await fetch(`/api/transactions/${e.uid}`, { method: "DELETE" });
-    if (!res.ok && res.status !== 404) {
+    const res = await fetch(`/api/transactions/${e.uid}`, { method: "DELETE", headers: App.ifMatch(e.version) });
+    if (res.status === 409) {
+      alert("This transaction changed after the list was loaded, so it was not deleted. The list has been refreshed; check it and delete again if you still want to.");
+    } else if (!res.ok && res.status !== 404) {
       alert("Delete failed (" + res.status + ")");
     }
     $("#flash-transactions").hidden = true;
@@ -404,6 +419,12 @@
   $("#tz-label").textContent = `(your device's time zone: ${tzName ? tzName + ", " : ""}UTC${offsetString(new Date())})`;
   spentAtInput.addEventListener("input", updatePreview);
   $("#type").addEventListener("change", () => applyType());
+  // A transaction's currency must match its balance (no FX yet): picking a
+  // balance fills in its currency.
+  $("#balance_uid").addEventListener("change", () => {
+    const b = allBalances.find((x) => x.uid === $("#balance_uid").value);
+    if (b) $("#currency").value = b.currency;
+  });
   $("#now-btn").addEventListener("click", setNow);
   $("#cancel-btn").addEventListener("click", cancelForm);
   form.addEventListener("submit", submitTransaction);

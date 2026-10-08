@@ -99,7 +99,7 @@ func TestListOrderingAndFilters(t *testing.T) {
 	card := seedCard(t, h, "Card", "USD")
 	inputs := []string{
 		`{"amount":"1","currency":"THB","balance_uid":"` + cash + `","spent_at":"2026-10-05T09:00:00+07:00"}`,
-		`{"amount":"2","currency":"SGD","balance_uid":"` + cash + `","spent_at":"2026-10-05T12:00:00+08:00"}`,
+		`{"amount":"2","currency":"THB","balance_uid":"` + cash + `","spent_at":"2026-10-05T12:00:00+08:00"}`,
 		`{"amount":"3","currency":"USD","balance_uid":"` + card + `","spent_at":"2026-10-05T03:00:00Z"}`,
 	}
 	for _, in := range inputs {

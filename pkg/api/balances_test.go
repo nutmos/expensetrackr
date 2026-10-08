@@ -107,7 +107,7 @@ func TestBalanceCreateErrors(t *testing.T) {
 		{"asset with debt/limit", `{"name":"A","type":"other_asset","currency":"THB","balance":"1","debt":"1","limit":"2"}`, 422, []string{"debt", "limit"}},
 		{"liability missing limit", `{"name":"C","type":"credit_card","currency":"THB","debt":"1"}`, 422, []string{"limit"}},
 		{"liability with balance", `{"name":"C","type":"other_liability","currency":"THB","debt":"1","limit":"2","balance":"3"}`, 422, []string{"balance"}},
-		{"negative debt", `{"name":"C","type":"credit_card","currency":"THB","debt":"-1","limit":"2"}`, 422, []string{"debt"}},
+		{"negative limit", `{"name":"C","type":"credit_card","currency":"THB","debt":"-1","limit":"-2"}`, 422, []string{"limit"}}, // negative debt (in credit) is fine
 		{"bad type/currency/name", `{"name":"","type":"wallet","currency":"ABC"}`, 422, []string{"name", "type", "currency"}},
 		{"too many decimals", `{"name":"J","type":"payment_account","currency":"JPY","balance":"1.5"}`, 422, []string{"balance"}},
 		{"duplicate name (case-insensitive)", `{"name":"  cash ","type":"other_asset","currency":"USD","balance":"1"}`, 409, []string{"name"}},

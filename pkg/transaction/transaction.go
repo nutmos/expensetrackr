@@ -21,22 +21,29 @@ const (
 
 // Transaction is a stored transaction record.
 type Transaction struct {
-	ID           int64     `json:"-"`              // internal row id; the API identifies transactions by UID
-	UID          string    `json:"uid"`            // server-assigned UUID v4, immutable
-	Amount       string    `json:"amount"`         // decimal string, e.g. "120.50"
-	AmountMinor  int64     `json:"amount_minor"`   // integer minor units, e.g. 12050
-	Currency     string    `json:"currency"`       // ISO 4217, e.g. "THB"
-	Type         Type      `json:"type"`           // expense | income | transfer
-	BalanceUID   string    `json:"balance_uid"`    // paying (expense), receiving (income) or source (transfer) balance
-	Account      string    `json:"account"`        // denormalized balance name at write time
-	ToBalanceUID *string   `json:"to_balance_uid"` // transfer destination; null otherwise
-	ToAccount    *string   `json:"to_account"`     // denormalized destination name; null otherwise
-	CategoryUID  *string   `json:"category_uid"`   // optional link to categories.uid; null for none / transfers
-	SpentAt      string    `json:"spent_at"`       // RFC 3339 with the offset as entered
-	Note         string    `json:"note"`
-	CreatedAt    string    `json:"created_at"` // RFC 3339, UTC
-	UpdatedAt    *string   `json:"updated_at"` // RFC 3339, UTC; null until edited
-	SpentTime    time.Time `json:"-"`
+	ID           int64   `json:"-"`              // internal row id; the API identifies transactions by UID
+	UID          string  `json:"uid"`            // server-assigned UUID v4, immutable
+	Amount       string  `json:"amount"`         // decimal string, e.g. "120.50"
+	AmountMinor  int64   `json:"amount_minor"`   // integer minor units, e.g. 12050
+	Currency     string  `json:"currency"`       // ISO 4217, e.g. "THB"
+	Type         Type    `json:"type"`           // expense | income | transfer
+	BalanceUID   string  `json:"balance_uid"`    // paying (expense), receiving (income) or source (transfer) balance
+	Account      string  `json:"account"`        // denormalized balance name at write time
+	ToBalanceUID *string `json:"to_balance_uid"` // transfer destination; null otherwise
+	ToAccount    *string `json:"to_account"`     // denormalized destination name; null otherwise
+	CategoryUID  *string `json:"category_uid"`   // optional link to categories.uid; null for none / transfers
+	SpentAt      string  `json:"spent_at"`       // RFC 3339 with the offset as entered
+	Note         string  `json:"note"`
+	CreatedAt    string  `json:"created_at"` // RFC 3339, UTC
+	UpdatedAt    *string `json:"updated_at"` // RFC 3339, UTC; null until edited
+	// Version starts at 1 and is incremented on every change. PUT/PATCH must
+	// send the version they last read (If-Match or "version"); see docs/balances.md.
+	Version int64 `json:"version"`
+	// AdjustsBalances is true when this transaction moved its balances (every
+	// transaction created by schema v11+). Rows recorded before v11 never did,
+	// so editing or deleting them leaves balances alone.
+	AdjustsBalances bool      `json:"adjusts_balances"`
+	SpentTime       time.Time `json:"-"`
 }
 
 // DecimalInput keeps the literal text of a JSON string or number amount.
@@ -65,6 +72,9 @@ type CreateInput struct {
 	// IgnoredUID accepts a "uid" in PUT bodies so a previous response can be
 	// round-tripped; it is never used (the uid is server-assigned, immutable).
 	IgnoredUID string `json:"uid,omitempty"`
+	// Version is the optimistic-locking version for PUT (alternative to the
+	// If-Match header). Ignored on create.
+	Version *int64 `json:"version,omitempty"`
 }
 
 // ParseTimestamp parses a strict RFC 3339 / ISO 8601 date-time that carries an

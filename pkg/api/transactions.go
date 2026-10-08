@@ -97,18 +97,53 @@ func (s *Server) createTransaction(c *gin.Context) {
 		writeInputError(c, err)
 		return
 	}
+	// Create also moves the balances (same DB transaction); a missing balance
+	// or a currency mismatch comes back as a validation error (422).
 	if err := s.Store.Create(c.Request.Context(), &e); err != nil {
-		internalError(c, err)
+		writeInputError(c, err)
 		return
 	}
 	c.Header("Location", "/api/transactions/"+e.UID)
+	setETag(c, e.Version)
 	c.JSON(http.StatusCreated, e)
+}
+
+// transactionConflict answers 409 with the transaction as it is now (or 404
+// if it was deleted meanwhile).
+func (s *Server) transactionConflict(c *gin.Context, id int64) {
+	cur, err := s.Store.Get(c.Request.Context(), id)
+	if err != nil {
+		writeInputError(c, err)
+		return
+	}
+	writeVersionConflict(c, "transaction", cur, cur.Version)
+}
+
+// saveTransaction stores next over cur with optimistic locking and writes the
+// response: 200 + ETag, 409 on a stale version, 422 (e.g. currency mismatch
+// with a balance) or 404.
+func (s *Server) saveTransaction(c *gin.Context, cur transaction.Transaction, version int64, next transaction.Transaction) {
+	updated, err := s.Store.UpdateWith(c.Request.Context(), cur.ID, store.WriteOptions{Version: version}, func(transaction.Transaction) (transaction.Transaction, error) {
+		return next, nil
+	})
+	if errors.Is(err, store.ErrVersionConflict) {
+		s.transactionConflict(c, cur.ID)
+		return
+	}
+	if err != nil {
+		writeInputError(c, err)
+		return
+	}
+	setETag(c, updated.Version)
+	c.JSON(http.StatusOK, updated)
 }
 
 // replaceTransaction handles PUT: a full replace with the same rules as create.
 // Omitted fields are treated as empty (so an omitted note clears it).
+// Requires the client's version (If-Match or "version"): 428 if missing, 409
+// if stale (checked before validation, so a stale client reloads first).
 func (s *Server) replaceTransaction(c *gin.Context) {
-	id, ok := s.parseID(c)
+	cur, ok := s.resolveTransaction(c)
 	if !ok {
 		return
 	}
@@ -116,40 +151,32 @@ func (s *Server) replaceTransaction(c *gin.Context) {
 	if !decodeBody(c, &in, true) {
 		return
 	}
+	version, ok := clientVersion(c, in.Version, true)
+	if !ok {
+		return
+	}
+	if version != cur.Version {
+		s.transactionConflict(c, cur.ID)
+		return
+	}
 	next, err := in.Validate()
 	if err != nil {
-		// Validate before touching the DB, but report 404 first if the
-		// transaction does not exist, to match the PATCH behaviour.
-		if _, gerr := s.Store.Get(c.Request.Context(), id); errors.Is(gerr, store.ErrNotFound) {
-			writeInputError(c, gerr)
-			return
-		}
 		writeInputError(c, err)
 		return
 	}
 	if err := s.attachPaymentBalance(c, &next); err != nil {
-		if _, gerr := s.Store.Get(c.Request.Context(), id); errors.Is(gerr, store.ErrNotFound) {
-			writeInputError(c, gerr)
-			return
-		}
 		writeInputError(c, err)
 		return
 	}
-	updated, err := s.Store.Update(c.Request.Context(), id, func(transaction.Transaction) (transaction.Transaction, error) {
-		return next, nil
-	})
-	if err != nil {
-		writeInputError(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, updated)
+	s.saveTransaction(c, cur, version, next)
 }
 
 // patchTransaction handles PATCH: only fields present in the body change, then the
 // merged result is validated as a whole (e.g. the amount is re-parsed against
-// the new currency's minor-unit scale when the currency changes).
+// the new currency's minor-unit scale when the currency changes). Versioning
+// as for PUT.
 func (s *Server) patchTransaction(c *gin.Context) {
-	id, ok := s.parseID(c)
+	cur, ok := s.resolveTransaction(c)
 	if !ok {
 		return
 	}
@@ -161,13 +188,22 @@ func (s *Server) patchTransaction(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, errorBody{Error: "request body must be a JSON object"})
 		return
 	}
-	// Resolve the patch outside the write transaction: attachPaymentBalance
-	// needs its own DB read, and the store uses a single SQLite connection.
-	cur, err := s.Store.Get(c.Request.Context(), id)
+	bodyVersion, err := takeVersion(patch)
 	if err != nil {
 		writeInputError(c, err)
 		return
 	}
+	version, ok := clientVersion(c, bodyVersion, true)
+	if !ok {
+		return
+	}
+	if version != cur.Version {
+		s.transactionConflict(c, cur.ID)
+		return
+	}
+	// Resolve the patch outside the write transaction: attachPaymentBalance
+	// needs its own DB reads, and the store uses a single SQLite connection.
+	// The version check inside UpdateWith catches any change in between.
 	in := cur.Input()
 	if err := in.ApplyPatch(patch); err != nil {
 		writeInputError(c, err)
@@ -191,14 +227,7 @@ func (s *Server) patchTransaction(c *gin.Context) {
 		writeInputError(c, err)
 		return
 	}
-	updated, err := s.Store.Update(c.Request.Context(), id, func(transaction.Transaction) (transaction.Transaction, error) {
-		return next, nil
-	})
-	if err != nil {
-		writeInputError(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, updated)
+	s.saveTransaction(c, cur, version, next)
 }
 
 func (s *Server) listTransactions(c *gin.Context) {
@@ -265,54 +294,52 @@ func (s *Server) listTransactions(c *gin.Context) {
 }
 
 func (s *Server) getTransaction(c *gin.Context) {
-	id, ok := s.parseID(c)
+	e, ok := s.resolveTransaction(c)
 	if !ok {
 		return
 	}
-	e, err := s.Store.Get(c.Request.Context(), id)
-	if errors.Is(err, store.ErrNotFound) {
-		c.JSON(http.StatusNotFound, errorBody{Error: "transaction not found"})
-		return
-	}
-	if err != nil {
-		internalError(c, err)
-		return
-	}
+	setETag(c, e.Version)
 	c.JSON(http.StatusOK, e)
 }
 
+// deleteTransaction handles DELETE and reverses the transaction's balance
+// effect. An If-Match header is optional; if sent and stale the answer is 409.
 func (s *Server) deleteTransaction(c *gin.Context) {
-	id, ok := s.parseID(c)
+	cur, ok := s.resolveTransaction(c)
 	if !ok {
 		return
 	}
-	err := s.Store.Delete(c.Request.Context(), id)
-	if errors.Is(err, store.ErrNotFound) {
-		c.JSON(http.StatusNotFound, errorBody{Error: "transaction not found"})
+	version, ok := clientVersion(c, nil, false)
+	if !ok {
+		return
+	}
+	err := s.Store.DeleteWith(c.Request.Context(), cur.ID, store.WriteOptions{Version: version})
+	if errors.Is(err, store.ErrVersionConflict) {
+		s.transactionConflict(c, cur.ID)
 		return
 	}
 	if err != nil {
-		internalError(c, err)
+		writeInputError(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)
 }
 
-// parseID resolves /api/transactions/:uid to the internal row id. Only the
-// UUID uid is accepted: a malformed value is 400, an unknown uid is 404.
-func (s *Server) parseID(c *gin.Context) (int64, bool) {
+// resolveTransaction loads /api/transactions/:uid. Only the UUID uid is
+// accepted: a malformed value is 400, an unknown uid is 404.
+func (s *Server) resolveTransaction(c *gin.Context) (transaction.Transaction, bool) {
 	uid, ok := pathUID(c)
 	if !ok {
-		return 0, false
+		return transaction.Transaction{}, false
 	}
 	e, err := s.Store.GetByUID(c.Request.Context(), uid)
 	if errors.Is(err, store.ErrNotFound) {
 		c.JSON(http.StatusNotFound, errorBody{Error: "transaction not found"})
-		return 0, false
+		return transaction.Transaction{}, false
 	}
 	if err != nil {
 		internalError(c, err)
-		return 0, false
+		return transaction.Transaction{}, false
 	}
-	return e.ID, true
+	return e, true
 }

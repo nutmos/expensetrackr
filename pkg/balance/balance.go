@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -76,7 +77,7 @@ type Balance struct {
 	Description    string  `json:"description"`
 	Balance        *string `json:"balance"` // decimal string; may be negative (overdraft)
 	BalanceMinor   *int64  `json:"balance_minor"`
-	Debt           *string `json:"debt"` // >= 0
+	Debt           *string `json:"debt"` // may be negative (overpaid / in credit)
 	DebtMinor      *int64  `json:"debt_minor"`
 	Limit          *string `json:"limit"` // >= 0
 	LimitMinor     *int64  `json:"limit_minor"`
@@ -85,7 +86,11 @@ type Balance struct {
 	OverLimit      *bool   `json:"over_limit"` // debt > limit
 	CreatedAt      string  `json:"created_at"`
 	UpdatedAt      *string `json:"updated_at"`
-	Scale          int     `json:"-"` // minor-unit digits used for the *_minor values
+	// Version starts at 1 and is incremented on every change, manual (PUT /
+	// PATCH) or automatic (a transaction moving the balance). PUT/PATCH must
+	// send the version they last read (If-Match or "version").
+	Version int64 `json:"version"`
+	Scale   int   `json:"-"` // minor-unit digits used for the *_minor values
 }
 
 // SetAmounts fills the amount fields and the derived ones from minor units.
@@ -121,7 +126,7 @@ func (b *Balance) SetAmounts(scale int, bal, debt, limit *int64) {
 // UID is accepted so clients can round-trip a previous response; it is
 // ignored (the server assigns and never changes it).
 type Input struct {
-	UID         string              `json:"uid"` // ignored; server-assigned
+	UID         string              `json:"uid,omitempty"` // ignored; server-assigned
 	Name        string              `json:"name"`
 	Type        string              `json:"type"`
 	Currency    string              `json:"currency"`
@@ -129,6 +134,13 @@ type Input struct {
 	Balance     *money.DecimalInput `json:"balance"`
 	Debt        *money.DecimalInput `json:"debt"`
 	Limit       *money.DecimalInput `json:"limit"`
+
+	// Version is the optimistic-locking version for PUT (alternative to the
+	// If-Match header). Ignored on create.
+	Version *int64 `json:"version,omitempty"`
+	// AdjustmentNote is an optional reason recorded in balance_adjustments
+	// when a PUT/PATCH changes balance, debt or limit. Not stored on the balance.
+	AdjustmentNote string `json:"adjustment_note,omitempty"`
 }
 
 func provided(d *money.DecimalInput) bool {
@@ -206,7 +218,8 @@ func (in Input) Validate() (Balance, error) {
 		notUsed("debt", in.Debt, "credit_card and other_liability")
 		notUsed("limit", in.Limit, "credit_card and other_liability")
 	case t.IsLiability():
-		debt = parse("debt", in.Debt, true, money.ParseNonNegative)
+		// Debt may be negative: an overpaid card or loan is in credit.
+		debt = parse("debt", in.Debt, true, money.ParseSigned)
 		limit = parse("limit", in.Limit, true, money.ParseNonNegative)
 		notUsed("balance", in.Balance, "payment_account and other_asset")
 	}
@@ -274,7 +287,11 @@ func isNull(raw json.RawMessage) bool { return bytes.Equal(bytes.TrimSpace(raw),
 // type; the caller must run ValidateUpdate (which enforces that) on the result.
 func (in *Input) ApplyPatch(patch map[string]json.RawMessage) error {
 	// uid is immutable; drop it so round-tripping a previous response is fine.
+	// "version" and "adjustment_note" are request metadata, read by the API
+	// before this point, not fields of the balance.
 	delete(patch, "uid")
+	delete(patch, "version")
+	delete(patch, "adjustment_note")
 	if len(patch) == 0 {
 		return &validate.RequestError{Msg: "patch must contain at least one of: name, type, currency, description, balance, debt, limit"}
 	}
@@ -332,6 +349,68 @@ func (in *Input) ApplyPatch(patch map[string]json.RawMessage) error {
 		return &validate.ValidationError{Fields: nullFields}
 	}
 	return nil
+}
+
+// ErrOverflow is returned by ApplyValueDelta when the result does not fit.
+var ErrOverflow = errors.New("amount out of range")
+
+// ApplyValueDelta changes the balance's value by delta minor units (same
+// currency and scale as the balance). Value is the balance of an asset and
+// minus the debt of a liability, so a positive delta raises an asset's
+// balance or lowers a liability's debt (possibly below zero: in credit). The
+// derived fields (available, over_limit) are recomputed.
+func (b *Balance) ApplyValueDelta(delta int64) error {
+	switch {
+	case b.Type.IsAsset() && b.BalanceMinor != nil:
+		v, ok := addChecked(*b.BalanceMinor, delta)
+		if !ok {
+			return ErrOverflow
+		}
+		b.SetAmounts(b.Scale, &v, nil, nil)
+	case b.Type.IsLiability() && b.DebtMinor != nil && b.LimitMinor != nil:
+		if delta == math.MinInt64 {
+			return ErrOverflow
+		}
+		v, ok := addChecked(*b.DebtMinor, -delta)
+		if !ok {
+			return ErrOverflow
+		}
+		limit := *b.LimitMinor
+		b.SetAmounts(b.Scale, nil, &v, &limit)
+	default:
+		return fmt.Errorf("balance %q has no amount for type %q", b.UID, b.Type)
+	}
+	return nil
+}
+
+func addChecked(a, b int64) (int64, bool) {
+	c := a + b
+	if (b > 0 && c < a) || (b < 0 && c > a) {
+		return 0, false
+	}
+	return c, true
+}
+
+// MaxAdjustmentNoteLen bounds the optional reason of a manual adjustment.
+const MaxAdjustmentNoteLen = 500
+
+// Adjustment is one manual change of a balance amount (balance, debt or
+// limit) made through PUT/PATCH, kept as an audit trail in the
+// balance_adjustments table. Changes made by transactions are not recorded
+// here (the transactions themselves are the record).
+type Adjustment struct {
+	ID          int64   `json:"-"`
+	UID         string  `json:"uid"`
+	BalanceUID  string  `json:"balance_uid"`
+	Field       string  `json:"field"`  // balance | debt | limit
+	Old         string  `json:"old"`    // decimal string in OldCurrency
+	New         string  `json:"new"`    // decimal string in Currency
+	Change      *string `json:"change"` // New - Old; null if the currency changed too
+	Currency    string  `json:"currency"`
+	OldCurrency string  `json:"old_currency"`
+	Note        string  `json:"note"`
+	Version     int64   `json:"version"` // the balance version this change created
+	CreatedAt   string  `json:"created_at"`
 }
 
 // Totals aggregates balances of one currency.

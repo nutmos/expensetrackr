@@ -25,6 +25,8 @@
   let gen = 0; // ignore responses for pages we already left
 
   const setStatus = (text, kind) => App.setStatus(statusEl, text, kind);
+  const conflictBox = $("#b-conflict");
+  const amountText = (b) => (kindOf(b.type) === "asset" ? `balance ${b.balance}` : `debt ${b.debt}, limit ${b.limit}`) + ` ${b.currency}`;
 
   // ---- Form page: /balances/new and /balances/<uid>/edit ----------------------
 
@@ -40,6 +42,8 @@
     typeSel.value = "payment_account";
     typeSel.disabled = false;
     $("#b-type-note").hidden = true;
+    $("#b-adjust-field").hidden = true;
+    App.hideConflict(conflictBox);
     syncTypeFields();
     App.clearErrors(form);
     setStatus("");
@@ -84,6 +88,8 @@
     $("#b-balance").value = b.balance ?? "";
     $("#b-debt").value = b.debt ?? "";
     $("#b-limit").value = b.limit ?? "";
+    $("#b-adjust-note").value = "";
+    $("#b-adjust-field").hidden = false;
     syncTypeFields();
     $("#b-name").focus();
   }
@@ -102,23 +108,38 @@
       p.debt = $("#b-debt").value.trim();
       p.limit = $("#b-limit").value.trim();
     }
+    const note = $("#b-adjust-note").value.trim();
+    if (editing && note) p.adjustment_note = note;
     return p;
   }
 
   async function submit(ev) {
     ev.preventDefault();
     App.clearErrors(form);
+    App.hideConflict(conflictBox);
     setStatus("");
     const isEdit = !!editing;
     const btn = $("#b-submit-btn");
     btn.disabled = true;
     try {
+      // Edits send the version they were based on (If-Match); a change made
+      // meanwhile (a transaction, another tab) is answered with 409.
       const res = await fetch(isEdit ? `/api/balances/${editing.uid}` : "/api/balances", {
         method: isEdit ? "PUT" : "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(isEdit ? App.ifMatch(editing.version) : {}) },
         body: JSON.stringify(payload()),
       });
       const body = await res.json().catch(() => ({}));
+      if (isEdit && res.status === 409 && body.code === "version_conflict") {
+        const cur = body.current || {};
+        const uid = editing.uid;
+        App.showConflict(conflictBox,
+          `“${cur.name || editing.name}” was changed after you opened this page (for example by a transaction or in another tab), so your changes were not saved. ` +
+          `It now has ${amountText(cur)}. Reload to see the latest values, then make your change again.`,
+          () => enterForm({ uid }));
+        setStatus("Not saved: changed elsewhere.", "bad");
+        return;
+      }
       if (!res.ok) {
         App.showFieldErrors(form, body.fields);
         let msg = body.error || `Request failed (${res.status})`;
@@ -142,8 +163,10 @@
 
   async function remove(b) {
     if (!confirm(`Delete balance “${b.name}” (${b.currency})?`)) return;
-    const res = await fetch(`/api/balances/${b.uid}`, { method: "DELETE" });
-    if (!res.ok && res.status !== 404) alert("Delete failed (" + res.status + ")");
+    const res = await fetch(`/api/balances/${b.uid}`, { method: "DELETE", headers: App.ifMatch(b.version) });
+    if (res.status === 409) {
+      alert(`“${b.name}” changed after this list was loaded (for example by a transaction), so it was not deleted. The list has been refreshed; check it and delete again if you still want to.`);
+    } else if (!res.ok && res.status !== 404) alert("Delete failed (" + res.status + ")");
     $("#flash-balances").hidden = true;
     await loadBalances();
   }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 )
 
 // Schema notes, table "transactions" (one row per expense):
@@ -39,6 +40,8 @@ import (
 //	v8  table "categories"; transactions.category_uid
 //	v9  drop transactions.category (name snapshot from a pre-release v8) if present
 //	v10 users + user_identities tables (profiles, preferences JSON, auth-ready fields)
+//	v11 balances.version (rebuilt to also drop CHECK debt_minor >= 0),
+//	    transactions.version + balance_applied, table balance_adjustments
 //
 // A brand-new database is created directly at the latest version from
 // currentSchema. An existing database is upgraded by running the pending
@@ -48,7 +51,12 @@ import (
 
 // currentSchema is the full latest schema, used only for new, empty databases.
 // Keep it in sync with the result of applying every migration.
-const currentSchema = `
+//
+// transactions.version: optimistic-locking counter (1 on insert, +1 per update).
+// transactions.balance_applied: 1 if the row moved its balances (all rows
+// written by v11+); 0 for rows recorded before v11, whose edits/deletes
+// therefore never touch balances.
+var currentSchema = `
 CREATE TABLE transactions (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     uid           TEXT    NOT NULL UNIQUE CHECK (length(uid) = 36),
@@ -65,14 +73,17 @@ CREATE TABLE transactions (
     spent_at_unix INTEGER NOT NULL,
     note          TEXT    NOT NULL DEFAULT '',
     created_at    TEXT    NOT NULL,
-    updated_at    TEXT
+    updated_at    TEXT,
+    version       INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+    balance_applied INTEGER NOT NULL DEFAULT 0 CHECK (balance_applied IN (0, 1))
 );
 CREATE INDEX idx_transactions_spent_at_unix ON transactions (spent_at_unix DESC, id DESC);
 CREATE INDEX idx_transactions_balance_uid ON transactions (balance_uid);
 CREATE UNIQUE INDEX idx_transactions_uid ON transactions (uid);
 CREATE INDEX idx_transactions_type ON transactions (type, spent_at_unix DESC);
 CREATE INDEX idx_transactions_category_uid ON transactions (category_uid);
-` + balancesSchemaCurrent + categoriesSchema + usersSchema
+CREATE INDEX idx_transactions_to_balance_uid ON transactions (to_balance_uid);
+` + balancesSchemaCurrent + categoriesSchema + usersSchema + balanceAdjustmentsSchema
 
 // balancesSchemaV3 creates the balances table as shipped at version 3
 // (no uid yet). Used only by migration v2 -> v3. Do not edit once shipped.
@@ -171,18 +182,23 @@ CREATE TABLE IF NOT EXISTS user_identities (
 CREATE INDEX IF NOT EXISTS idx_user_identities_user_uid ON user_identities (user_uid);
 `
 
-// balancesSchemaCurrent is the full balances schema for brand-new databases
-// (version 4+). Keep in sync with the result of applying every migration.
+// balancesTable returns the CREATE TABLE statement of the current (v11+)
+// balances layout under the given table name (migration v11 builds it under a
+// temporary name, then renames it).
 //
 //   - uid: server-assigned UUID v4 (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx),
 //     immutable, unique; clients never set it
 //   - type: payment_account | credit_card | other_asset | other_liability
 //   - amount_scale: minor-unit digits of currency for the *_minor columns
 //   - balance_minor: asset types only (required), may be negative (overdraft)
-//   - debt_minor, limit_minor: liability types only (both required), >= 0;
-//     debt may exceed limit (reported as over_limit by the API)
-const balancesSchemaCurrent = `
-CREATE TABLE balances (
+//   - debt_minor, limit_minor: liability types only (both required). Debt may
+//     be negative (overpaid, in credit) and may exceed the limit (reported as
+//     over_limit by the API); limit >= 0
+//   - version: optimistic-locking counter, 1 on insert, +1 on every change
+//     (manual PUT/PATCH or a transaction moving the balance)
+func balancesTable(name string) string {
+	return `
+CREATE TABLE ` + name + ` (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     uid           TEXT    NOT NULL UNIQUE CHECK (length(uid) = 36),
     name          TEXT    NOT NULL COLLATE NOCASE UNIQUE CHECK (length(trim(name)) > 0),
@@ -191,10 +207,11 @@ CREATE TABLE balances (
     description   TEXT    NOT NULL DEFAULT '',
     amount_scale  INTEGER NOT NULL CHECK (amount_scale BETWEEN 0 AND 4),
     balance_minor INTEGER,
-    debt_minor    INTEGER CHECK (debt_minor >= 0),
+    debt_minor    INTEGER,
     limit_minor   INTEGER CHECK (limit_minor >= 0),
     created_at    TEXT    NOT NULL,
     updated_at    TEXT,
+    version       INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
     CHECK (
         (type IN ('payment_account', 'other_asset')
             AND balance_minor IS NOT NULL AND debt_minor IS NULL AND limit_minor IS NULL)
@@ -203,8 +220,40 @@ CREATE TABLE balances (
             AND balance_minor IS NULL AND debt_minor IS NOT NULL AND limit_minor IS NOT NULL)
     )
 );
-CREATE INDEX idx_balances_type ON balances (type, name);
-CREATE UNIQUE INDEX idx_balances_uid ON balances (uid);
+`
+}
+
+// balancesIndexes are the balances indexes (v4+); recreated by v11's rebuild.
+const balancesIndexes = `
+CREATE INDEX IF NOT EXISTS idx_balances_type ON balances (type, name);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_balances_uid ON balances (uid);
+`
+
+// balancesSchemaCurrent is the full balances schema for brand-new databases.
+// Keep in sync with the result of applying every migration.
+var balancesSchemaCurrent = balancesTable("balances") + balancesIndexes
+
+// balanceAdjustmentsSchema (v11+) is the audit trail of manual balance edits:
+// one row per changed amount field (balance, debt or limit) of a PUT/PATCH.
+// Amounts are minor units with their own scale and currency (the currency may
+// change in the same edit). No FK: the trail is kept if the balance is deleted.
+const balanceAdjustmentsSchema = `
+CREATE TABLE IF NOT EXISTS balance_adjustments (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    uid          TEXT    NOT NULL UNIQUE CHECK (length(uid) = 36),
+    balance_uid  TEXT    NOT NULL CHECK (length(balance_uid) = 36),
+    field        TEXT    NOT NULL CHECK (field IN ('balance', 'debt', 'limit')),
+    old_minor    INTEGER NOT NULL,
+    old_scale    INTEGER NOT NULL CHECK (old_scale BETWEEN 0 AND 4),
+    old_currency TEXT    NOT NULL CHECK (length(old_currency) = 3),
+    new_minor    INTEGER NOT NULL,
+    new_scale    INTEGER NOT NULL CHECK (new_scale BETWEEN 0 AND 4),
+    new_currency TEXT    NOT NULL CHECK (length(new_currency) = 3),
+    note         TEXT    NOT NULL DEFAULT '',
+    version      INTEGER NOT NULL,
+    created_at   TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_balance_adjustments_balance_uid ON balance_adjustments (balance_uid, id);
 `
 
 // migration upgrades the schema by one version inside a SQL transaction.
@@ -236,6 +285,9 @@ var migrations = []migration{
 	// v9 -> v10: add users (profiles + preferences + auth-ready fields) and
 	// user_identities (future SSO links).
 	addUsers,
+	// v10 -> v11: optimistic-locking versions, automatic balance adjustment
+	// bookkeeping and the manual-adjustment audit table.
+	addVersionsAndAdjustments,
 }
 
 // SchemaVersion is the user_version a fully migrated database has.
@@ -631,6 +683,90 @@ func addColumnIfMissing(tx *sql.Tx, table, column, decl string) error {
 func addUsers(tx *sql.Tx) error {
 	if _, err := tx.Exec(usersSchema); err != nil {
 		return fmt.Errorf("create users: %w", err)
+	}
+	return nil
+}
+
+// addVersionsAndAdjustments is migration v10 -> v11. In one SQL transaction:
+//
+//  1. balances is rebuilt (create new table, copy rows, drop, rename,
+//     recreate indexes) to add version (existing rows get 1) and drop the
+//     CHECK (debt_minor >= 0) constraint, which SQLite cannot drop in place.
+//     Rows, ids, uids and amounts are copied unchanged (no recompute). Skipped
+//     if balances already has version and no debt check.
+//  2. transactions gets version (1) and balance_applied (0: rows recorded
+//     before v11 never moved a balance) plus an index on to_balance_uid.
+//  3. balance_adjustments is created.
+//
+// Idempotent. No foreign key references balances, so the rebuild is safe with
+// foreign_keys on.
+func addVersionsAndAdjustments(tx *sql.Tx) error {
+	if err := rebuildBalancesV11(tx); err != nil {
+		return err
+	}
+	for _, c := range []struct{ name, decl string }{
+		{"version", "INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1)"},
+		{"balance_applied", "INTEGER NOT NULL DEFAULT 0 CHECK (balance_applied IN (0, 1))"},
+	} {
+		if err := addColumnIfMissing(tx, "transactions", c.name, c.decl); err != nil {
+			return fmt.Errorf("add transactions.%s: %w", c.name, err)
+		}
+	}
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_transactions_to_balance_uid ON transactions (to_balance_uid)`); err != nil {
+		return fmt.Errorf("create to_balance_uid index: %w", err)
+	}
+	if _, err := tx.Exec(balanceAdjustmentsSchema); err != nil {
+		return fmt.Errorf("create balance_adjustments: %w", err)
+	}
+	return nil
+}
+
+func rebuildBalancesV11(tx *sql.Tx) error {
+	hasVersion, err := columnExists(tx, "balances", "version")
+	if err != nil {
+		return err
+	}
+	var ddl string
+	if err := tx.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'balances'`).Scan(&ddl); err != nil {
+		return fmt.Errorf("read balances schema: %w", err)
+	}
+	if hasVersion && !strings.Contains(strings.Join(strings.Fields(ddl), " "), "debt_minor >= 0") {
+		return nil // already rebuilt
+	}
+	if err := requireColumns(tx, "balances", "id", "uid", "name", "type", "currency", "description",
+		"amount_scale", "balance_minor", "debt_minor", "limit_minor", "created_at", "updated_at"); err != nil {
+		return err
+	}
+	var seq sql.NullInt64
+	if err := tx.QueryRow(`SELECT seq FROM sqlite_sequence WHERE name = 'balances'`).Scan(&seq); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("read balances sequence: %w", err)
+	}
+	version := "1"
+	if hasVersion {
+		version = "version"
+	}
+	const tmp = "balances_v11_rebuild"
+	stmts := []string{
+		`DROP TABLE IF EXISTS ` + tmp,
+		balancesTable(tmp),
+		`INSERT INTO ` + tmp + ` (id, uid, name, type, currency, description, amount_scale, balance_minor, debt_minor, limit_minor, created_at, updated_at, version)
+		 SELECT id, uid, name, type, currency, description, amount_scale, balance_minor, debt_minor, limit_minor, created_at, updated_at, ` + version + ` FROM balances`,
+		`DROP TABLE balances`,
+		`ALTER TABLE ` + tmp + ` RENAME TO balances`,
+		balancesIndexes,
+	}
+	for _, q := range stmts {
+		if _, err := tx.Exec(q); err != nil {
+			return fmt.Errorf("rebuild balances: %w", err)
+		}
+	}
+	if seq.Valid { // keep AUTOINCREMENT from reusing ids of deleted balances
+		if _, err := tx.Exec(`DELETE FROM sqlite_sequence WHERE name IN ('balances', '` + tmp + `')`); err != nil {
+			return fmt.Errorf("restore balances sequence: %w", err)
+		}
+		if _, err := tx.Exec(`INSERT INTO sqlite_sequence (name, seq) VALUES ('balances', max(?, (SELECT coalesce(max(id), 0) FROM balances)))`, seq.Int64); err != nil {
+			return fmt.Errorf("restore balances sequence: %w", err)
+		}
 	}
 	return nil
 }

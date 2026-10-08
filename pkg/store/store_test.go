@@ -4,9 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/nutmos/expensetrackr/pkg/balance"
 	"github.com/nutmos/expensetrackr/pkg/transaction"
 )
 
@@ -107,6 +110,7 @@ func assertCurrentSchema(t *testing.T, path string) {
 		"balances": "table", "idx_balances_type": "index", "idx_balances_uid": "index",
 		"users": "table", "idx_users_username": "index", "idx_users_email": "index",
 		"user_identities": "table", "idx_user_identities_user_uid": "index",
+		"idx_transactions_to_balance_uid": "index", "balance_adjustments": "table", "idx_balance_adjustments_balance_uid": "index",
 	}
 	if len(got) != len(want) {
 		t.Errorf("schema objects = %v, want exactly %v", got, want)
@@ -116,9 +120,73 @@ func assertCurrentSchema(t *testing.T, path string) {
 			t.Errorf("missing %s %q; have %v", typ, name, got)
 		}
 	}
-	if v := userVersion(t, path); v != 10 || SchemaVersion != 10 {
-		t.Errorf("user_version = %d (SchemaVersion %d), want 10", v, SchemaVersion)
+	if v := userVersion(t, path); v != 11 || SchemaVersion != 11 {
+		t.Errorf("user_version = %d (SchemaVersion %d), want 11", v, SchemaVersion)
 	}
+	// Every table has the same columns as a brand-new database (name, type,
+	// NOT NULL, default; for transactions only names and types, since columns
+	// added by ALTER TABLE in v4-v6 stay nullable, see addTransactionUID), and
+	// balances no longer forbids a negative debt.
+	fresh := filepath.Join(t.TempDir(), "fresh-compare.db")
+	if path != fresh {
+		st, err := Open(fresh)
+		if err != nil {
+			t.Fatal(err)
+		}
+		st.Close()
+		for _, table := range []string{"transactions", "balances", "categories", "users", "user_identities", "balance_adjustments"} {
+			full := table != "transactions"
+			if got, want := tableColumns(t, path, table, full), tableColumns(t, fresh, table, full); got != want {
+				t.Errorf("%s columns after migration:\n got %s\nwant %s", table, got, want)
+			}
+		}
+	}
+	if ddl := tableSQL(t, path, "balances"); strings.Contains(ddl, "debt_minor >= 0") || !strings.Contains(ddl, "version") {
+		t.Errorf("balances DDL not at v11: %s", ddl)
+	}
+}
+
+// tableColumns describes the columns of table as one comparable string.
+func tableColumns(t *testing.T, path, table string, full bool) string {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	rows, err := db.Query(`SELECT name, type, "notnull", coalesce(dflt_value, '') FROM pragma_table_info(?) ORDER BY name`, table)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var parts []string
+	for rows.Next() {
+		var name, typ, dflt string
+		var notNull int
+		if err := rows.Scan(&name, &typ, &notNull, &dflt); err != nil {
+			t.Fatal(err)
+		}
+		if full {
+			parts = append(parts, fmt.Sprintf("%s %s nn=%d d=%s", name, typ, notNull, dflt))
+		} else {
+			parts = append(parts, name+" "+typ)
+		}
+	}
+	return strings.Join(parts, "; ")
+}
+
+func tableSQL(t *testing.T, path, table string) string {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var ddl string
+	if err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&ddl); err != nil {
+		t.Fatal(err)
+	}
+	return strings.Join(strings.Fields(ddl), " ")
 }
 
 func TestFreshDatabaseUsesCurrentSchema(t *testing.T) {
@@ -127,7 +195,11 @@ func TestFreshDatabaseUsesCurrentSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := transaction.CreateInput{Amount: "5", Currency: "SGD", BalanceUID: "11111111-1111-4111-8111-111111111111", SpentAt: "2026-10-07T08:00:00+08:00"}.Validate()
+	b := mustBalance(t, balance.Input{Name: "Cash", Type: "payment_account", Currency: "SGD", Balance: dec("10")})
+	if err := st.CreateBalance(context.Background(), &b); err != nil {
+		t.Fatal(err)
+	}
+	e, err := transaction.CreateInput{Amount: "5", Currency: "SGD", BalanceUID: b.UID, SpentAt: "2026-10-07T08:00:00+08:00"}.Validate()
 	if err != nil {
 		t.Fatal(err)
 	}
