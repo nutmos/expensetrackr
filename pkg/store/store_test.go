@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"expense-service/internal/transaction"
+	"github.com/nutmos/expensetrackr/pkg/transaction"
 )
 
 // oldSchemaV0 is the original schema (version 0: table "expenses", no updated_at).

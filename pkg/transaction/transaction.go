@@ -8,10 +8,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"expense-service/internal/balance"
-	"expense-service/internal/category"
-	"expense-service/internal/money"
-	"expense-service/internal/validate"
+	"github.com/nutmos/expensetrackr/pkg/balance"
+	"github.com/nutmos/expensetrackr/pkg/category"
+	"github.com/nutmos/expensetrackr/pkg/money"
+	"github.com/nutmos/expensetrackr/pkg/validate"
 )
 
 const (

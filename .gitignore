@@ -1,10 +1,7 @@
-# Runtime files live at the repo root (see README "Repository layout").
+# Local runtime files (repo root; see README "Layout").
 /bin/
 /data/
 server.log
-# Safety net if the server/build is run from inside pkg/ without -db / -o.
-/pkg/bin/
-/pkg/data/
 *.db
 *.db-wal
 *.db-shm

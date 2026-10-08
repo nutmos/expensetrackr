@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"expense-service/internal/validate"
+	"github.com/nutmos/expensetrackr/pkg/validate"
 )
 
 func TestValidate(t *testing.T) {

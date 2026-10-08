@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"expense-service/internal/transaction"
+	"github.com/nutmos/expensetrackr/pkg/transaction"
 )
 
 const schemaV6 = schemaV5 + `

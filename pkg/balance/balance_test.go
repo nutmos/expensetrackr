@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"expense-service/internal/money"
-	"expense-service/internal/validate"
+	"github.com/nutmos/expensetrackr/pkg/money"
+	"github.com/nutmos/expensetrackr/pkg/validate"
 )
 
 func dec(s string) *money.DecimalInput { d := money.DecimalInput(s); return &d }
