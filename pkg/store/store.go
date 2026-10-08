@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"expense-service/internal/money"
-	"expense-service/internal/transaction"
+	"github.com/nutmos/expensetrackr/pkg/money"
+	"github.com/nutmos/expensetrackr/pkg/transaction"
 
 	_ "modernc.org/sqlite" // registers the "sqlite" driver
 )

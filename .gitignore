@@ -1,6 +1,7 @@
+# Local runtime files (repo root; see README "Layout").
 /bin/
 /data/
+server.log
 *.db
 *.db-wal
 *.db-shm
-server.log

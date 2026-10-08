@@ -11,7 +11,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"expense-service/internal/validate"
+	"github.com/nutmos/expensetrackr/pkg/validate"
 )
 
 // Type is the kind of category.

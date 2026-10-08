@@ -10,7 +10,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"expense-service/internal/store"
+	"github.com/nutmos/expensetrackr/pkg/store"
 
 	"github.com/gin-gonic/gin"
 )

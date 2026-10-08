@@ -13,8 +13,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"expense-service/internal/money"
-	"expense-service/internal/validate"
+	"github.com/nutmos/expensetrackr/pkg/money"
+	"github.com/nutmos/expensetrackr/pkg/validate"
 )
 
 // Type is the kind of balance.

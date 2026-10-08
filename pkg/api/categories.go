@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"expense-service/internal/category"
-	"expense-service/internal/store"
+	"github.com/nutmos/expensetrackr/pkg/category"
+	"github.com/nutmos/expensetrackr/pkg/store"
 
 	"github.com/gin-gonic/gin"
 )

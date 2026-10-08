@@ -1,4 +1,4 @@
-module expense-service
+module github.com/nutmos/expensetrackr
 
 go 1.24.0
 

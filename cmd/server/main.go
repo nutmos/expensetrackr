@@ -12,9 +12,9 @@ import (
 	"syscall"
 	"time"
 
-	"expense-service/internal/api"
-	"expense-service/internal/store"
-	"expense-service/web"
+	"github.com/nutmos/expensetrackr/pkg/api"
+	"github.com/nutmos/expensetrackr/pkg/store"
+	"github.com/nutmos/expensetrackr/pkg/web"
 )
 
 func envOr(key, def string) string {

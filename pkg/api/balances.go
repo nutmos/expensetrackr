@@ -7,8 +7,8 @@ import (
 	"regexp"
 	"strings"
 
-	"expense-service/internal/balance"
-	"expense-service/internal/store"
+	"github.com/nutmos/expensetrackr/pkg/balance"
+	"github.com/nutmos/expensetrackr/pkg/store"
 
 	"github.com/gin-gonic/gin"
 )

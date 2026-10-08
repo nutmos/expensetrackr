@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"expense-service/internal/category"
+	"github.com/nutmos/expensetrackr/pkg/category"
 
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"

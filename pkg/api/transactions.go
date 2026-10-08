@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"expense-service/internal/store"
-	"expense-service/internal/transaction"
-	"expense-service/internal/validate"
+	"github.com/nutmos/expensetrackr/pkg/store"
+	"github.com/nutmos/expensetrackr/pkg/transaction"
+	"github.com/nutmos/expensetrackr/pkg/validate"
 
 	"github.com/gin-gonic/gin"
 )

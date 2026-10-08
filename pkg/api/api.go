@@ -11,8 +11,8 @@ import (
 	"net/http"
 	"strings"
 
-	"expense-service/internal/store"
-	"expense-service/internal/validate"
+	"github.com/nutmos/expensetrackr/pkg/store"
+	"github.com/nutmos/expensetrackr/pkg/validate"
 
 	"github.com/gin-gonic/gin"
 )

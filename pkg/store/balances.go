@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"expense-service/internal/balance"
-	"expense-service/internal/money"
+	"github.com/nutmos/expensetrackr/pkg/balance"
+	"github.com/nutmos/expensetrackr/pkg/money"
 
 	"github.com/google/uuid"
 	"modernc.org/sqlite"
