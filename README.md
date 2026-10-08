@@ -9,20 +9,37 @@ authentication; see "Open questions".
 
 ## Requirements
 
-- Go 1.24+ (`go.mod` targets go 1.24 / toolchain go1.24.4, and every dependency
+- Go 1.24+ (`pkg/go.mod` targets go 1.24 / toolchain go1.24.4, and every dependency
   is pinned to a version that builds with the locally installed Go 1.24.4)
 - No CGO (`CGO_ENABLED=0` works)
+
+## Repository layout
+
+```
+README.md        this file
+docs/            project documentation (non-code)
+pkg/             all code: the Go module root (go.mod, cmd/, internal/, web/)
+bin/, data/, server.log   local runtime files at the repo root (git-ignored)
+```
+
+Go commands run inside `pkg/` (`cd pkg`, or `go -C pkg ...` from the repo
+root). Runtime files stay at the repo root: build the binary to `bin/` and run
+it from the repo root so the default `-db data/expenses.db` resolves to
+`<repo>/data/expenses.db`.
 
 ## Run
 
 ```bash
-cd /workspace/expense-service
-go run ./cmd/server                      # http://127.0.0.1:8080, DB at data/expenses.db
+cd /workspace/expense-service             # repo root
+CGO_ENABLED=0 go -C pkg build -o ../bin/expense-server ./cmd/server
+./bin/expense-server -addr 127.0.0.1:8080 -db data/expenses.db   # http://127.0.0.1:8080
 
-# or build a binary
-CGO_ENABLED=0 go build -o bin/expense-server ./cmd/server
-./bin/expense-server -addr 127.0.0.1:8080 -db data/expenses.db
+# or run from source (inside pkg/, so point -db back at the repo-root DB)
+cd pkg && go run ./cmd/server -db ../data/expenses.db
 ```
+
+The `-db` path is relative to the current directory: running from `pkg/`
+without `-db` would create a separate, empty `pkg/data/expenses.db`.
 
 | Flag    | Env var        | Default            | Notes                                       |
 |---------|----------------|--------------------|---------------------------------------------|
@@ -31,10 +48,10 @@ CGO_ENABLED=0 go build -o bin/expense-server ./cmd/server
 
 Set `GIN_MODE=release` to silence Gin's debug output.
 
-Run in the background:
+Run in the background (from the repo root):
 
 ```bash
-nohup ./bin/expense-server > server.log 2>&1 &
+nohup ./bin/expense-server -db data/expenses.db > server.log 2>&1 &
 ```
 
 Open http://127.0.0.1:8080/ for the web page.
@@ -42,6 +59,8 @@ Open http://127.0.0.1:8080/ for the web page.
 ## Test
 
 ```bash
+cd pkg
+gofmt -l .        # prints nothing when formatted
 go vet ./...
 go test ./...
 ```
@@ -177,7 +196,7 @@ The amount is parsed from its **decimal text** straight into an integer count of
 the currency's minor unit, with no floating point anywhere: `"120.50"` THB is
 stored as `12050`, `"1500"` JPY as `1500` (JPY has no minor unit), `"1.234"` KWD
 as `1234`. The number of decimals per currency comes from the ISO 4217 table in
-`internal/transaction/currency.go`. Input with more decimals than the currency
+`pkg/internal/money/currency.go`. Input with more decimals than the currency
 allows is rejected rather than rounded. Extra trailing zeros are accepted
 because they carry no value (`"1500.00"` JPY is 1500, `"1.230"` USD is 1.23). `amount_scale` is stored on every row so
 a row still reads correctly if the currency table changes later. The API accepts
@@ -208,7 +227,7 @@ accepts any RFC 3339 offset.
 ### Schema migrations
 
 The schema version is tracked in SQLite's `PRAGMA user_version`. The code is in
-`internal/store/migrate.go`.
+`pkg/internal/store/migrate.go`.
 
 - **New, empty database:** the latest schema (`transactions` and `balances`
   tables + indexes) is created directly at the current version, in one SQL
@@ -430,34 +449,37 @@ accepted):
 curl -s 'http://127.0.0.1:8080/api/transactions?from=2026-10-01T00:00:00%2B08:00&to=2026-10-31T23:59:59%2B08:00'
 ```
 
-## Layout
+## Code layout (`pkg/`)
+
+Paths are relative to the repo root; the Go module root is `pkg/`.
 
 ```
-cmd/server/main.go           entry point: flags, open DB, HTTP server, graceful shutdown
-internal/money/              exact amounts: decimal string <-> integer minor units
-  amount.go                  ParseAmount (> 0), ParseNonNegative (>= 0), ParseSigned, FormatAmount
-  currency.go                ISO 4217 codes -> minor-unit digits
-  decimal.go                 DecimalInput (JSON string or number, kept as text)
-internal/validate/           ValidationError (422) and RequestError (400)
-internal/transaction/            transaction domain model + validation (no I/O)
-  transaction.go             Transaction, CreateInput, Validate, ParseTimestamp
-  patch.go                   PATCH merge (ApplyPatch)
-internal/category/           category domain model (Type expense|income, Input, Validate, ApplyPatch)
-internal/balance/            balance domain model + per-type validation (no I/O)
-  balance.go                 Type, Balance, Input, Validate, ApplyPatch, ComputeTotals
-internal/store/              persistence (modernc.org/sqlite)
-  store.go                   transactions in table "transactions": Open, Create, List, Get, Update, Delete
-  balances.go                table "balances": CreateBalance, ListBalances, GetBalance, UpdateBalance, DeleteBalance
-  categories.go              table "categories": CreateCategory, ListCategories, GetCategoryByUID, UpdateCategory, DeleteCategory
-  migrate.go                 current schema, versioned migrations (v0 -> … -> v9)
-  store_test.go, balances_test.go   fresh DB, upgrades from v0/v1/v2, partial/ambiguous states
-internal/api/                Gin routes and handlers
-  api.go                     transactions routes + shared helpers
-  balances.go                /api/balances routes
-  categories.go              /api/categories routes
-  api_test.go, edit_test.go, balances_test.go
-web/embed.go                 embeds web/static into the binary
-web/static/                  index.html, style.css, app.js (transactions), balances.js (balances + tabs), categories.js (categories)
+pkg/cmd/server/main.go             entry point: flags, open DB, HTTP server, graceful shutdown
+pkg/internal/money/                exact amounts: decimal string <-> integer minor units
+  amount.go                        ParseAmount (> 0), ParseNonNegative (>= 0), ParseSigned, FormatAmount
+  currency.go                      ISO 4217 codes -> minor-unit digits
+  decimal.go                       DecimalInput (JSON string or number, kept as text)
+pkg/internal/validate/             ValidationError (422) and RequestError (400)
+pkg/internal/transaction/          transaction domain model + validation (no I/O)
+  transaction.go                   Transaction, CreateInput, Validate, ParseTimestamp
+  patch.go                         PATCH merge (ApplyPatch)
+pkg/internal/category/             category domain model (Type expense|income, Input, Validate, ApplyPatch)
+pkg/internal/balance/              balance domain model + per-type validation (no I/O)
+  balance.go                       Type, Balance, Input, Validate, ApplyPatch, ComputeTotals
+pkg/internal/store/                persistence (modernc.org/sqlite)
+  store.go                         transactions in table "transactions": Open, Create, List, Get, Update, Delete
+  balances.go                      table "balances": CreateBalance, ListBalances, GetBalance, UpdateBalance, DeleteBalance
+  categories.go                    table "categories": CreateCategory, ListCategories, GetCategoryByUID, UpdateCategory, DeleteCategory
+  migrate.go                       current schema, versioned migrations (v0 -> … -> v9)
+  store_test.go, balances_test.go  fresh DB, upgrades from v0/v1/v2, partial/ambiguous states
+pkg/internal/api/                  Gin routes and handlers
+  api.go                           router setup + shared helpers
+  transactions.go                  /api/transactions routes
+  balances.go                      /api/balances routes
+  categories.go                    /api/categories routes
+  *_test.go                        handler tests (throwaway DB per test)
+pkg/web/embed.go                   embeds web/static into the binary
+pkg/web/static/                    index.html, style.css, app.js (transactions), balances.js (balances + tabs), categories.js (categories)
 ```
 
 ## Web page
