@@ -25,7 +25,7 @@ runs from the repo root; no `cd` needed.
 go.mod, go.sum   module github.com/nutmos/expensetrackr
 Makefile         build / run / test / vet / fmt / clean
 cmd/server/      the expense-server binary (main package)
-pkg/             library packages (api, store, transaction, balance, category,
+pkg/             library packages (api, store, transaction, balance, category, user,
                  money, validate) and pkg/web (embedded web page)
 docs/            project documentation (non-code)
 README.md
@@ -195,6 +195,23 @@ Rules linking transactions and categories:
   drops the category (it belonged to the old type); `"category_uid": null`
   clears it; a PUT without `category_uid` clears it.
 
+### Users (tables `users`, `user_identities`)
+
+User profiles, added in schema v10. Each has a `uid`, a required
+`display_name` and an optional `username` and `email`, both unique and
+case-insensitive. `preferences` is a free-form **JSON object**, checked by
+both the app and SQLite (`json_valid`, `json_type = 'object'`), up to 32 KiB.
+
+There are also fields reserved for future login: `password_hash` (never
+exposed; the API shows only `has_password`), `password_updated_at`,
+`email_verified_at`, `last_login_at` and `status` (`active` | `disabled`).
+SSO links (Sign in with Apple / Google) go in `user_identities`, unique per
+`(provider, provider_subject)`.
+
+**No login, sessions or endpoint protection exist yet.** Existing data is not
+tied to a user. Details and follow-ups are in
+[docs/user-profile.md](docs/user-profile.md).
+
 ### Transaction types
 
 `amount` is always positive; `type` gives the direction. Balance amounts are
@@ -278,6 +295,7 @@ The schema version is tracked in SQLite's `PRAGMA user_version`. The code is in
 | 7       | `ALTER TABLE transactions ADD COLUMN type TEXT NOT NULL DEFAULT 'expense' CHECK (type IN ('expense','income','transfer'))` (existing rows become `expense`), `ADD COLUMN to_balance_uid TEXT` and `ADD COLUMN to_account TEXT` (each only if missing), then `CREATE INDEX IF NOT EXISTS idx_transactions_type ON transactions (type, spent_at_unix DESC)`. One SQL transaction, idempotent. |
 | 8       | `CREATE TABLE IF NOT EXISTS categories (...)` + `CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_type_name ON categories (type, name COLLATE NOCASE)`, then `ALTER TABLE transactions ADD COLUMN category_uid TEXT` (only if missing; existing rows get no category) and `CREATE INDEX IF NOT EXISTS idx_transactions_category_uid ON transactions (category_uid)`. One SQL transaction, idempotent. |
 | 9       | Drop `transactions.category` if present (`ALTER TABLE transactions DROP COLUMN category`, SQLite ≥ 3.35). Only databases created by a pre-release build of v8, which stored a category name copy, have it; otherwise a no-op. One SQL transaction, idempotent. |
+| 10      | `CREATE TABLE IF NOT EXISTS users (...)` (uid, username, email, email_verified_at, display_name, preferences JSON object, password_hash, password_updated_at, status, last_login_at, timestamps) + unique NOCASE indexes on username and email; `CREATE TABLE IF NOT EXISTS user_identities (...)` (user_uid → users.uid ON DELETE CASCADE, provider, provider_subject, email, timestamps, UNIQUE(provider, provider_subject)) + index on user_uid. No change to existing tables. One SQL transaction, idempotent. |
 
 Notes on version 2:
 
@@ -344,6 +362,13 @@ only on validation and duplicate-name errors.
 | PUT    | `/api/categories/:uid` | 200 + updated category | Full replace (omitted description clears it). 409 duplicate name, or type change while referenced by transactions |
 | PATCH  | `/api/categories/:uid` | 200 + updated category | Partial update of `name`, `type`, `description` (`null` clears description). Same 409 rules |
 | DELETE | `/api/categories/:uid` | 204 | 409 if any transaction references it; 404 if missing |
+| POST   | `/api/users`           | 201 + user, `Location: /api/users/<uid>` | `display_name` required; `username`, `email`, `preferences` (JSON object) optional. 422 invalid, 409 duplicate username/email, 400 unknown fields (incl. `password`, `password_hash`) |
+| GET    | `/api/users`           | 200 `{"users":[...],"count":n}` | Oldest first |
+| GET    | `/api/users/:uid`      | 200 + user | Never includes `password_hash`; `has_password` instead |
+| PUT    | `/api/users/:uid`      | 200 + updated user | Full replace of profile fields (omitted username/email removed, preferences → `{}`). Read-only fields in the body are ignored |
+| PATCH  | `/api/users/:uid`      | 200 + updated user | Partial; `preferences` **replaces** the whole object (`null` → `{}`); `username`/`email` `null` removes |
+| DELETE | `/api/users/:uid`      | 204 | Also deletes linked identities |
+| GET    | `/api/users/:uid/identities` | 200 `{"identities":[...],"count":n}` | Read-only SSO links (empty until SSO exists) |
 | GET    | `/api/healthz`       | 200 `{"status":"ok"}` | |
 | GET    | `/`, `/transactions`, `/balances`, `/categories` | HTML page (list) | Same `index.html` for every page path; the client-side router picks the view. Static assets under `/static/` |
 | GET    | `/<res>/new`, `/<res>/:uid/edit` | HTML page (add / edit form) | `<res>` = `transactions`, `balances` or `categories`. `:uid` must be UUID-shaped (any case), else 404; an unknown uid is reported by the page itself. Other paths → 404 JSON |
@@ -494,19 +519,22 @@ pkg/transaction/                   transaction domain model + validation (no I/O
   transaction.go                   Transaction, CreateInput, Validate, ParseTimestamp
   patch.go                         PATCH merge (ApplyPatch)
 pkg/category/                      category domain model (Type expense|income, Input, Validate, ApplyPatch)
+pkg/user/                          user profile model: Input, Validate (preferences JSON object), ApplyPatch, Identity
 pkg/balance/                       balance domain model + per-type validation (no I/O)
   balance.go                       Type, Balance, Input, Validate, ApplyPatch, ComputeTotals
 pkg/store/                         persistence (modernc.org/sqlite)
   store.go                         transactions in table "transactions": Open, Create, List, Get, Update, Delete
   balances.go                      table "balances": CreateBalance, ListBalances, GetBalance, UpdateBalance, DeleteBalance
   categories.go                    table "categories": CreateCategory, ListCategories, GetCategoryByUID, UpdateCategory, DeleteCategory
-  migrate.go                       current schema, versioned migrations (v0 -> … -> v9)
+  users.go                         tables "users", "user_identities": CreateUser, ListUsers, GetUserByUID, UpdateUser, DeleteUser, SetPasswordHash, CreateIdentity, ListIdentities, FindUserByIdentity
+  migrate.go                       current schema, versioned migrations (v0 -> … -> v10)
   store_test.go, balances_test.go  fresh DB, upgrades from v0/v1/v2, partial/ambiguous states
 pkg/api/                           Gin routes and handlers
   api.go                           router setup + shared helpers
   transactions.go                  /api/transactions routes
   balances.go                      /api/balances routes
   categories.go                    /api/categories routes
+  users.go                         /api/users routes (+ read-only /identities)
   pages.go                         web page routes (list / new / edit paths → index.html)
   *_test.go                        handler tests (throwaway DB per test)
 pkg/web/embed.go                   embeds web/static into the binary
@@ -599,7 +627,9 @@ User data is only inserted with `textContent` / input `.value` (never
 
 ## Open questions
 
-- Authentication, and whether this is single-user or multi-user.
+- Authentication: the schema is ready (see docs/user-profile.md), but login,
+  sessions, SSO and per-user scoping of transactions, balances and categories
+  are follow-ups.
 - Currency conversion and reporting currency (e.g. totals in THB or SGD), and
   where exchange rates would come from.
 - Categories/tags, receipts or attachments; an edit history / audit log

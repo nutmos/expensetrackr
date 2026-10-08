@@ -38,6 +38,7 @@ import (
 //	v7  transactions.type (expense|income|transfer, default expense), to_balance_uid, to_account
 //	v8  table "categories"; transactions.category_uid
 //	v9  drop transactions.category (name snapshot from a pre-release v8) if present
+//	v10 users + user_identities tables (profiles, preferences JSON, auth-ready fields)
 //
 // A brand-new database is created directly at the latest version from
 // currentSchema. An existing database is upgraded by running the pending
@@ -71,7 +72,7 @@ CREATE INDEX idx_transactions_balance_uid ON transactions (balance_uid);
 CREATE UNIQUE INDEX idx_transactions_uid ON transactions (uid);
 CREATE INDEX idx_transactions_type ON transactions (type, spent_at_unix DESC);
 CREATE INDEX idx_transactions_category_uid ON transactions (category_uid);
-` + balancesSchemaCurrent + categoriesSchema
+` + balancesSchemaCurrent + categoriesSchema + usersSchema
 
 // balancesSchemaV3 creates the balances table as shipped at version 3
 // (no uid yet). Used only by migration v2 -> v3. Do not edit once shipped.
@@ -115,6 +116,59 @@ CREATE TABLE IF NOT EXISTS categories (
     updated_at  TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_type_name ON categories (type, name COLLATE NOCASE);
+`
+
+// usersSchema creates the user profile tables (v10+). Used both for brand-new
+// databases and by migration v9 -> v10 (IF NOT EXISTS makes it idempotent).
+//
+// users: one row per person.
+//   - uid: server-assigned UUID v4, immutable, unique (FK target)
+//   - username, email: optional login identifiers, stored lowercased by the
+//     application, unique when set (case-insensitive indexes; NULLs allowed
+//     many times)
+//   - preferences: JSON object (json_valid + json_type = 'object'), '{}' default
+//   - password_hash: reserved for future username/password login (a PHC string
+//     such as argon2id). NULL = no password. Never returned by the API.
+//   - status: active | disabled (reserved for blocking sign-in)
+//   - email_verified_at, password_updated_at, last_login_at: set by future
+//     auth flows; read-only in the API
+//
+// user_identities: linked SSO accounts (Sign in with Apple / Google).
+//   - (provider, provider_subject) unique: the provider's stable "sub" id
+//   - provider: lowercase identifier; the allowed list lives in Go
+//     (pkg/user.Providers) so new providers need no migration
+//   - user_uid references users(uid) ON DELETE CASCADE (foreign_keys is on)
+const usersSchema = `
+CREATE TABLE IF NOT EXISTS users (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    uid                 TEXT    NOT NULL UNIQUE CHECK (length(uid) = 36),
+    username            TEXT    CHECK (username IS NULL OR (length(username) BETWEEN 3 AND 32 AND username = lower(username))),
+    email               TEXT    CHECK (email IS NULL OR (length(email) BETWEEN 3 AND 254 AND email = lower(email))),
+    email_verified_at   TEXT,
+    display_name        TEXT    NOT NULL CHECK (length(trim(display_name)) > 0),
+    preferences         TEXT    NOT NULL DEFAULT '{}' CHECK (json_valid(preferences) AND json_type(preferences) = 'object'),
+    password_hash       TEXT    CHECK (password_hash IS NULL OR length(password_hash) > 0),
+    password_updated_at TEXT,
+    status              TEXT    NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+    last_login_at       TEXT,
+    created_at          TEXT    NOT NULL,
+    updated_at          TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users (username COLLATE NOCASE);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users (email COLLATE NOCASE);
+
+CREATE TABLE IF NOT EXISTS user_identities (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    uid              TEXT    NOT NULL UNIQUE CHECK (length(uid) = 36),
+    user_uid         TEXT    NOT NULL REFERENCES users (uid) ON DELETE CASCADE,
+    provider         TEXT    NOT NULL CHECK (length(provider) BETWEEN 1 AND 32 AND provider = lower(provider)),
+    provider_subject TEXT    NOT NULL CHECK (length(provider_subject) BETWEEN 1 AND 255),
+    email            TEXT,
+    created_at       TEXT    NOT NULL,
+    last_used_at     TEXT,
+    UNIQUE (provider, provider_subject)
+);
+CREATE INDEX IF NOT EXISTS idx_user_identities_user_uid ON user_identities (user_uid);
 `
 
 // balancesSchemaCurrent is the full balances schema for brand-new databases
@@ -179,6 +233,9 @@ var migrations = []migration{
 	// v8 -> v9: drop the transactions.category name snapshot if a pre-release
 	// build of v8 created it. No-op otherwise.
 	dropTransactionCategoryName,
+	// v9 -> v10: add users (profiles + preferences + auth-ready fields) and
+	// user_identities (future SSO links).
+	addUsers,
 }
 
 // SchemaVersion is the user_version a fully migrated database has.
@@ -567,4 +624,13 @@ func addColumnIfMissing(tx *sql.Tx, table, column, decl string) error {
 	rows.Close()
 	_, err = tx.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, column, decl))
 	return err
+}
+
+// addUsers (v9 -> v10) creates the user profile tables. Nothing else changes:
+// existing transactions/balances/categories are not yet scoped to a user.
+func addUsers(tx *sql.Tx) error {
+	if _, err := tx.Exec(usersSchema); err != nil {
+		return fmt.Errorf("create users: %w", err)
+	}
+	return nil
 }

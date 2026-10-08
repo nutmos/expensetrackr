@@ -42,6 +42,7 @@ func (s *Server) Router() *gin.Engine {
 	s.registerTransactionRoutes(api)
 	s.registerBalanceRoutes(api)
 	s.registerCategoryRoutes(api)
+	s.registerUserRoutes(api)
 	api.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 
 	if s.Static != nil {
