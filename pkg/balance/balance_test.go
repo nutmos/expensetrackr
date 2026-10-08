@@ -62,12 +62,16 @@ func TestValidateLiabilityTypes(t *testing.T) {
 	if err != nil || !*b.OverLimit || *b.Available != "-200.00" {
 		t.Errorf("over limit: %+v %v", b, err)
 	}
+	// Negative debt (overpaid, in credit) is allowed.
+	if b, err := (Input{Name: "Card", Type: "credit_card", Currency: "THB", Debt: dec("-25.5"), Limit: dec("1000")}).Validate(); err != nil || *b.Debt != "-25.50" || *b.Available != "1025.50" || *b.OverLimit {
+		t.Errorf("negative debt: %+v %v", b, err)
+	}
 	// Zero debt / zero limit are allowed.
 	if _, err := (Input{Name: "Loan", Type: "other_liability", Currency: "THB", Debt: dec("0"), Limit: dec("0")}).Validate(); err != nil {
 		t.Errorf("zero debt/limit: %v", err)
 	}
 	f := fieldErrs(t, func() error {
-		_, err := Input{Name: "Card", Type: "credit_card", Currency: "THB", Balance: dec("5"), Debt: dec("-1")}.Validate()
+		_, err := Input{Name: "Card", Type: "credit_card", Currency: "THB", Balance: dec("5"), Debt: dec("x")}.Validate()
 		return err
 	}())
 	if f["debt"] == "" || f["limit"] == "" || f["balance"] == "" {

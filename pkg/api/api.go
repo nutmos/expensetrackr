@@ -30,6 +30,11 @@ type Server struct {
 type errorBody struct {
 	Error  string            `json:"error"`
 	Fields map[string]string `json:"fields,omitempty"`
+	// Code is a stable machine-readable reason for some errors
+	// (version_required, version_conflict, balance_in_use).
+	Code string `json:"code,omitempty"`
+	// Current is the record as it is now, sent with a 409 version conflict.
+	Current any `json:"current,omitempty"`
 }
 
 // Router builds the Gin engine with all routes.
@@ -95,6 +100,8 @@ func writeInputError(c *gin.Context, err error) {
 		c.JSON(http.StatusBadRequest, errorBody{Error: re.Msg})
 	case errors.Is(err, store.ErrNotFound):
 		c.JSON(http.StatusNotFound, errorBody{Error: "transaction not found"})
+	case errors.Is(err, store.ErrReadOnly):
+		c.JSON(http.StatusConflict, errorBody{Error: err.Error(), Code: "balance_adjustment_readonly"})
 	default:
 		internalError(c, err)
 	}

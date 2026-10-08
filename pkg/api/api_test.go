@@ -27,11 +27,31 @@ func newTestServer(t *testing.T) http.Handler {
 	return (&Server{Store: st, Static: static}).Router()
 }
 
+// do sends a request. For PUT/PATCH on a single balance or transaction whose
+// body has no "version", it first GETs the record and sends its ETag as
+// If-Match, like a well-behaved client, so tests that are not about
+// versioning need not handle it. Use doH to control headers exactly.
 func do(t *testing.T, h http.Handler, method, path, body string) (*httptest.ResponseRecorder, map[string]any) {
+	t.Helper()
+	var hdr map[string]string
+	if (method == "PUT" || method == "PATCH") && !strings.Contains(body, `"version"`) &&
+		(strings.HasPrefix(path, "/api/balances/") || strings.HasPrefix(path, "/api/transactions/")) {
+		if rec, _ := doH(t, h, "GET", path, "", nil); rec.Code == http.StatusOK && rec.Header().Get("ETag") != "" {
+			hdr = map[string]string{"If-Match": rec.Header().Get("ETag")}
+		}
+	}
+	return doH(t, h, method, path, body, hdr)
+}
+
+// doH sends a request with exactly the given extra headers.
+func doH(t *testing.T, h http.Handler, method, path, body string, hdr map[string]string) (*httptest.ResponseRecorder, map[string]any) {
 	t.Helper()
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, v := range hdr {
+		req.Header.Set(k, v)
 	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

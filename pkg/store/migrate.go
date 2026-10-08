@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 )
 
 // Schema notes, table "transactions" (one row per expense):
@@ -39,6 +40,12 @@ import (
 //	v8  table "categories"; transactions.category_uid
 //	v9  drop transactions.category (name snapshot from a pre-release v8) if present
 //	v10 users + user_identities tables (profiles, preferences JSON, auth-ready fields)
+//	v11 balances.version (rebuilt to also drop CHECK debt_minor >= 0),
+//	    transactions.version + balance_applied
+//	v12 drop table balance_adjustments if present (created only by a
+//	    pre-release build of v11)
+//	v13 transactions rebuilt: type may be 'balance_adjustment', new column
+//	    adjustment_direction, table CHECKs for adjustment rows
 //
 // A brand-new database is created directly at the latest version from
 // currentSchema. An existing database is upgraded by running the pending
@@ -48,8 +55,23 @@ import (
 
 // currentSchema is the full latest schema, used only for new, empty databases.
 // Keep it in sync with the result of applying every migration.
-const currentSchema = `
-CREATE TABLE transactions (
+//
+// transactions.version: optimistic-locking counter (1 on insert, +1 per update).
+// transactions.balance_applied: 1 if the row moved its balances (all rows
+// written by v11+); 0 for rows recorded before v11, whose edits/deletes
+// therefore never touch balances, and for balance_adjustment rows.
+var currentSchema = transactionsTable("transactions") + transactionsIndexes + balancesSchemaCurrent + categoriesSchema + usersSchema
+
+// transactionsTable returns the CREATE TABLE statement of the current (v13+)
+// transactions table under the given name (also used by the v13 rebuild).
+//
+// adjustment_direction is set exactly for type 'balance_adjustment' rows,
+// which are written by the server when a balance amount is edited by hand:
+// they never carry a destination or category and never moved a balance
+// (balance_applied = 0), so editing history can't double-count them.
+func transactionsTable(name string) string {
+	return `
+CREATE TABLE ` + name + ` (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     uid           TEXT    NOT NULL UNIQUE CHECK (length(uid) = 36),
     amount_minor  INTEGER NOT NULL CHECK (amount_minor > 0),
@@ -57,7 +79,7 @@ CREATE TABLE transactions (
     currency      TEXT    NOT NULL CHECK (length(currency) = 3),
     balance_uid   TEXT    NOT NULL CHECK (length(balance_uid) = 36),
     account       TEXT    NOT NULL CHECK (length(account) > 0),
-    type          TEXT    NOT NULL DEFAULT 'expense' CHECK (type IN ('expense', 'income', 'transfer')),
+    type          TEXT    NOT NULL DEFAULT 'expense' CHECK (type IN ('expense', 'income', 'transfer', 'balance_adjustment')),
     to_balance_uid TEXT   CHECK (to_balance_uid IS NULL OR length(to_balance_uid) = 36),
     to_account    TEXT,
     category_uid  TEXT    CHECK (category_uid IS NULL OR length(category_uid) = 36),
@@ -65,14 +87,25 @@ CREATE TABLE transactions (
     spent_at_unix INTEGER NOT NULL,
     note          TEXT    NOT NULL DEFAULT '',
     created_at    TEXT    NOT NULL,
-    updated_at    TEXT
+    updated_at    TEXT,
+    version       INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+    balance_applied INTEGER NOT NULL DEFAULT 0 CHECK (balance_applied IN (0, 1)),
+    adjustment_direction TEXT CHECK (adjustment_direction IS NULL OR adjustment_direction IN ('increase', 'decrease')),
+    CHECK ((type = 'balance_adjustment') = (adjustment_direction IS NOT NULL)),
+    CHECK (type <> 'balance_adjustment' OR (to_balance_uid IS NULL AND category_uid IS NULL AND balance_applied = 0))
 );
-CREATE INDEX idx_transactions_spent_at_unix ON transactions (spent_at_unix DESC, id DESC);
-CREATE INDEX idx_transactions_balance_uid ON transactions (balance_uid);
-CREATE UNIQUE INDEX idx_transactions_uid ON transactions (uid);
-CREATE INDEX idx_transactions_type ON transactions (type, spent_at_unix DESC);
-CREATE INDEX idx_transactions_category_uid ON transactions (category_uid);
-` + balancesSchemaCurrent + categoriesSchema + usersSchema
+`
+}
+
+// transactionsIndexes are the indexes of the transactions table.
+const transactionsIndexes = `
+CREATE INDEX IF NOT EXISTS idx_transactions_spent_at_unix ON transactions (spent_at_unix DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_transactions_balance_uid ON transactions (balance_uid);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_uid ON transactions (uid);
+CREATE INDEX IF NOT EXISTS idx_transactions_type ON transactions (type, spent_at_unix DESC);
+CREATE INDEX IF NOT EXISTS idx_transactions_category_uid ON transactions (category_uid);
+CREATE INDEX IF NOT EXISTS idx_transactions_to_balance_uid ON transactions (to_balance_uid);
+`
 
 // balancesSchemaV3 creates the balances table as shipped at version 3
 // (no uid yet). Used only by migration v2 -> v3. Do not edit once shipped.
@@ -171,18 +204,23 @@ CREATE TABLE IF NOT EXISTS user_identities (
 CREATE INDEX IF NOT EXISTS idx_user_identities_user_uid ON user_identities (user_uid);
 `
 
-// balancesSchemaCurrent is the full balances schema for brand-new databases
-// (version 4+). Keep in sync with the result of applying every migration.
+// balancesTable returns the CREATE TABLE statement of the current (v11+)
+// balances layout under the given table name (migration v11 builds it under a
+// temporary name, then renames it).
 //
 //   - uid: server-assigned UUID v4 (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx),
 //     immutable, unique; clients never set it
 //   - type: payment_account | credit_card | other_asset | other_liability
 //   - amount_scale: minor-unit digits of currency for the *_minor columns
 //   - balance_minor: asset types only (required), may be negative (overdraft)
-//   - debt_minor, limit_minor: liability types only (both required), >= 0;
-//     debt may exceed limit (reported as over_limit by the API)
-const balancesSchemaCurrent = `
-CREATE TABLE balances (
+//   - debt_minor, limit_minor: liability types only (both required). Debt may
+//     be negative (overpaid, in credit) and may exceed the limit (reported as
+//     over_limit by the API); limit >= 0
+//   - version: optimistic-locking counter, 1 on insert, +1 on every change
+//     (manual PUT/PATCH or a transaction moving the balance)
+func balancesTable(name string) string {
+	return `
+CREATE TABLE ` + name + ` (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     uid           TEXT    NOT NULL UNIQUE CHECK (length(uid) = 36),
     name          TEXT    NOT NULL COLLATE NOCASE UNIQUE CHECK (length(trim(name)) > 0),
@@ -191,10 +229,11 @@ CREATE TABLE balances (
     description   TEXT    NOT NULL DEFAULT '',
     amount_scale  INTEGER NOT NULL CHECK (amount_scale BETWEEN 0 AND 4),
     balance_minor INTEGER,
-    debt_minor    INTEGER CHECK (debt_minor >= 0),
+    debt_minor    INTEGER,
     limit_minor   INTEGER CHECK (limit_minor >= 0),
     created_at    TEXT    NOT NULL,
     updated_at    TEXT,
+    version       INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
     CHECK (
         (type IN ('payment_account', 'other_asset')
             AND balance_minor IS NOT NULL AND debt_minor IS NULL AND limit_minor IS NULL)
@@ -203,9 +242,18 @@ CREATE TABLE balances (
             AND balance_minor IS NULL AND debt_minor IS NOT NULL AND limit_minor IS NOT NULL)
     )
 );
-CREATE INDEX idx_balances_type ON balances (type, name);
-CREATE UNIQUE INDEX idx_balances_uid ON balances (uid);
 `
+}
+
+// balancesIndexes are the balances indexes (v4+); recreated by v11's rebuild.
+const balancesIndexes = `
+CREATE INDEX IF NOT EXISTS idx_balances_type ON balances (type, name);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_balances_uid ON balances (uid);
+`
+
+// balancesSchemaCurrent is the full balances schema for brand-new databases.
+// Keep in sync with the result of applying every migration.
+var balancesSchemaCurrent = balancesTable("balances") + balancesIndexes
 
 // migration upgrades the schema by one version inside a SQL transaction.
 type migration func(tx *sql.Tx) error
@@ -236,6 +284,15 @@ var migrations = []migration{
 	// v9 -> v10: add users (profiles + preferences + auth-ready fields) and
 	// user_identities (future SSO links).
 	addUsers,
+	// v10 -> v11: optimistic-locking versions and automatic balance
+	// adjustment bookkeeping.
+	addVersions,
+	// v11 -> v12: drop the balance_adjustments audit table that a pre-release
+	// build of v11 created. No-op otherwise.
+	dropBalanceAdjustments,
+	// v12 -> v13: allow type 'balance_adjustment' (rebuild of transactions,
+	// since SQLite cannot alter a CHECK) and add adjustment_direction.
+	rebuildTransactionsV13,
 }
 
 // SchemaVersion is the user_version a fully migrated database has.
@@ -631,6 +688,175 @@ func addColumnIfMissing(tx *sql.Tx, table, column, decl string) error {
 func addUsers(tx *sql.Tx) error {
 	if _, err := tx.Exec(usersSchema); err != nil {
 		return fmt.Errorf("create users: %w", err)
+	}
+	return nil
+}
+
+// addVersions is migration v10 -> v11. In one SQL transaction:
+//
+//  1. balances is rebuilt (create new table, copy rows, drop, rename,
+//     recreate indexes) to add version (existing rows get 1) and drop the
+//     CHECK (debt_minor >= 0) constraint, which SQLite cannot drop in place.
+//     Rows, ids, uids and amounts are copied unchanged (no recompute). Skipped
+//     if balances already has version and no debt check.
+//  2. transactions gets version (1) and balance_applied (0: rows recorded
+//     before v11 never moved a balance) plus an index on to_balance_uid.
+//
+// Idempotent. No foreign key references balances, so the rebuild is safe with
+// foreign_keys on.
+func addVersions(tx *sql.Tx) error {
+	if err := rebuildBalancesV11(tx); err != nil {
+		return err
+	}
+	for _, c := range []struct{ name, decl string }{
+		{"version", "INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1)"},
+		{"balance_applied", "INTEGER NOT NULL DEFAULT 0 CHECK (balance_applied IN (0, 1))"},
+	} {
+		if err := addColumnIfMissing(tx, "transactions", c.name, c.decl); err != nil {
+			return fmt.Errorf("add transactions.%s: %w", c.name, err)
+		}
+	}
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_transactions_to_balance_uid ON transactions (to_balance_uid)`); err != nil {
+		return fmt.Errorf("create to_balance_uid index: %w", err)
+	}
+	return nil
+}
+
+// dropBalanceAdjustments is migration v11 -> v12. A pre-release build of v11
+// also created a balance_adjustments audit table (manual balance edits); the
+// feature was dropped before release, so remove the table, its index and its
+// AUTOINCREMENT counter if present. Idempotent; a no-op on databases migrated
+// by the released v11.
+func dropBalanceAdjustments(tx *sql.Tx) error {
+	if _, err := tx.Exec(`DROP INDEX IF EXISTS idx_balance_adjustments_balance_uid`); err != nil {
+		return fmt.Errorf("drop balance_adjustments index: %w", err)
+	}
+	if _, err := tx.Exec(`DROP TABLE IF EXISTS balance_adjustments`); err != nil {
+		return fmt.Errorf("drop balance_adjustments: %w", err)
+	}
+	hasSeq, err := objectExists(tx, "table", "sqlite_sequence")
+	if err != nil {
+		return err
+	}
+	if hasSeq {
+		if _, err := tx.Exec(`DELETE FROM sqlite_sequence WHERE name = 'balance_adjustments'`); err != nil {
+			return fmt.Errorf("clear balance_adjustments sequence: %w", err)
+		}
+	}
+	return nil
+}
+
+func rebuildBalancesV11(tx *sql.Tx) error {
+	hasVersion, err := columnExists(tx, "balances", "version")
+	if err != nil {
+		return err
+	}
+	var ddl string
+	if err := tx.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'balances'`).Scan(&ddl); err != nil {
+		return fmt.Errorf("read balances schema: %w", err)
+	}
+	if hasVersion && !strings.Contains(strings.Join(strings.Fields(ddl), " "), "debt_minor >= 0") {
+		return nil // already rebuilt
+	}
+	if err := requireColumns(tx, "balances", "id", "uid", "name", "type", "currency", "description",
+		"amount_scale", "balance_minor", "debt_minor", "limit_minor", "created_at", "updated_at"); err != nil {
+		return err
+	}
+	var seq sql.NullInt64
+	if err := tx.QueryRow(`SELECT seq FROM sqlite_sequence WHERE name = 'balances'`).Scan(&seq); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("read balances sequence: %w", err)
+	}
+	version := "1"
+	if hasVersion {
+		version = "version"
+	}
+	const tmp = "balances_v11_rebuild"
+	stmts := []string{
+		`DROP TABLE IF EXISTS ` + tmp,
+		balancesTable(tmp),
+		`INSERT INTO ` + tmp + ` (id, uid, name, type, currency, description, amount_scale, balance_minor, debt_minor, limit_minor, created_at, updated_at, version)
+		 SELECT id, uid, name, type, currency, description, amount_scale, balance_minor, debt_minor, limit_minor, created_at, updated_at, ` + version + ` FROM balances`,
+		`DROP TABLE balances`,
+		`ALTER TABLE ` + tmp + ` RENAME TO balances`,
+		balancesIndexes,
+	}
+	for _, q := range stmts {
+		if _, err := tx.Exec(q); err != nil {
+			return fmt.Errorf("rebuild balances: %w", err)
+		}
+	}
+	if seq.Valid { // keep AUTOINCREMENT from reusing ids of deleted balances
+		if _, err := tx.Exec(`DELETE FROM sqlite_sequence WHERE name IN ('balances', '` + tmp + `')`); err != nil {
+			return fmt.Errorf("restore balances sequence: %w", err)
+		}
+		if _, err := tx.Exec(`INSERT INTO sqlite_sequence (name, seq) VALUES ('balances', max(?, (SELECT coalesce(max(id), 0) FROM balances)))`, seq.Int64); err != nil {
+			return fmt.Errorf("restore balances sequence: %w", err)
+		}
+	}
+	return nil
+}
+
+// rebuildTransactionsV13 is migration v12 -> v13. SQLite cannot change a
+// CHECK constraint in place, so transactions is rebuilt inside the migration's
+// SQL transaction: create the new table, copy every row (same ids, uids and
+// values; adjustment_direction NULL), drop the old table, rename, recreate
+// the indexes (including the unique uid index) and restore the AUTOINCREMENT
+// counter so ids of deleted rows are never reused. No foreign key references
+// transactions. Skipped if the table already has adjustment_direction and
+// allows 'balance_adjustment' (idempotent).
+func rebuildTransactionsV13(tx *sql.Tx) error {
+	hasDir, err := columnExists(tx, "transactions", "adjustment_direction")
+	if err != nil {
+		return err
+	}
+	var ddl string
+	if err := tx.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'transactions'`).Scan(&ddl); err != nil {
+		return fmt.Errorf("read transactions schema: %w", err)
+	}
+	if hasDir && strings.Contains(ddl, "'balance_adjustment'") {
+		return nil // already rebuilt
+	}
+	cols := []string{"id", "uid", "amount_minor", "amount_scale", "currency", "balance_uid", "account", "type",
+		"to_balance_uid", "to_account", "category_uid", "spent_at", "spent_at_unix", "note", "created_at",
+		"updated_at", "version", "balance_applied"}
+	if err := requireColumns(tx, "transactions", cols...); err != nil {
+		return err
+	}
+	var seq sql.NullInt64
+	if err := tx.QueryRow(`SELECT seq FROM sqlite_sequence WHERE name = 'transactions'`).Scan(&seq); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("read transactions sequence: %w", err)
+	}
+	list := strings.Join(cols, ", ")
+	dir := "NULL"
+	if hasDir {
+		dir = "adjustment_direction"
+	}
+	const tmp = "transactions_v13_rebuild"
+	stmts := []string{
+		`DROP TABLE IF EXISTS ` + tmp,
+		transactionsTable(tmp),
+		`INSERT INTO ` + tmp + ` (` + list + `, adjustment_direction) SELECT ` + list + `, ` + dir + ` FROM transactions`,
+		`DROP TABLE transactions`,
+		`ALTER TABLE ` + tmp + ` RENAME TO transactions`,
+		transactionsIndexes,
+	}
+	for _, q := range stmts {
+		if _, err := tx.Exec(q); err != nil {
+			return fmt.Errorf("rebuild transactions: %w", err)
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM sqlite_sequence WHERE name IN ('transactions', '` + tmp + `')`); err != nil {
+		return fmt.Errorf("restore transactions sequence: %w", err)
+	}
+	var maxID sql.NullInt64
+	if err := tx.QueryRow(`SELECT max(id) FROM transactions`).Scan(&maxID); err != nil {
+		return fmt.Errorf("restore transactions sequence: %w", err)
+	}
+	if seq.Valid || maxID.Valid {
+		next := max(seq.Int64, maxID.Int64)
+		if _, err := tx.Exec(`INSERT INTO sqlite_sequence (name, seq) VALUES ('transactions', ?)`, next); err != nil {
+			return fmt.Errorf("restore transactions sequence: %w", err)
+		}
 	}
 	return nil
 }

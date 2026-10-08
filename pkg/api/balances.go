@@ -22,12 +22,19 @@ func (s *Server) registerBalanceRoutes(api *gin.RouterGroup) {
 	api.DELETE("/balances/:uid", s.deleteBalance)
 }
 
-// writeBalanceError maps balance errors: 404 not found, 409 duplicate name,
-// then the shared 422/400/500 handling.
+// writeBalanceError maps balance errors: 404 not found, 409 duplicate name or
+// currency change while in use, then the shared 422/400/500 handling.
+// (Version conflicts are answered by balanceConflict, which needs the store.)
 func writeBalanceError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		c.JSON(http.StatusNotFound, errorBody{Error: "balance not found"})
+	case errors.Is(err, store.ErrBalanceInUse):
+		c.JSON(http.StatusConflict, errorBody{
+			Error:  err.Error(),
+			Code:   "balance_in_use",
+			Fields: map[string]string{"currency": "cannot change while transactions reference this balance (no exchange-rate conversion)"},
+		})
 	case errors.Is(err, store.ErrDuplicateName):
 		c.JSON(http.StatusConflict, errorBody{
 			Error:  "a balance with this name already exists",
@@ -81,6 +88,7 @@ func (s *Server) createBalance(c *gin.Context) {
 		return
 	}
 	c.Header("Location", "/api/balances/"+b.UID)
+	setETag(c, b.Version)
 	c.JSON(http.StatusCreated, b)
 }
 
@@ -122,13 +130,47 @@ func (s *Server) getBalance(c *gin.Context) {
 	if !ok {
 		return
 	}
+	setETag(c, b.Version)
 	c.JSON(http.StatusOK, b)
+}
+
+// balanceConflict answers 409 with the balance as it is now (or 404 if it was
+// deleted meanwhile).
+func (s *Server) balanceConflict(c *gin.Context, uid string) {
+	cur, err := s.Store.GetBalanceByUID(c.Request.Context(), uid)
+	if err != nil {
+		writeBalanceError(c, err)
+		return
+	}
+	writeVersionConflict(c, "balance", cur, cur.Version)
+}
+
+// saveBalance runs a manual update with optimistic locking and writes the
+// response: 200 + ETag, 409 on a stale version, or the mapped error.
+func (s *Server) saveBalance(c *gin.Context, cur balance.Balance, opts store.WriteOptions, fn func(existing balance.Balance) (balance.Balance, error)) {
+	if cur.Version != opts.Version { // fail fast; re-checked inside the write
+		s.balanceConflict(c, cur.UID)
+		return
+	}
+	updated, err := s.Store.UpdateBalanceWith(c.Request.Context(), cur.ID, opts, fn)
+	if errors.Is(err, store.ErrVersionConflict) {
+		s.balanceConflict(c, cur.UID)
+		return
+	}
+	if err != nil {
+		writeBalanceError(c, err)
+		return
+	}
+	setETag(c, updated.Version)
+	c.JSON(http.StatusOK, updated)
 }
 
 // replaceBalance handles PUT: full replace with the same rules as create,
 // except that type is immutable: it is still required and must equal the
 // stored type (422 on "type" otherwise). uid in the body is ignored; the
-// existing uid is kept.
+// existing uid is kept. Requires the client's version (If-Match or
+// "version"): 428 if missing, 409 if stale. The amounts sent override what
+// transactions did to the balance (manual override).
 func (s *Server) replaceBalance(c *gin.Context) {
 	cur, ok := s.resolveBalance(c)
 	if !ok {
@@ -138,19 +180,18 @@ func (s *Server) replaceBalance(c *gin.Context) {
 	if !decodeBody(c, &in, true) {
 		return
 	}
-	updated, err := s.Store.UpdateBalance(c.Request.Context(), cur.ID, func(existing balance.Balance) (balance.Balance, error) {
-		return in.ValidateUpdate(existing.Type)
-	})
-	if err != nil {
-		writeBalanceError(c, err)
+	version, ok := clientVersion(c, in.Version, true)
+	if !ok {
 		return
 	}
-	c.JSON(http.StatusOK, updated)
+	s.saveBalance(c, cur, store.WriteOptions{Version: version}, func(existing balance.Balance) (balance.Balance, error) {
+		return in.ValidateUpdate(existing.Type)
+	})
 }
 
 // patchBalance handles PATCH: only fields present change; the merged result is
 // validated as a whole. "type" may be sent only with the stored value.
-// A "uid" field in the body is ignored.
+// A "uid" field in the body is ignored. Versioning as for PUT.
 func (s *Server) patchBalance(c *gin.Context) {
 	cur, ok := s.resolveBalance(c)
 	if !ok {
@@ -164,26 +205,41 @@ func (s *Server) patchBalance(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, errorBody{Error: "request body must be a JSON object"})
 		return
 	}
-	updated, err := s.Store.UpdateBalance(c.Request.Context(), cur.ID, func(existing balance.Balance) (balance.Balance, error) {
+	bodyVersion, err := takeVersion(patch)
+	if err != nil {
+		writeInputError(c, err)
+		return
+	}
+	version, ok := clientVersion(c, bodyVersion, true)
+	if !ok {
+		return
+	}
+	s.saveBalance(c, cur, store.WriteOptions{Version: version}, func(existing balance.Balance) (balance.Balance, error) {
 		in := existing.Input()
 		if err := in.ApplyPatch(patch); err != nil {
 			return balance.Balance{}, err
 		}
 		return in.ValidateUpdate(existing.Type)
 	})
-	if err != nil {
-		writeBalanceError(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, updated)
 }
 
+// deleteBalance handles DELETE. An If-Match header is optional; if sent and
+// stale the answer is 409 with the current balance.
 func (s *Server) deleteBalance(c *gin.Context) {
 	cur, ok := s.resolveBalance(c)
 	if !ok {
 		return
 	}
-	if err := s.Store.DeleteBalance(c.Request.Context(), cur.ID); err != nil {
+	version, ok := clientVersion(c, nil, false)
+	if !ok {
+		return
+	}
+	err := s.Store.DeleteBalanceWith(c.Request.Context(), cur.ID, store.WriteOptions{Version: version})
+	if errors.Is(err, store.ErrVersionConflict) {
+		s.balanceConflict(c, cur.UID)
+		return
+	}
+	if err != nil {
 		writeBalanceError(c, err)
 		return
 	}

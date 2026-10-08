@@ -19,7 +19,12 @@ import (
 // name (compared case-insensitively).
 var ErrDuplicateName = errors.New("a balance with this name already exists")
 
-const balanceCols = `id, uid, name, type, currency, description, amount_scale, balance_minor, debt_minor, limit_minor, created_at, updated_at`
+// ErrBalanceInUse is returned when a balance's currency would change while
+// transactions reference it (their amounts are in the old currency and are
+// reversed against this balance when edited or deleted).
+var ErrBalanceInUse = errors.New("balance is used by transactions")
+
+const balanceCols = `id, uid, name, type, currency, description, amount_scale, balance_minor, debt_minor, limit_minor, created_at, updated_at, version`
 
 // newUID returns a random lowercase UUID v4 string (used for transactions).
 func newUID() (string, error) {
@@ -69,6 +74,7 @@ func (s *Store) CreateBalance(ctx context.Context, b *balance.Balance) error {
 	}
 	b.UID = uid
 	b.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+	b.UpdatedAt, b.Version = nil, 1
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO balances (uid, name, type, currency, description, amount_scale, balance_minor, debt_minor, limit_minor, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -149,10 +155,24 @@ func (s *Store) GetBalanceByUID(ctx context.Context, uid string) (balance.Balanc
 	return b, err
 }
 
-// UpdateBalance loads balance id, passes it to fn and stores what fn returns,
-// in one database transaction. ID, UID and CreatedAt are preserved and
-// UpdatedAt is set to now (UTC). Returns ErrNotFound, ErrDuplicateName, or fn's error.
+// UpdateBalance is UpdateBalanceWith without a version check.
 func (s *Store) UpdateBalance(ctx context.Context, id int64, fn func(cur balance.Balance) (balance.Balance, error)) (balance.Balance, error) {
+	return s.UpdateBalanceWith(ctx, id, WriteOptions{}, fn)
+}
+
+// UpdateBalanceWith loads balance id, passes it to fn and stores what fn
+// returns, in one database transaction. This is the manual edit path (PUT /
+// PATCH): the amounts fn returns overwrite whatever transactions have done to
+// the balance. ID, UID and CreatedAt are preserved, UpdatedAt is set to now
+// (UTC) and Version is incremented. A change of the balance (asset) or debt
+// (liability) amount is recorded as a balance_adjustment transaction in the
+// same database transaction (see recordBalanceAdjustment); limit-only,
+// name/description and currency changes record nothing.
+//
+// Returns ErrNotFound, ErrVersionConflict (opts.Version > 0 and stale),
+// ErrDuplicateName, ErrBalanceInUse (currency change while transactions
+// reference the balance), or fn's error.
+func (s *Store) UpdateBalanceWith(ctx context.Context, id int64, opts WriteOptions, fn func(cur balance.Balance) (balance.Balance, error)) (balance.Balance, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return balance.Balance{}, fmt.Errorf("update balance: %w", err)
@@ -166,6 +186,9 @@ func (s *Store) UpdateBalance(ctx context.Context, id int64, fn func(cur balance
 	if err != nil {
 		return balance.Balance{}, err
 	}
+	if opts.Version > 0 && cur.Version != opts.Version {
+		return balance.Balance{}, ErrVersionConflict
+	}
 	next, err := fn(cur)
 	if err != nil {
 		return balance.Balance{}, err
@@ -176,22 +199,39 @@ func (s *Store) UpdateBalance(ctx context.Context, id int64, fn func(cur balance
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	next.ID, next.UID, next.CreatedAt, next.UpdatedAt = cur.ID, cur.UID, cur.CreatedAt, &now
+	next.Version = cur.Version + 1
 	// The type is immutable after creation (callers reject a change with 422
 	// via balance.Input.ValidateUpdate); never write it here.
 	if next.Type != cur.Type {
 		return balance.Balance{}, fmt.Errorf("update balance: type cannot change (%s -> %s)", cur.Type, next.Type)
 	}
+	if next.Currency != cur.Currency {
+		var n int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM transactions WHERE balance_uid = ? OR to_balance_uid = ?`, cur.UID, cur.UID).Scan(&n); err != nil {
+			return balance.Balance{}, fmt.Errorf("update balance: %w", err)
+		}
+		if n > 0 {
+			return balance.Balance{}, fmt.Errorf("%w (%d transaction(s)); its currency cannot change", ErrBalanceInUse, n)
+		}
+	}
 
-	if _, err := tx.ExecContext(ctx,
+	res, err := tx.ExecContext(ctx,
 		`UPDATE balances SET name = ?, currency = ?, description = ?, amount_scale = ?,
-		        balance_minor = ?, debt_minor = ?, limit_minor = ?, updated_at = ?
-		 WHERE id = ?`,
+		        balance_minor = ?, debt_minor = ?, limit_minor = ?, updated_at = ?, version = ?
+		 WHERE id = ? AND version = ?`,
 		next.Name, next.Currency, next.Description, scale,
-		nullInt(next.BalanceMinor), nullInt(next.DebtMinor), nullInt(next.LimitMinor), now, id); err != nil {
+		nullInt(next.BalanceMinor), nullInt(next.DebtMinor), nullInt(next.LimitMinor), now, next.Version, id, cur.Version)
+	if err != nil {
 		if mapped := mapBalanceErr(err); mapped == ErrDuplicateName {
 			return balance.Balance{}, mapped
 		}
 		return balance.Balance{}, fmt.Errorf("update balance: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		return balance.Balance{}, ErrVersionConflict
+	}
+	if err := recordBalanceAdjustment(ctx, tx, cur, next, now); err != nil {
+		return balance.Balance{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return balance.Balance{}, fmt.Errorf("update balance: %w", err)
@@ -199,9 +239,21 @@ func (s *Store) UpdateBalance(ctx context.Context, id int64, fn func(cur balance
 	return next, nil
 }
 
-// DeleteBalance removes one balance or returns ErrNotFound.
+// DeleteBalance is DeleteBalanceWith without a version check.
 func (s *Store) DeleteBalance(ctx context.Context, id int64) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM balances WHERE id = ?`, id)
+	return s.DeleteBalanceWith(ctx, id, WriteOptions{})
+}
+
+// DeleteBalanceWith removes one balance. Returns ErrNotFound, or
+// ErrVersionConflict when opts.Version > 0 and differs from the stored one.
+// Transactions that reference it keep its uid and name snapshot; editing or
+// deleting them later skips the missing balance.
+func (s *Store) DeleteBalanceWith(ctx context.Context, id int64, opts WriteOptions) error {
+	q, args := `DELETE FROM balances WHERE id = ?`, []any{id}
+	if opts.Version > 0 {
+		q, args = q+` AND version = ?`, append(args, opts.Version)
+	}
+	res, err := s.db.ExecContext(ctx, q, args...)
 	if err != nil {
 		return fmt.Errorf("delete balance: %w", err)
 	}
@@ -210,6 +262,11 @@ func (s *Store) DeleteBalance(ctx context.Context, id int64) error {
 		return fmt.Errorf("delete balance: %w", err)
 	}
 	if n == 0 {
+		if opts.Version > 0 {
+			if _, err := s.GetBalance(ctx, id); err == nil {
+				return ErrVersionConflict
+			}
+		}
 		return ErrNotFound
 	}
 	return nil
@@ -222,7 +279,7 @@ func scanBalance(r scanner) (balance.Balance, error) {
 	var bal, debt, limit sql.NullInt64
 	var updated sql.NullString
 	if err := r.Scan(&b.ID, &b.UID, &b.Name, &typ, &b.Currency, &b.Description, &scale,
-		&bal, &debt, &limit, &b.CreatedAt, &updated); err != nil {
+		&bal, &debt, &limit, &b.CreatedAt, &updated, &b.Version); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return b, err
 		}

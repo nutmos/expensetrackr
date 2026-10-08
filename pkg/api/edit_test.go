@@ -39,7 +39,7 @@ func TestPutReplacesTransaction(t *testing.T) {
 func TestPutErrors(t *testing.T) {
 	h := newTestServer(t)
 	uid := seedPayable(t, h, "Cash", "USD")
-	path, _ := create(t, h, `{"amount":"120.50","currency":"THB","balance_uid":"`+uid+`","spent_at":"2026-10-05T09:00:00+07:00","note":"lunch"}`)
+	path, _ := create(t, h, `{"amount":"120.50","currency":"USD","balance_uid":"`+uid+`","spent_at":"2026-10-05T09:00:00+07:00","note":"lunch"}`)
 	valid := `{"amount":"1","currency":"USD","balance_uid":"` + uid + `","spent_at":"2026-10-06T12:30:00Z"}`
 	cases := []struct {
 		name, path, body string
@@ -112,9 +112,18 @@ func TestPatchPartialUpdate(t *testing.T) {
 func TestPatchCurrencyChange(t *testing.T) {
 	h := newTestServer(t)
 	uid := seedPayable(t, h, "Cash", "THB")
+	jpy := seedPayable(t, h, "Yen wallet", "JPY")
+	kwd := seedPayable(t, h, "Dinar wallet", "KWD")
 	path, _ := create(t, h, `{"amount":"120.50","currency":"THB","balance_uid":"`+uid+`","spent_at":"2026-10-05T09:00:00+07:00","note":"lunch"}`)
 
-	rec, body := do(t, h, "PATCH", path, `{"currency":"JPY"}`)
+	// The transaction currency must match its balance (no FX), so a currency
+	// change goes together with a balance in that currency.
+	rec, body := do(t, h, "PATCH", path, `{"currency":"JPY","amount":"1500"}`)
+	if rec.Code != http.StatusUnprocessableEntity || body["fields"].(map[string]any)["balance_uid"] == nil {
+		t.Fatalf("THB->JPY on a THB balance: %d %s", rec.Code, rec.Body)
+	}
+
+	rec, body = do(t, h, "PATCH", path, `{"currency":"JPY","balance_uid":"`+jpy+`"}`)
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("THB->JPY: %d %s", rec.Code, rec.Body)
 	}
@@ -122,17 +131,17 @@ func TestPatchCurrencyChange(t *testing.T) {
 		t.Errorf("want amount field error, got %v", body)
 	}
 
-	rec, body = do(t, h, "PATCH", path, `{"currency":"JPY","amount":"1500"}`)
+	rec, body = do(t, h, "PATCH", path, `{"currency":"JPY","amount":"1500","balance_uid":"`+jpy+`"}`)
 	if rec.Code != http.StatusOK || body["amount"] != "1500" || body["amount_minor"].(float64) != 1500 {
 		t.Errorf("JPY with amount: %d %v", rec.Code, body)
 	}
 
-	rec, body = do(t, h, "PATCH", path, `{"currency":"kwd"}`)
+	rec, body = do(t, h, "PATCH", path, `{"currency":"kwd","balance_uid":"`+kwd+`"}`)
 	if rec.Code != http.StatusOK || body["amount"] != "1500.000" || body["amount_minor"].(float64) != 1500000 {
 		t.Errorf("JPY->KWD: %d %v", rec.Code, body)
 	}
 
-	rec, body = do(t, h, "PATCH", path, `{"currency":"JPY"}`)
+	rec, body = do(t, h, "PATCH", path, `{"currency":"JPY","balance_uid":"`+jpy+`"}`)
 	if rec.Code != http.StatusOK || body["amount"] != "1500" {
 		t.Errorf("KWD->JPY: %d %v", rec.Code, body)
 	}

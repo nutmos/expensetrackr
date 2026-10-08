@@ -56,7 +56,12 @@ td.neg { color: var(--err); }
 [hidden] { display: none !important; }
 .type-income { color: #1a7f37; }
 .type-transfer { color: #555; font-style: italic; }
+.type-balance_adjustment { color: #6d28d9; font-weight: 600; }
+tr.row-adjustment td { background: #f5f3ff; }
+.auto-label { font-size: 0.8rem; color: var(--muted); font-style: italic; }
 #b-form-status.ok, #c-form-status.ok { color: #15803d; }
+.conflict { border: 1px solid #fcd34d; background: #fffbeb; color: #92400e; border-radius: 8px; padding: 10px 12px; margin: 10px 0; }
+.conflict p { margin: 0 0 8px; }
 #b-form-status.bad, #c-form-status.bad { color: var(--err); }
 a.button { display: inline-block; text-decoration: none; line-height: inherit; }
 a.button:hover, button:hover:not(:disabled) { filter: brightness(1.05); }

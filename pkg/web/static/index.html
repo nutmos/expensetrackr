@@ -25,6 +25,15 @@
         <form id="filter-form" class="filters">
           <label>From <input type="date" id="filter-from"></label>
           <label>To <input type="date" id="filter-to"></label>
+          <label>Type
+            <select id="filter-type">
+              <option value="">All</option>
+              <option value="expense">Expense</option>
+              <option value="income">Income</option>
+              <option value="transfer">Transfer</option>
+              <option value="balance_adjustment">Balance Adjustment</option>
+            </select>
+          </label>
           <button type="submit" class="secondary">Filter</button>
           <button type="button" id="filter-clear" class="secondary">Clear</button>
         </form>
@@ -114,6 +123,11 @@
           <input id="note" name="note" type="text" maxlength="1000" placeholder="Lunch with team">
           <small class="err" data-for="note"></small>
         </label>
+        <p class="muted small" id="auto-adjust-note">Saving updates the selected balance(s) automatically: an expense lowers an account’s balance or raises a card’s debt, income raises a balance, a transfer moves the amount from source to destination. The currency must match the balance’s currency.</p>
+        <div class="conflict" id="conflict" role="alert" hidden>
+          <p class="conflict-msg"></p>
+          <button type="button" class="conflict-reload">Reload latest transaction</button>
+        </div>
         <div class="actions">
           <button type="submit" id="submit-btn">Save transaction</button>
           <button type="button" id="now-btn" class="secondary">Set time to now</button>
@@ -196,6 +210,11 @@
           <input id="b-description" name="description" type="text" maxlength="1000" placeholder="Salary account">
           <small class="err" data-for="description"></small>
         </label>
+        <p class="muted small" id="b-edit-hint" hidden>Balances update automatically from transactions. A balance or debt you type here overrides that and is recorded as a <strong>Balance Adjustment</strong> transaction (limit changes are not recorded).</p>
+        <div class="conflict" id="b-conflict" role="alert" hidden>
+          <p class="conflict-msg"></p>
+          <button type="button" class="conflict-reload">Reload latest values</button>
+        </div>
         <div class="actions">
           <button type="submit" id="b-submit-btn">Save balance</button>
           <button type="button" id="b-cancel-btn" class="secondary">Cancel</button>

@@ -61,6 +61,17 @@
     el.className = kind || "";
   }
 
+  // Optimistic locking: a record's ETag value for If-Match.
+  function ifMatch(version) { return { "If-Match": `"${version}"` }; }
+
+  // Show a version-conflict box (409 version_conflict) with a reload button.
+  function showConflict(box, text, onReload) {
+    box.querySelector(".conflict-msg").textContent = text;
+    box.querySelector(".conflict-reload").onclick = onReload;
+    box.hidden = false;
+  }
+  function hideConflict(box) { box.hidden = true; }
+
   // ---- Flash messages (shown once on the next list render) -------------------
 
   let flash = null; // {list, text, uid}
@@ -201,7 +212,7 @@
 
   window.App = {
     $, cell, button, link, clearErrors, showFieldErrors, setStatus,
-    setFlash, takeFlash, route, navigate, returnToList, replaceQuery,
+    setFlash, takeFlash, route, navigate, returnToList, replaceQuery, ifMatch, showConflict, hideConflict,
     isUUID: (s) => UUID_RE.test(s),
   };
 

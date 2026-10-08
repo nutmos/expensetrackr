@@ -77,6 +77,7 @@
   }
 
   const setStatus = (text, kind) => App.setStatus(statusEl, text, kind);
+  const conflictBox = $("#conflict");
 
   function rememberDefaults(currency, balanceUID) {
     try { localStorage.setItem(LS_KEY, JSON.stringify({ currency, balance_uid: balanceUID })); } catch (_) {}
@@ -102,6 +103,8 @@
     income: "Payment accounts and other assets.",
     transfer: "Any balance.",
   };
+  // Display names of transaction types (the API uses the lowercase values).
+  const TYPE_LABEL = { expense: "Expense", income: "Income", transfer: "Transfer", balance_adjustment: "Balance Adjustment" };
   const KIND = { payment_account: "account", credit_card: "card", other_asset: "asset", other_liability: "liability" };
 
   function fillSelect(sel, types, keep) {
@@ -149,6 +152,7 @@
     editing = null;
     form.reset();
     App.clearErrors(form);
+    App.hideConflict(conflictBox);
     setStatus("");
     form.hidden = false;
     $("#submit-btn").disabled = false;
@@ -182,6 +186,12 @@
       e = body;
     } catch (err) {
       if (my === gen) setStatus("Network error: " + err.message, "bad");
+      return;
+    }
+    if (e.type === "balance_adjustment") {
+      // Recorded automatically by a manual balance edit; read-only in the API.
+      $("#form-title").textContent = "Balance Adjustment";
+      setStatus("Balance adjustments are recorded automatically when a balance or debt is edited by hand, and can't be edited or deleted. Edit the balance instead.", "bad");
       return;
     }
     editing = e;
@@ -222,13 +232,24 @@
     const url = isEdit ? `/api/transactions/${editing.uid}` : "/api/transactions";
     const btn = $("#submit-btn");
     btn.disabled = true;
+    App.hideConflict(conflictBox);
     try {
       const res = await fetch(url, {
         method: isEdit ? "PUT" : "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(isEdit ? App.ifMatch(editing.version) : {}) },
         body: JSON.stringify(payload),
       });
       const body = await res.json().catch(() => ({}));
+      if (isEdit && res.status === 409 && body.code === "version_conflict") {
+        const cur = body.current || {};
+        const uid = editing.uid;
+        App.showConflict(conflictBox,
+          `This transaction was changed after you opened this page (in another tab or by someone else), so your changes were not saved. ` +
+          `It is now ${cur.amount} ${cur.currency} (${cur.type}). Reload to see the latest values, then make your change again.`,
+          () => enterForm({ uid }));
+        setStatus("Not saved: changed elsewhere.", "bad");
+        return;
+      }
       if (!res.ok) {
         App.showFieldErrors(form, body.fields);
         let msg = body.error || `Request failed (${res.status})`;
@@ -264,6 +285,7 @@
       const [y, m, dd] = to.split("-").map(Number);
       params.set("to", toRFC3339(new Date(y, m - 1, dd, 23, 59, 59)));
     }
+    if ($("#filter-type").value) params.set("type", $("#filter-type").value);
     return params;
   }
 
@@ -277,7 +299,8 @@
   }
 
   // Per-currency totals of the shown rows, exact via BigInt minor units.
-  // Expenses and income are summed separately; transfers are excluded.
+  // Expenses and income are summed separately; transfers and balance
+  // adjustments (manual corrections, not spending or income) are excluded.
   function renderTotals(items) {
     const sums = new Map(); // currency -> {scale, expense, income}
     for (const e of items) {
@@ -292,7 +315,7 @@
     for (const [code, { scale, expense, income }] of sums) {
       parts.push(`${code}: expenses ${formatMinor(expense, scale)}, income ${formatMinor(income, scale)}`);
     }
-    totalsEl.textContent = parts.length ? "Totals (shown rows, transfers excluded): " + parts.join(" · ") : "";
+    totalsEl.textContent = parts.length ? "Totals (shown rows, transfers and balance adjustments excluded): " + parts.join(" · ") : "";
   }
 
   // Category name for a transaction, looked up client-side by category_uid
@@ -324,6 +347,8 @@
   async function enterList(_params, query) {
     $("#filter-from").value = /^\d{4}-\d{2}-\d{2}$/.test(query.get("from") || "") ? query.get("from") : "";
     $("#filter-to").value = /^\d{4}-\d{2}-\d{2}$/.test(query.get("to") || "") ? query.get("to") : "";
+    const ft = query.get("type") || "";
+    $("#filter-type").value = [...$("#filter-type").options].some((o) => o.value === ft) ? ft : "";
     const highlight = App.takeFlash("transactions");
     await loadTransactions(highlight);
   }
@@ -332,6 +357,7 @@
     const q = new URLSearchParams();
     if ($("#filter-from").value) q.set("from", $("#filter-from").value);
     if ($("#filter-to").value) q.set("to", $("#filter-to").value);
+    if ($("#filter-type").value) q.set("type", $("#filter-type").value);
     App.replaceQuery(q.toString());
     $("#flash-transactions").hidden = true;
     loadTransactions();
@@ -367,15 +393,32 @@
           timeTd.append(mark);
         }
         const t = e.type || "expense";
-        const typeTd = cell(t, "type type-" + t);
+        const isAdj = t === "balance_adjustment";
+        const typeTd = cell(TYPE_LABEL[t] || t, "type type-" + t);
         const acctTd = cell(t === "transfer" ? `${e.account || "?"} → ${e.to_account || "?"}` : (e.account || ""));
-        tr.append(timeTd, typeTd, cell(e.amount, "num"), cell(e.currency), acctTd, cell(categoryName(e.category_uid)), cell(e.note || "", "note"));
+        // An adjustment shows its direction as a sign: + the edited balance
+        // or debt went up, − it went down.
+        const amountTd = cell(isAdj ? (e.adjustment_direction === "decrease" ? "−" : "+") + e.amount : e.amount, "num");
+        if (isAdj) {
+          tr.classList.add("row-adjustment");
+          amountTd.title = `Manual balance edit: ${e.adjustment_direction === "decrease" ? "decreased" : "increased"} by ${e.amount} ${e.currency}`;
+        }
+        tr.append(timeTd, typeTd, amountTd, cell(e.currency), acctTd, cell(categoryName(e.category_uid)), cell(e.note || "", "note"));
         const actions = document.createElement("td");
         actions.className = "actions-cell";
-        actions.append(
-          link("Edit", `/transactions/${encodeURIComponent(e.uid)}/edit`, "button edit"),
-          button("Delete", "danger", () => deleteTransaction(e)),
-        );
+        if (isAdj) {
+          // Read-only: recorded automatically, no Edit/Delete.
+          const auto = document.createElement("span");
+          auto.className = "auto-label";
+          auto.textContent = "Automatic";
+          auto.title = "Recorded when the balance was edited by hand; edit the balance to correct it.";
+          actions.append(auto);
+        } else {
+          actions.append(
+            link("Edit", `/transactions/${encodeURIComponent(e.uid)}/edit`, "button edit"),
+            button("Delete", "danger", () => deleteTransaction(e)),
+          );
+        }
         tr.append(actions);
         tbody.append(tr);
       }
@@ -389,8 +432,10 @@
   async function deleteTransaction(e) {
     const acct = e.type === "transfer" ? `${e.account || "?"} → ${e.to_account || "?"}` : e.account || "unknown account";
     if (!confirm(`Delete ${e.amount} ${e.currency} (${acct}) at ${shownTime(e.spent_at)}?`)) return;
-    const res = await fetch(`/api/transactions/${e.uid}`, { method: "DELETE" });
-    if (!res.ok && res.status !== 404) {
+    const res = await fetch(`/api/transactions/${e.uid}`, { method: "DELETE", headers: App.ifMatch(e.version) });
+    if (res.status === 409) {
+      alert("This transaction changed after the list was loaded, so it was not deleted. The list has been refreshed; check it and delete again if you still want to.");
+    } else if (!res.ok && res.status !== 404) {
       alert("Delete failed (" + res.status + ")");
     }
     $("#flash-transactions").hidden = true;
@@ -404,6 +449,12 @@
   $("#tz-label").textContent = `(your device's time zone: ${tzName ? tzName + ", " : ""}UTC${offsetString(new Date())})`;
   spentAtInput.addEventListener("input", updatePreview);
   $("#type").addEventListener("change", () => applyType());
+  // A transaction's currency must match its balance (no FX yet): picking a
+  // balance fills in its currency.
+  $("#balance_uid").addEventListener("change", () => {
+    const b = allBalances.find((x) => x.uid === $("#balance_uid").value);
+    if (b) $("#currency").value = b.currency;
+  });
   $("#now-btn").addEventListener("click", setNow);
   $("#cancel-btn").addEventListener("click", cancelForm);
   form.addEventListener("submit", submitTransaction);
@@ -411,6 +462,7 @@
   $("#filter-clear").addEventListener("click", () => {
     $("#filter-from").value = "";
     $("#filter-to").value = "";
+    $("#filter-type").value = "";
     applyFilters();
   });
 

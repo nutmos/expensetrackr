@@ -21,23 +21,42 @@ const (
 
 // Transaction is a stored transaction record.
 type Transaction struct {
-	ID           int64     `json:"-"`              // internal row id; the API identifies transactions by UID
-	UID          string    `json:"uid"`            // server-assigned UUID v4, immutable
-	Amount       string    `json:"amount"`         // decimal string, e.g. "120.50"
-	AmountMinor  int64     `json:"amount_minor"`   // integer minor units, e.g. 12050
-	Currency     string    `json:"currency"`       // ISO 4217, e.g. "THB"
-	Type         Type      `json:"type"`           // expense | income | transfer
-	BalanceUID   string    `json:"balance_uid"`    // paying (expense), receiving (income) or source (transfer) balance
-	Account      string    `json:"account"`        // denormalized balance name at write time
-	ToBalanceUID *string   `json:"to_balance_uid"` // transfer destination; null otherwise
-	ToAccount    *string   `json:"to_account"`     // denormalized destination name; null otherwise
-	CategoryUID  *string   `json:"category_uid"`   // optional link to categories.uid; null for none / transfers
-	SpentAt      string    `json:"spent_at"`       // RFC 3339 with the offset as entered
-	Note         string    `json:"note"`
-	CreatedAt    string    `json:"created_at"` // RFC 3339, UTC
-	UpdatedAt    *string   `json:"updated_at"` // RFC 3339, UTC; null until edited
-	SpentTime    time.Time `json:"-"`
+	ID           int64   `json:"-"`              // internal row id; the API identifies transactions by UID
+	UID          string  `json:"uid"`            // server-assigned UUID v4, immutable
+	Amount       string  `json:"amount"`         // decimal string, e.g. "120.50"
+	AmountMinor  int64   `json:"amount_minor"`   // integer minor units, e.g. 12050
+	Currency     string  `json:"currency"`       // ISO 4217, e.g. "THB"
+	Type         Type    `json:"type"`           // expense | income | transfer | balance_adjustment
+	BalanceUID   string  `json:"balance_uid"`    // paying (expense), receiving (income) or source (transfer) balance
+	Account      string  `json:"account"`        // denormalized balance name at write time
+	ToBalanceUID *string `json:"to_balance_uid"` // transfer destination; null otherwise
+	ToAccount    *string `json:"to_account"`     // denormalized destination name; null otherwise
+	CategoryUID  *string `json:"category_uid"`   // optional link to categories.uid; null for none / transfers
+	SpentAt      string  `json:"spent_at"`       // RFC 3339 with the offset as entered
+	Note         string  `json:"note"`
+	CreatedAt    string  `json:"created_at"` // RFC 3339, UTC
+	UpdatedAt    *string `json:"updated_at"` // RFC 3339, UTC; null until edited
+	// Version starts at 1 and is incremented on every change. PUT/PATCH must
+	// send the version they last read (If-Match or "version"); see docs/balances.md.
+	Version int64 `json:"version"`
+	// AdjustsBalances is true when this transaction moved its balances (every
+	// transaction created by schema v11+). Rows recorded before v11 never did,
+	// so editing or deleting them leaves balances alone.
+	AdjustsBalances bool `json:"adjusts_balances"`
+	// AdjustmentDirection is set only for type balance_adjustment: whether the
+	// manual edit increased or decreased the edited amount (balance for an
+	// asset, debt for a liability). Amount is always the positive difference.
+	AdjustmentDirection *Direction `json:"adjustment_direction"`
+	SpentTime           time.Time  `json:"-"`
 }
+
+// Direction is the sign of a balance adjustment.
+type Direction string
+
+const (
+	Increase Direction = "increase"
+	Decrease Direction = "decrease"
+)
 
 // DecimalInput keeps the literal text of a JSON string or number amount.
 type DecimalInput = money.DecimalInput
@@ -65,6 +84,9 @@ type CreateInput struct {
 	// IgnoredUID accepts a "uid" in PUT bodies so a previous response can be
 	// round-tripped; it is never used (the uid is server-assigned, immutable).
 	IgnoredUID string `json:"uid,omitempty"`
+	// Version is the optimistic-locking version for PUT (alternative to the
+	// If-Match header). Ignored on create.
+	Version *int64 `json:"version,omitempty"`
 }
 
 // ParseTimestamp parses a strict RFC 3339 / ISO 8601 date-time that carries an
@@ -109,14 +131,34 @@ const (
 	Expense  Type = "expense"
 	Income   Type = "income"
 	Transfer Type = "transfer"
+	// BalanceAdjustment ("Balance Adjustment") is recorded automatically when
+	// a balance's amount is edited by hand (PUT/PATCH /api/balances/:uid). It
+	// cannot be created, edited or deleted through the transactions API and
+	// never moves a balance itself (the manual edit already set the value).
+	BalanceAdjustment Type = "balance_adjustment"
 )
 
-// ParseType normalizes a type string; empty means Expense (backward compat).
+// ErrAdjustmentType is the field message for an attempt to use type
+// balance_adjustment in POST/PUT/PATCH /api/transactions.
+const ErrAdjustmentType = "balance_adjustment transactions are created automatically when a balance amount is edited (PUT/PATCH /api/balances/:uid); they cannot be created or changed here"
+
+// ParseType normalizes a type a client may write; empty means Expense
+// (backward compat). balance_adjustment is not accepted (see ParseFilterType).
 func ParseType(s string) (Type, bool) {
 	switch t := Type(strings.ToLower(strings.TrimSpace(s))); t {
 	case "":
 		return Expense, true
 	case Expense, Income, Transfer:
+		return t, true
+	}
+	return "", false
+}
+
+// ParseFilterType parses a list filter type: any stored type, including
+// balance_adjustment. Empty is not valid here (the caller skips the filter).
+func ParseFilterType(s string) (Type, bool) {
+	switch t := Type(strings.ToLower(strings.TrimSpace(s))); t {
+	case Expense, Income, Transfer, BalanceAdjustment:
 		return t, true
 	}
 	return "", false
@@ -185,7 +227,11 @@ func (in CreateInput) Validate() (Transaction, error) {
 	}
 
 	tt, okType := ParseType(in.Type)
-	if !okType {
+	switch {
+	case okType:
+	case Type(strings.ToLower(strings.TrimSpace(in.Type))) == BalanceAdjustment:
+		fields["type"] = ErrAdjustmentType
+	default:
 		fields["type"] = "must be one of: expense, income, transfer"
 	}
 	exp.Type = tt
