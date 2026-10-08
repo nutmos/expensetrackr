@@ -149,10 +149,6 @@
         tr.dataset.uid = c.uid;
         if (highlightUID && c.uid === highlightUID) tr.classList.add("just-saved");
         const nameTd = cell(c.name);
-        const uidEl = document.createElement("div");
-        uidEl.className = "uid muted";
-        uidEl.textContent = c.uid;
-        nameTd.append(uidEl);
         const actions = document.createElement("td");
         actions.className = "actions-cell";
         actions.append(

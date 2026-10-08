@@ -196,13 +196,6 @@
           badge.title = "Debt is higher than the limit";
           nameTd.append(badge);
         }
-        if (b.uid) {
-          const uidEl = document.createElement("div");
-          uidEl.className = "uid muted";
-          uidEl.textContent = b.uid;
-          uidEl.title = "Stable id (uid)";
-          nameTd.append(uidEl);
-        }
         tr.append(nameTd, cell(b.currency));
         if (t.kind === "asset") {
           tr.append(moneyCell(b.balance));

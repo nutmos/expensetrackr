@@ -70,6 +70,12 @@
     $("#spent-at-preview").textContent = text;
   }
 
+  // "YYYY-MM-DD HH:MM:SS" in the device's time zone (raw value if unparsable).
+  function shownTime(rfc3339) {
+    const d = new Date(rfc3339);
+    return isNaN(d) ? rfc3339 : toLocalInputValue(d).replace("T", " ");
+  }
+
   const setStatus = (text, kind) => App.setStatus(statusEl, text, kind);
 
   function rememberDefaults(currency, balanceUID) {
@@ -180,7 +186,7 @@
     }
     editing = e;
     form.hidden = false;
-    $("#form-title").textContent = `Edit transaction ${e.uid.slice(0, 8)}…`;
+    $("#form-title").textContent = `Edit transaction: ${e.amount} ${e.currency}, ${shownTime(e.spent_at)}`;
     $("#amount").value = e.amount;
     $("#currency").value = e.currency;
     $("#type").value = e.type || "expense";
@@ -297,14 +303,6 @@
     return c ? c.name : "(unknown category)";
   }
 
-  // Category name for a transaction, looked up client-side by category_uid
-  // (transactions carry only the uid).
-  function categoryName(uid) {
-    if (!uid) return "";
-    const c = allCategories.find((x) => x.uid === uid);
-    return c ? c.name : "(unknown category)";
-  }
-
   async function loadBalancesList() {
     try {
       const res = await fetch("/api/balances");
@@ -359,8 +357,7 @@
         const tr = document.createElement("tr");
         tr.dataset.uid = String(e.uid);
         if (highlightUID && e.uid === highlightUID) tr.classList.add("just-saved");
-        const shown = new Date(e.spent_at);
-        const timeTd = cell(isNaN(shown) ? e.spent_at : toLocalInputValue(shown).replace("T", " "), "time");
+        const timeTd = cell(shownTime(e.spent_at), "time");
         timeTd.title = "Stored as " + e.spent_at + " (shown in your device's time zone)";
         if (e.updated_at) {
           const mark = document.createElement("span");
@@ -369,23 +366,9 @@
           mark.title = "Last edited " + new Date(e.updated_at).toLocaleString() + " (" + e.updated_at + ")";
           timeTd.append(mark);
         }
-        if (e.uid) {
-          const txUid = document.createElement("div");
-          txUid.className = "uid muted";
-          txUid.textContent = e.uid;
-          txUid.title = "Transaction uid (stable id)";
-          timeTd.append(txUid);
-        }
         const t = e.type || "expense";
         const typeTd = cell(t, "type type-" + t);
         const acctTd = cell(t === "transfer" ? `${e.account || "?"} → ${e.to_account || "?"}` : (e.account || ""));
-        if (e.balance_uid) {
-          const uidEl = document.createElement("div");
-          uidEl.className = "uid muted";
-          uidEl.textContent = e.balance_uid;
-          uidEl.title = "balance uid";
-          acctTd.append(uidEl);
-        }
         tr.append(timeTd, typeTd, cell(e.amount, "num"), cell(e.currency), acctTd, cell(categoryName(e.category_uid)), cell(e.note || "", "note"));
         const actions = document.createElement("td");
         actions.className = "actions-cell";
@@ -404,7 +387,8 @@
   }
 
   async function deleteTransaction(e) {
-    if (!confirm(`Delete ${e.amount} ${e.currency} (${e.account || e.balance_uid}) at ${e.spent_at}?`)) return;
+    const acct = e.type === "transfer" ? `${e.account || "?"} → ${e.to_account || "?"}` : e.account || "unknown account";
+    if (!confirm(`Delete ${e.amount} ${e.currency} (${acct}) at ${shownTime(e.spent_at)}?`)) return;
     const res = await fetch(`/api/transactions/${e.uid}`, { method: "DELETE" });
     if (!res.ok && res.status !== 404) {
       alert("Delete failed (" + res.status + ")");

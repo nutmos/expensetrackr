@@ -531,6 +531,12 @@ path, and `router.js` shows the view for `location.pathname`:
 Old hash links (`/#balances`, `/#categories`, `/#transactions`) are rewritten
 to the matching path.
 
+**Uids are never shown on the page.** They identify records only behind the
+scenes: in row `data-uid` attributes, dropdown option values, edit URLs
+(`/<res>/<uid>/edit`) and API calls. Headings, rows, tooltips, messages and
+confirmations use human labels instead. For example, an edit page is titled
+"Edit transaction: 120.50 THB, 2026-10-08 12:30:00" or "Edit balance “KBank”".
+
 **Navigation**
 
 - List pages are browse-only: list, filters, totals, and per-row **Edit** /
@@ -557,7 +563,7 @@ to the matching path.
   zone) and per-currency totals. Expenses and income are summed separately, and
   transfers are excluded from both.
 - Columns: time (shown in the device's time zone, with the stored value on
-  hover, an "edited" marker, and the uid in small muted text), Type, Amount,
+  hover, and an "edited" marker), Type, Amount,
   Currency, Account ("from → to" for transfers), Category, Note.
 - The category name is looked up client-side from `/api/categories` by
   `category_uid`.
