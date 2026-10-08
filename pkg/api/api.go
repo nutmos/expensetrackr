@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/nutmos/expensetrackr/pkg/apidoc"
 	"github.com/nutmos/expensetrackr/pkg/store"
 	"github.com/nutmos/expensetrackr/pkg/validate"
 
@@ -49,6 +50,10 @@ func (s *Server) Router() *gin.Engine {
 	s.registerCategoryRoutes(api)
 	s.registerUserRoutes(api)
 	api.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
+	// API description (pkg/apidoc/openapi.yaml) and Swagger UI at /swagger/.
+	api.GET("/openapi.yaml", apidoc.ServeYAML)
+	api.GET("/openapi.json", apidoc.ServeJSON)
+	apidoc.RegisterUI(r)
 
 	if s.Static != nil {
 		s.registerPageRoutes(r)

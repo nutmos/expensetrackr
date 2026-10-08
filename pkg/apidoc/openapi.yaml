@@ -1,0 +1,1862 @@
+# OpenAPI 3.0 description of the expense-service JSON API.
+#
+# This file is the single source of truth for the API docs. It is embedded
+# into the binary (pkg/apidoc) and served at GET /api/openapi.yaml (and
+# converted to /api/openapi.json); Swagger UI at /swagger/ renders it.
+# pkg/api/openapi_test.go fails when a Gin /api route is missing here (or a
+# path here has no route), and when the response schemas drift from the Go
+# JSON shapes. Keep it in sync with pkg/api when routes change.
+openapi: 3.0.3
+info:
+  title: expense-service API
+  version: "1.0.0"
+  description: |
+    JSON API of **expense-service**, a small expense-logging service (Go + Gin + SQLite).
+    It has no authentication yet. Run it on 127.0.0.1 only.
+
+    ## Conventions
+
+    - **Identifiers:** every resource is addressed **only by `uid`**, a server-assigned,
+      immutable UUID v4 (lowercase in responses; path uids are matched case-insensitively).
+      Internal numeric row ids never appear in URLs or JSON. A path `{uid}` that is not
+      UUID-shaped (e.g. `/api/transactions/1`) is **400**; an unknown uid is **404**.
+    - **Amounts** are exact. Clients send a decimal **string** (`"120.50"`, recommended) or a
+      JSON number, which is read as its literal text and never as a float. Responses carry both the
+      decimal string (`amount`, `balance`, `debt`, …) and the **integer minor units**
+      (`amount_minor`, `balance_minor`, …). The number of decimals depends on the currency (ISO 4217):
+      THB/USD 2, JPY/KRW 0, KWD/BHD 3, CLF 4. Input with more decimals than the currency
+      allows is rejected (422), not rounded. Extra trailing zeros are fine (`"1500.00"` JPY).
+      There is **no currency conversion** anywhere.
+    - **Time:** `spent_at` is an RFC 3339 / ISO 8601 date-time **with an offset**
+      (`2026-10-06T21:06:00+08:00` or `…Z`). Any offset is accepted. The value is stored at second
+      precision with the offset as entered. `created_at` / `updated_at` are UTC (`…Z`).
+      `updated_at` is `null` until the record is first edited.
+    - **Optimistic locking (balances and transactions):** every balance and transaction has a
+      `version` (1 on create, +1 on every change, including automatic balance moves caused by
+      transactions). Single-record responses also send it as `ETag: "<version>"`.
+      `PUT`/`PATCH` must name the version they are based on, either as `If-Match: "<version>"`
+      (preferred; `W/"<version>"` also accepted) or as `"version": <n>` in the body:
+      neither → **428** `version_required`; malformed, or header and body disagree → **400**;
+      stale → **409** `version_conflict` with the current record in `current` and its `ETag`.
+      The version is checked before the body is validated. `DELETE` takes an optional `If-Match`
+      (409 if stale). Categories and users are not versioned.
+    - **Errors** are always JSON: `{"error": "…", "fields": {…}, "code": "…", "current": {…}}`.
+      Only `error` is always present. `fields` maps field names to problems (validation, query,
+      conflict and duplicate errors). `code` is one of `version_required`, `version_conflict`,
+      `balance_in_use`, `balance_adjustment_readonly`.
+      Status codes: **400** malformed request (bad JSON, unknown field, wrong JSON type, empty
+      patch, bad query parameter, bad uid, bad `If-Match`, body over 64 KiB), **404** not found,
+      **409** conflict, **422** validation failed (`fields`), **428** version required,
+      **500** internal error. An unknown path *or method* is a 404 `{"error":"not found"}`
+      (no 405, no `OPTIONS`/`HEAD` handling, no CORS).
+    - **Writes** take `application/json` bodies. Unknown fields are rejected (400). On `POST`/`PUT`
+      a `uid` field is accepted so a response can be sent back, but it is ignored.
+      `PATCH` changes only the fields present and then validates the merged record as a whole.
+
+    ## Transaction types
+
+    | type | `balance_uid` | `to_balance_uid` | balance effect |
+    |---|---|---|---|
+    | `expense` (default) | `payment_account` or `credit_card` | not allowed | asset balance −amount / card debt +amount |
+    | `income` | `payment_account` or `other_asset` | not allowed | asset balance +amount |
+    | `transfer` | any balance | **required**, any balance ≠ source | source −amount, destination +amount (debt moves the other way) |
+    | `balance_adjustment` | the edited balance | — | none (**read-only**, server-created) |
+
+    The transaction `currency` must equal the currency of its balance(s) (422 otherwise).
+    `balance_adjustment` transactions are created automatically when `PUT`/`PATCH /api/balances/{uid}`
+    changes a balance's `balance` (asset) or `debt` (liability). Their `amount` is the absolute difference and
+    `adjustment_direction` is `increase` or `decrease`. They are read-only: `type: balance_adjustment`
+    on create/replace/patch is a 422, and `PUT`/`PATCH`/`DELETE` of one is a 409
+    `balance_adjustment_readonly`.
+servers:
+  - url: /
+    description: This server
+tags:
+  - name: transactions
+    description: Expenses, income, transfers and (read-only) balance adjustments. Writes move the linked balances in the same database transaction.
+  - name: balances
+    description: Payment accounts, credit cards, other assets and liabilities. Type is fixed after creation. Manual amount edits record a balance_adjustment transaction.
+  - name: categories
+    description: Expense and income categories. Expense transactions may only use expense categories, income transactions income categories.
+  - name: users
+    description: User profiles (authentication is not implemented yet; secrets are never returned).
+  - name: meta
+    description: Health check and this API description.
+
+paths:
+  /api/transactions:
+    post:
+      tags: [transactions]
+      operationId: createTransaction
+      summary: Create a transaction
+      description: |
+        Creates an expense, income or transfer and moves the linked balance(s) in the same
+        database transaction. `type` defaults to `expense`. `type: balance_adjustment` is rejected
+        (422). The transaction currency must match the balance currency (422 on `balance_uid` /
+        `to_balance_uid`). A `version` in the body is ignored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TransactionInput' }
+            examples:
+              expense: { $ref: '#/components/examples/TransactionInputExpense' }
+              income: { $ref: '#/components/examples/TransactionInputIncome' }
+              transfer: { $ref: '#/components/examples/TransactionInputTransfer' }
+      responses:
+        '201':
+          description: Created. Balances have been moved.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Location: { $ref: '#/components/headers/LocationTransaction' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transaction' }
+              examples:
+                expense: { $ref: '#/components/examples/TransactionExpense' }
+                transfer: { $ref: '#/components/examples/TransactionTransfer' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '422': { $ref: '#/components/responses/TransactionValidationFailed' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    get:
+      tags: [transactions]
+      operationId: listTransactions
+      summary: List transactions
+      description: |
+        Newest first (by the absolute instant of `spent_at`, then most recently created).
+        All filters are optional and combine with AND. There is no offset/cursor pagination;
+        use `limit` and the time window.
+      parameters:
+        - name: from
+          in: query
+          description: |
+            Inclusive lower bound on `spent_at`, as an RFC 3339 date-time with offset. URL-encode `+`
+            as `%2B`, although an unencoded `+` (decoded as a space) is also accepted.
+          schema: { type: string, format: date-time, example: '2026-10-01T00:00:00+08:00' }
+        - name: to
+          in: query
+          description: Inclusive upper bound on `spent_at` (same format as `from`). Must not be earlier than `from`.
+          schema: { type: string, format: date-time, example: '2026-10-31T23:59:59+08:00' }
+        - name: type
+          in: query
+          description: Only transactions of this type (case-insensitive). `balance_adjustment` is allowed here.
+          schema: { $ref: '#/components/schemas/TransactionType' }
+        - name: category_uid
+          in: query
+          description: Only transactions linked to this category.
+          schema: { $ref: '#/components/schemas/Uid' }
+        - name: limit
+          in: query
+          description: Maximum number of rows.
+          schema: { type: integer, minimum: 1, maximum: 5000, default: 500 }
+      responses:
+        '200':
+          description: The matching transactions.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TransactionList' }
+        '400':
+          description: Invalid query parameter(s). Every problem is listed in `fields`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error: invalid query parameters
+                fields:
+                  type: 'must be one of: expense, income, transfer, balance_adjustment'
+                  limit: must be an integer between 1 and 5000
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/transactions/{uid}:
+    parameters:
+      - $ref: '#/components/parameters/TransactionUid'
+    get:
+      tags: [transactions]
+      operationId: getTransaction
+      summary: Get a transaction
+      responses:
+        '200':
+          description: The transaction. `ETag` carries its version.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transaction' }
+              examples:
+                expense: { $ref: '#/components/examples/TransactionExpense' }
+                transfer: { $ref: '#/components/examples/TransactionTransfer' }
+                balance_adjustment: { $ref: '#/components/examples/TransactionAdjustment' }
+        '400': { $ref: '#/components/responses/BadUid' }
+        '404': { $ref: '#/components/responses/TransactionNotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    put:
+      tags: [transactions]
+      operationId: replaceTransaction
+      summary: Replace a transaction
+      description: |
+        Full replace with the same body and rules as create. Omitted optional fields are cleared
+        (e.g. an omitted `note` becomes `""`, and an omitted `type` means `expense`). The old balance
+        effect is reversed and the new one applied, all in one database transaction. Requires `If-Match` or
+        `"version"`. Order of checks: 404 → 409 `balance_adjustment_readonly` → 400 body → 428/400
+        version → 409 stale → 422.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TransactionInput' }
+            examples:
+              expense:
+                summary: Replace with version in the body
+                value:
+                  amount: '150'
+                  currency: THB
+                  balance_uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5
+                  category_uid: 32b0d51e-e81f-41f0-a77c-38e6ec384153
+                  spent_at: '2026-10-05T09:15:00+07:00'
+                  note: pad thai + drink
+                  version: 1
+      responses:
+        '200':
+          description: Updated. `version` was incremented; `ETag` carries the new version.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transaction' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/TransactionNotFound' }
+        '409': { $ref: '#/components/responses/TransactionConflict' }
+        '422': { $ref: '#/components/responses/TransactionValidationFailed' }
+        '428': { $ref: '#/components/responses/VersionRequired' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    patch:
+      tags: [transactions]
+      operationId: patchTransaction
+      summary: Partially update a transaction
+      description: |
+        Only the fields present change, then the merged record is validated like a create.
+        - `null` clears `note`, `to_balance_uid` and `category_uid`. `null` for any other field is a 422.
+        - Changing `type` away from `transfer` drops the destination. Changing `type` drops the
+          category unless `category_uid` is sent too. Changing to `transfer` needs
+          `to_balance_uid` in the same patch.
+        - Changing `currency` re-reads the current amount with the new currency's decimals (no
+          conversion). If the amount cannot be expressed in the new currency, the request is a 422:
+          send `amount` along with `currency`.
+        - `{}` (or only `uid`/`version`) is a 400. `account` is rejected (use `balance_uid`).
+
+        Requires `If-Match` or `"version"`. Read-only `balance_adjustment` rows answer 409.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TransactionPatch' }
+            examples:
+              note:
+                summary: Change the note (If-Match header sent)
+                value: { note: chicken rice }
+              currency:
+                summary: Change currency and amount together, version in the body
+                value: { currency: JPY, amount: '2800', version: 2 }
+              clearCategory:
+                summary: Remove the category
+                value: { category_uid: null }
+      responses:
+        '200':
+          description: Updated. `ETag` carries the new version.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transaction' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/TransactionNotFound' }
+        '409': { $ref: '#/components/responses/TransactionConflict' }
+        '422': { $ref: '#/components/responses/TransactionValidationFailed' }
+        '428': { $ref: '#/components/responses/VersionRequired' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    delete:
+      tags: [transactions]
+      operationId: deleteTransaction
+      summary: Delete a transaction
+      description: |
+        Deletes the transaction and reverses its balance effect (balances that no longer exist
+        are skipped). `If-Match` is optional; a stale one is a 409. Read-only `balance_adjustment` rows
+        answer 409 `balance_adjustment_readonly`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+      responses:
+        '204': { description: Deleted. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/TransactionNotFound' }
+        '409': { $ref: '#/components/responses/TransactionConflict' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/balances:
+    post:
+      tags: [balances]
+      operationId: createBalance
+      summary: Create a balance
+      description: |
+        Assets (`payment_account`, `other_asset`) need `balance` (may be negative). Liabilities
+        (`credit_card`, `other_liability`) need `debt` (may be negative, i.e. in credit) and `limit` (≥ 0).
+        Sending an amount that does not apply to the type is a 422. Names are unique case-insensitively (409).
+        A `version` in the body is ignored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BalanceInput' }
+            examples:
+              payment_account:
+                summary: Bank account
+                value: { name: KBank debit, type: payment_account, currency: THB, balance: '10000' }
+              credit_card:
+                summary: Credit card
+                value: { name: KBank Visa, type: credit_card, currency: THB, debt: '52000', limit: '50000' }
+      responses:
+        '201':
+          description: Created.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Location: { $ref: '#/components/headers/LocationBalance' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Balance' }
+              examples:
+                payment_account: { $ref: '#/components/examples/BalanceAsset' }
+                credit_card: { $ref: '#/components/examples/BalanceCard' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409':
+          description: A balance with this name already exists (case-insensitive).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                duplicate_name: { $ref: '#/components/examples/ErrBalanceDuplicateName' }
+        '422': { $ref: '#/components/responses/BalanceValidationFailed' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    get:
+      tags: [balances]
+      operationId: listBalances
+      summary: List balances
+      description: |
+        Grouped by type (payment accounts, credit cards, other assets, other liabilities), then by
+        name. `totals` sums the returned rows per currency.
+      parameters:
+        - name: type
+          in: query
+          description: Only balances of this type (case-insensitive). Cannot be combined with `payable`.
+          schema: { $ref: '#/components/schemas/BalanceType' }
+        - name: payable
+          in: query
+          description: |
+            `1` or `true` (case-insensitive) returns only `payment_account` and `credit_card`
+            balances. **Any other value is treated as "not set"** (not a 400).
+          schema: { type: string, example: '1' }
+      responses:
+        '200':
+          description: The balances and per-currency totals.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BalanceList' }
+        '400':
+          description: Invalid query parameters (`type` unknown, or `type` combined with `payable`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                type:
+                  value:
+                    error: invalid query parameters
+                    fields: { type: 'must be one of payment_account, credit_card, other_asset, other_liability' }
+                combined:
+                  value:
+                    error: invalid query parameters
+                    fields: { payable: cannot be combined with type }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/balances/{uid}:
+    parameters:
+      - $ref: '#/components/parameters/BalanceUid'
+    get:
+      tags: [balances]
+      operationId: getBalance
+      summary: Get a balance
+      responses:
+        '200':
+          description: The balance. `ETag` carries its version.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Balance' }
+              examples:
+                payment_account: { $ref: '#/components/examples/BalanceAsset' }
+                credit_card: { $ref: '#/components/examples/BalanceCard' }
+        '400': { $ref: '#/components/responses/BadUid' }
+        '404': { $ref: '#/components/responses/BalanceNotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    put:
+      tags: [balances]
+      operationId: replaceBalance
+      summary: Replace a balance (manual override)
+      description: |
+        Full replace with the create rules, except that `type` is immutable: it is still required
+        and must equal the stored type (422 on `type` otherwise). The amounts sent override whatever
+        transactions did to the balance. A change of `balance` (assets) or `debt` (liabilities) records
+        a read-only `balance_adjustment` transaction. Limit-only, name, description and currency changes
+        record nothing. The currency cannot change while transactions reference the balance (409
+        `balance_in_use`). Requires `If-Match` or `"version"`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BalanceInput' }
+            example: { name: KBank debit, type: payment_account, currency: THB, description: Salary account, balance: '5000', version: 3 }
+      responses:
+        '200':
+          description: Updated. `ETag` carries the new version.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Balance' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/BalanceNotFound' }
+        '409': { $ref: '#/components/responses/BalanceConflict' }
+        '422': { $ref: '#/components/responses/BalanceValidationFailed' }
+        '428': { $ref: '#/components/responses/VersionRequired' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    patch:
+      tags: [balances]
+      operationId: patchBalance
+      summary: Partially update a balance (manual override)
+      description: |
+        Only the fields present change, then the merged balance is validated as a whole.
+        `type` may be sent only with the stored value. `"description": null` clears it.
+        `"balance"`/`"debt"`/`"limit": null` removes that amount, which is a 422 if the type needs it.
+        `null` for `name`, `type` or `currency` is a 422. A currency change re-reads the amounts with the
+        new currency's decimals (no conversion). `{}` is a 400. Adjustment recording,
+        `balance_in_use` and versioning work as for PUT.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BalancePatch' }
+            examples:
+              balance:
+                summary: Set the balance (If-Match header sent)
+                value: { balance: '1200.50' }
+              limit:
+                summary: Raise a card limit, version in the body
+                value: { limit: '80000', version: 4 }
+      responses:
+        '200':
+          description: Updated. `ETag` carries the new version.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Balance' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/BalanceNotFound' }
+        '409': { $ref: '#/components/responses/BalanceConflict' }
+        '422': { $ref: '#/components/responses/BalanceValidationFailed' }
+        '428': { $ref: '#/components/responses/VersionRequired' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    delete:
+      tags: [balances]
+      operationId: deleteBalance
+      summary: Delete a balance
+      description: |
+        Deletes the balance. `If-Match` is optional; a stale one is a 409. Transactions that
+        reference the balance are **not** blocked or deleted: they keep its uid and name snapshot, and
+        later edits or deletes of them skip the missing balance.
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+      responses:
+        '204': { description: Deleted. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/BalanceNotFound' }
+        '409':
+          description: Stale `If-Match`. The body has the current balance and the response has its `ETag`.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BalanceConflictError' }
+              examples:
+                version_conflict: { $ref: '#/components/examples/ErrBalanceVersionConflict' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/categories:
+    post:
+      tags: [categories]
+      operationId: createCategory
+      summary: Create a category
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CategoryInput' }
+            example: { name: Food, type: expense, description: Groceries and restaurants }
+      responses:
+        '201':
+          description: Created.
+          headers:
+            Location: { $ref: '#/components/headers/LocationCategory' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Category' }
+              examples:
+                food: { $ref: '#/components/examples/CategoryFood' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/CategoryConflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    get:
+      tags: [categories]
+      operationId: listCategories
+      summary: List categories
+      description: Expense categories first, then income, each by name (case-insensitive).
+      parameters:
+        - name: type
+          in: query
+          description: Only categories of this type (case-insensitive).
+          schema: { $ref: '#/components/schemas/CategoryType' }
+      responses:
+        '200':
+          description: The categories.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CategoryList' }
+        '400':
+          description: Invalid `type`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: invalid query parameters, fields: { type: 'must be one of: expense, income' } }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/categories/{uid}:
+    parameters:
+      - $ref: '#/components/parameters/CategoryUid'
+    get:
+      tags: [categories]
+      operationId: getCategory
+      summary: Get a category
+      responses:
+        '200':
+          description: The category.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Category' }
+              examples:
+                food: { $ref: '#/components/examples/CategoryFood' }
+        '400': { $ref: '#/components/responses/BadUid' }
+        '404': { $ref: '#/components/responses/CategoryNotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    put:
+      tags: [categories]
+      operationId: replaceCategory
+      summary: Replace a category
+      description: Full replace (an omitted `description` clears it). Changing `type` while transactions use the category is a 409. Not versioned.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CategoryInput' }
+            example: { name: Food & drink, type: expense, description: '' }
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Category' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/CategoryNotFound' }
+        '409': { $ref: '#/components/responses/CategoryConflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    patch:
+      tags: [categories]
+      operationId: patchCategory
+      summary: Partially update a category
+      description: |
+        Only the fields present change. `"description": null` clears it. `null` for `name` or `type`
+        is a 422. `{}` is a 400. 409 rules as for PUT.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CategoryPatch' }
+            example: { name: Eating out }
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Category' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/CategoryNotFound' }
+        '409': { $ref: '#/components/responses/CategoryConflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    delete:
+      tags: [categories]
+      operationId: deleteCategory
+      summary: Delete a category
+      description: 409 while any transaction references the category (reassign or clear `category_uid` first).
+      responses:
+        '204': { description: Deleted. }
+        '400': { $ref: '#/components/responses/BadUid' }
+        '404': { $ref: '#/components/responses/CategoryNotFound' }
+        '409':
+          description: The category is used by transactions.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                in_use: { $ref: '#/components/examples/ErrCategoryInUseDelete' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/users:
+    post:
+      tags: [users]
+      operationId: createUser
+      summary: Create a user profile
+      description: |
+        `display_name` is required. `username`, `email` and `preferences` are optional.
+        `password` / `password_hash` are **not** accepted (400 unknown field). Read-only fields
+        (`uid`, `status`, `has_password`, timestamps) are accepted and ignored, so a response can be sent back.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserInput' }
+            example: { display_name: Nattapong, username: nutmos, email: n@example.com, preferences: { currency: THB } }
+      responses:
+        '201':
+          description: Created.
+          headers:
+            Location: { $ref: '#/components/headers/LocationUser' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+              examples:
+                user: { $ref: '#/components/examples/UserExample' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/UserConflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    get:
+      tags: [users]
+      operationId: listUsers
+      summary: List user profiles
+      description: Oldest first.
+      responses:
+        '200':
+          description: The users.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserList' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/users/{uid}:
+    parameters:
+      - $ref: '#/components/parameters/UserUid'
+    get:
+      tags: [users]
+      operationId: getUser
+      summary: Get a user profile
+      responses:
+        '200':
+          description: The user (never includes a password hash; see `has_password`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+              examples:
+                user: { $ref: '#/components/examples/UserExample' }
+        '400': { $ref: '#/components/responses/BadUid' }
+        '404': { $ref: '#/components/responses/UserNotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    put:
+      tags: [users]
+      operationId: replaceUser
+      summary: Replace a user profile
+      description: Full replace of the profile fields. Omitted `username`/`email` are removed and omitted `preferences` becomes `{}`. Read-only fields are ignored. Not versioned.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserInput' }
+            example: { display_name: Nattapong E., username: nutmos, preferences: { currency: SGD, theme: dark } }
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/UserNotFound' }
+        '409': { $ref: '#/components/responses/UserConflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    patch:
+      tags: [users]
+      operationId: patchUser
+      summary: Partially update a user profile
+      description: |
+        Only the fields present change. `preferences` **replaces** the whole object (no deep merge;
+        `null` resets it to `{}`). `username`/`email`: `null` or `""` removes it. `display_name: null` is a 422.
+        Read-only fields are ignored. A patch with nothing else is a 400.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserPatch' }
+            examples:
+              preferences:
+                summary: Replace preferences
+                value: { preferences: { currency: SGD, week_starts_on: monday } }
+              removeEmail:
+                summary: Remove the email
+                value: { email: null }
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/UserNotFound' }
+        '409': { $ref: '#/components/responses/UserConflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    delete:
+      tags: [users]
+      operationId: deleteUser
+      summary: Delete a user profile
+      description: Also deletes the user's linked identities.
+      responses:
+        '204': { description: Deleted. }
+        '400': { $ref: '#/components/responses/BadUid' }
+        '404': { $ref: '#/components/responses/UserNotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/users/{uid}/identities:
+    parameters:
+      - $ref: '#/components/parameters/UserUid'
+    get:
+      tags: [users]
+      operationId: listUserIdentities
+      summary: List a user's linked SSO identities
+      description: Read-only. Identities (Sign in with Apple / Google) will be created by the future SSO flow, so the list is empty for now.
+      responses:
+        '200':
+          description: The identities, oldest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IdentityList' }
+        '400': { $ref: '#/components/responses/BadUid' }
+        '404': { $ref: '#/components/responses/UserNotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/healthz:
+    get:
+      tags: [meta]
+      operationId: getHealth
+      summary: Health check
+      responses:
+        '200':
+          description: The server is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [ok] }
+                additionalProperties: false
+
+  /api/openapi.yaml:
+    get:
+      tags: [meta]
+      operationId: getOpenAPIYAML
+      summary: This API description (YAML)
+      description: The OpenAPI 3.0 document embedded in the binary, served as-is. Swagger UI is at `/swagger/`.
+      responses:
+        '200':
+          description: OpenAPI document.
+          content:
+            application/yaml:
+              schema: { type: string }
+
+  /api/openapi.json:
+    get:
+      tags: [meta]
+      operationId: getOpenAPIJSON
+      summary: This API description (JSON)
+      description: The same document as `/api/openapi.yaml`, converted to JSON.
+      responses:
+        '200':
+          description: OpenAPI document.
+          content:
+            application/json:
+              schema: { type: object }
+
+components:
+  parameters:
+    TransactionUid:
+      name: uid
+      in: path
+      required: true
+      description: Transaction uid (UUID, case-insensitive). Numeric ids are not accepted (400).
+      schema: { $ref: '#/components/schemas/Uid' }
+      example: 1a8af4f6-006a-4712-baba-eb8f433bccb1
+    BalanceUid:
+      name: uid
+      in: path
+      required: true
+      description: Balance uid (UUID, case-insensitive). Numeric ids are not accepted (400).
+      schema: { $ref: '#/components/schemas/Uid' }
+      example: 4dc73a4a-a60b-414e-98bc-3c71298a0af5
+    CategoryUid:
+      name: uid
+      in: path
+      required: true
+      description: Category uid (UUID, case-insensitive).
+      schema: { $ref: '#/components/schemas/Uid' }
+      example: 32b0d51e-e81f-41f0-a77c-38e6ec384153
+    UserUid:
+      name: uid
+      in: path
+      required: true
+      description: User uid (UUID, case-insensitive).
+      schema: { $ref: '#/components/schemas/Uid' }
+      example: 3525dd1f-ae96-4c71-b996-06a43679cfa2
+    IfMatch:
+      name: If-Match
+      in: header
+      required: false
+      description: |
+        The version this write is based on, as an entity tag: the `ETag` (or `version`) of your last
+        read, e.g. `"3"` (`W/"3"` also accepted; `*` and lists are not). Either this header or
+        `"version"` in the body is **required** (428 if neither is sent). If both are sent they must agree (400).
+        A stale version is a 409.
+      schema: { type: string, example: '"3"' }
+    IfMatchOptional:
+      name: If-Match
+      in: header
+      required: false
+      description: Optional. The `ETag` of your last read, e.g. `"3"`. If sent and stale the delete is refused with 409; if malformed, 400.
+      schema: { type: string, example: '"3"' }
+
+  headers:
+    ETag:
+      description: 'The record''s `version` as a strong entity tag, e.g. `"3"`. Send it back in `If-Match`.'
+      schema: { type: string, example: '"1"' }
+    LocationTransaction:
+      description: URL of the new transaction.
+      schema: { type: string, example: /api/transactions/1a8af4f6-006a-4712-baba-eb8f433bccb1 }
+    LocationBalance:
+      description: URL of the new balance.
+      schema: { type: string, example: /api/balances/4dc73a4a-a60b-414e-98bc-3c71298a0af5 }
+    LocationCategory:
+      description: URL of the new category.
+      schema: { type: string, example: /api/categories/32b0d51e-e81f-41f0-a77c-38e6ec384153 }
+    LocationUser:
+      description: URL of the new user.
+      schema: { type: string, example: /api/users/3525dd1f-ae96-4c71-b996-06a43679cfa2 }
+
+  responses:
+    BadRequest:
+      description: |
+        Malformed request: invalid JSON, a body that is not one JSON object, unknown field, wrong JSON
+        type, empty patch, body over 64 KiB, a uid that is not UUID-shaped, or a malformed / disagreeing `If-Match`.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            malformed_json: { value: { error: malformed JSON at byte 12 } }
+            unknown_field: { value: { error: 'unknown field "account"' } }
+            wrong_type: { value: { error: 'field "note" must be a string' } }
+            empty_patch: { value: { error: 'patch must contain at least one of: amount, currency, type, balance_uid, to_balance_uid, category_uid, spent_at, note' } }
+            bad_uid: { $ref: '#/components/examples/ErrBadUid' }
+            bad_if_match: { value: { error: 'If-Match must be a single version entity tag such as "3" (the ETag header or "version" field of your last read)' } }
+            versions_disagree: { value: { error: 'If-Match ("3") and the body "version" (2) disagree; send one, or the same value in both' } }
+    BadUid:
+      description: The path uid is not UUID-shaped (e.g. a numeric id).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            bad_uid: { $ref: '#/components/examples/ErrBadUid' }
+    TransactionNotFound:
+      description: No transaction has this uid.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: transaction not found }
+    BalanceNotFound:
+      description: No balance has this uid.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: balance not found }
+    CategoryNotFound:
+      description: No category has this uid.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: category not found }
+    UserNotFound:
+      description: No user has this uid.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: user not found }
+    ValidationFailed:
+      description: Validation failed. `fields` lists every invalid field.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ValidationError' }
+          example: { error: validation failed, fields: { name: is required, type: is required (expense or income) } }
+    TransactionValidationFailed:
+      description: |
+        Validation failed. `fields` lists every invalid field. This includes an unknown, non-allowed
+        or wrong-currency `balance_uid` / `to_balance_uid`, a category of the wrong type, and
+        `type: balance_adjustment`.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ValidationError' }
+          examples:
+            fields: { $ref: '#/components/examples/ErrTxValidation' }
+            currency_mismatch: { $ref: '#/components/examples/ErrTxCurrencyMismatch' }
+            balance_adjustment: { $ref: '#/components/examples/ErrTxAdjustmentType' }
+            balance_not_allowed:
+              value: { error: validation failed, fields: { balance_uid: must refer to a payment_account or credit_card balance } }
+    BalanceValidationFailed:
+      description: Validation failed (per-type amount rules, immutable `type`, unknown currency, …).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ValidationError' }
+          examples:
+            type_changed: { value: { error: validation failed, fields: { type: balance type cannot be changed after creation } } }
+            amount_rules:
+              value:
+                error: validation failed
+                fields:
+                  debt: is required for type credit_card
+                  balance: is not used for type credit_card (only for payment_account and other_asset)
+            decimals: { value: { error: validation failed, fields: { balance: has too many decimal places (max 2 for this currency) } } }
+    VersionRequired:
+      description: Neither `If-Match` nor `"version"` was sent.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            error: 'this update needs the version it is based on: send an If-Match header with the ETag of your last read (e.g. If-Match: "3") or "version" in the body'
+            code: version_required
+    TransactionConflict:
+      description: |
+        `version_conflict`: the transaction changed since the version you sent. Nothing was saved,
+        `current` is the transaction as it is now, and `ETag` is its version.
+        `balance_adjustment_readonly`: the transaction is a server-created balance adjustment.
+      headers:
+        ETag:
+          description: Current version (only with `version_conflict`).
+          schema: { type: string, example: '"2"' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/TransactionConflictError' }
+          examples:
+            version_conflict: { $ref: '#/components/examples/ErrTxVersionConflict' }
+            balance_adjustment_readonly: { $ref: '#/components/examples/ErrTxReadOnly' }
+    BalanceConflict:
+      description: |
+        `version_conflict` (stale version; `current` + `ETag` sent), `balance_in_use` (currency change
+        while transactions reference the balance), or a duplicate name (no `code`).
+      headers:
+        ETag:
+          description: Current version (only with `version_conflict`).
+          schema: { type: string, example: '"3"' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/BalanceConflictError' }
+          examples:
+            version_conflict: { $ref: '#/components/examples/ErrBalanceVersionConflict' }
+            balance_in_use: { $ref: '#/components/examples/ErrBalanceInUse' }
+            duplicate_name: { $ref: '#/components/examples/ErrBalanceDuplicateName' }
+    CategoryConflict:
+      description: Duplicate name within the type (case-insensitive), or a type change while transactions use the category.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            duplicate_name:
+              value:
+                error: a category with this name and type already exists
+                fields: { name: is already used by another category of this type (names are case-insensitive) }
+            in_use:
+              value: { error: 'category is used by transactions (2 transaction(s)); its type cannot change; reassign or clear category_uid on those transactions first' }
+    UserConflict:
+      description: Username or email already used by another user (case-insensitive).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            username:
+              value: { error: a user with this username already exists, fields: { username: is already taken (usernames are case-insensitive) } }
+            email:
+              value: { error: a user with this email already exists, fields: { email: is already used by another user } }
+    InternalError:
+      description: Unexpected server error (details are only logged).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: internal server error }
+
+  schemas:
+    Uid:
+      type: string
+      format: uuid
+      description: Server-assigned UUID v4. Lowercase in responses; accepted in any case.
+      pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      example: 4dc73a4a-a60b-414e-98bc-3c71298a0af5
+    Currency:
+      type: string
+      description: ISO 4217 code (trimmed and upper-cased on input; responses are upper-case). Determines the minor-unit scale.
+      pattern: '^[A-Za-z]{3}$'
+      example: THB
+    DecimalInput:
+      description: |
+        Plain decimal as a JSON string (recommended) or number, read as text (never a float):
+        no signs (except where negative values are allowed), commas, symbols or exponents.
+        At most 13 digits before the point, and at most as many decimals as the currency allows.
+      oneOf:
+        - type: string
+          example: '120.50'
+        - type: number
+          example: 120.5
+    Timestamp:
+      type: string
+      format: date-time
+      description: RFC 3339 in UTC with second precision.
+      example: '2026-10-08T13:28:56Z'
+    Version:
+      type: integer
+      format: int64
+      minimum: 1
+      description: Optimistic-locking version (1 on create, +1 on every change).
+      example: 1
+
+    Error:
+      type: object
+      description: Shape of every error response.
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Human-readable message.
+        fields:
+          type: object
+          description: Field name → problem (validation, query, conflict and duplicate errors).
+          additionalProperties: { type: string }
+        code:
+          type: string
+          description: Stable machine-readable reason, present for some errors only.
+          enum: [version_required, version_conflict, balance_in_use, balance_adjustment_readonly]
+        current:
+          type: object
+          description: With `version_conflict` only, the record (Transaction or Balance) as it is now.
+    ValidationError:
+      type: object
+      required: [error, fields]
+      properties:
+        error: { type: string, enum: [validation failed] }
+        fields:
+          type: object
+          additionalProperties: { type: string }
+    TransactionConflictError:
+      type: object
+      required: [error, code]
+      properties:
+        error: { type: string }
+        code: { type: string, enum: [version_conflict, balance_adjustment_readonly] }
+        fields:
+          type: object
+          additionalProperties: { type: string }
+        current: { $ref: '#/components/schemas/Transaction' }
+    BalanceConflictError:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+        code:
+          type: string
+          enum: [version_conflict, balance_in_use]
+          description: Absent for a duplicate name.
+        fields:
+          type: object
+          additionalProperties: { type: string }
+        current: { $ref: '#/components/schemas/Balance' }
+
+    TransactionType:
+      type: string
+      description: |
+        `expense`, `income`, `transfer`, or the read-only, server-created `balance_adjustment`.
+      enum: [expense, income, transfer, balance_adjustment]
+    TransactionWriteType:
+      type: string
+      description: Types a client may write. Empty or omitted means `expense`. `balance_adjustment` is a 422.
+      enum: [expense, income, transfer]
+      default: expense
+    AdjustmentDirection:
+      type: string
+      enum: [increase, decrease]
+      description: Whether a manual edit raised or lowered the edited amount (balance of an asset, debt of a liability).
+    Transaction:
+      type: object
+      required: [uid, amount, amount_minor, currency, type, balance_uid, account, to_balance_uid, to_account, category_uid, spent_at, note, created_at, updated_at, version, adjusts_balances, adjustment_direction]
+      properties:
+        uid: { $ref: '#/components/schemas/Uid' }
+        amount:
+          type: string
+          description: Positive decimal string in the currency's scale.
+          example: '120.50'
+        amount_minor:
+          type: integer
+          format: int64
+          minimum: 1
+          description: The amount in integer minor units (`120.50` THB → 12050).
+          example: 12050
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+          example: THB
+        type: { $ref: '#/components/schemas/TransactionType' }
+        balance_uid:
+          type: string
+          format: uuid
+          description: Paying (expense), receiving (income), source (transfer) or adjusted (balance_adjustment) balance. May point to a deleted balance.
+          example: 4dc73a4a-a60b-414e-98bc-3c71298a0af5
+        account:
+          type: string
+          description: Snapshot of the balance's name when the transaction was written (read-only).
+          example: KBank debit
+        to_balance_uid:
+          type: string
+          format: uuid
+          nullable: true
+          description: Transfer destination; `null` for other types.
+          example: null
+        to_account:
+          type: string
+          nullable: true
+          description: Snapshot of the destination balance's name; `null` unless transfer.
+          example: null
+        category_uid:
+          type: string
+          format: uuid
+          nullable: true
+          description: Linked category (expense/income only). Look the name up via `/api/categories`.
+          example: 32b0d51e-e81f-41f0-a77c-38e6ec384153
+        spent_at:
+          type: string
+          format: date-time
+          description: RFC 3339 at second precision with the offset as entered.
+          example: '2026-10-06T21:06:00+08:00'
+        note:
+          type: string
+          maxLength: 1000
+          example: Lunch
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: UTC; `null` until edited.
+          example: null
+        version: { $ref: '#/components/schemas/Version' }
+        adjusts_balances:
+          type: boolean
+          description: |
+            `true` when this transaction moved its balances (every expense/income/transfer created
+            since schema v11). `false` for older rows (editing or deleting them leaves balances
+            alone) and for `balance_adjustment`.
+          example: true
+        adjustment_direction:
+          type: string
+          enum: [increase, decrease, null]
+          nullable: true
+          description: Set only for `balance_adjustment` (whether the manual edit raised or lowered the balance/debt); `null` otherwise.
+          example: null
+    TransactionInput:
+      type: object
+      description: Body of POST and PUT. Unknown fields are a 400.
+      required: [amount, currency, balance_uid, spent_at]
+      properties:
+        amount:
+          allOf:
+            - $ref: '#/components/schemas/DecimalInput'
+          description: Positive amount (> 0) as a decimal string or number.
+        currency: { $ref: '#/components/schemas/Currency' }
+        type: { $ref: '#/components/schemas/TransactionWriteType' }
+        balance_uid:
+          type: string
+          format: uuid
+          description: Source balance. Allowed types depend on `type` (see the table at the top). Its currency must equal `currency`.
+          example: 4dc73a4a-a60b-414e-98bc-3c71298a0af5
+        to_balance_uid:
+          type: string
+          format: uuid
+          nullable: true
+          description: Required for `transfer` (≠ `balance_uid`, same currency). Not allowed otherwise.
+        category_uid:
+          type: string
+          format: uuid
+          nullable: true
+          description: Optional. Must be an expense category for an expense and an income category for income. Not allowed for transfers.
+        spent_at:
+          type: string
+          format: date-time
+          description: RFC 3339 / ISO 8601 date-time with an offset (`Z` or `±hh:mm`). Values without an offset are a 422.
+          example: '2026-10-06T21:06:00+08:00'
+        note:
+          type: string
+          nullable: true
+          maxLength: 1000
+          description: Trimmed. Omitted or `null` means empty.
+        uid:
+          type: string
+          description: Accepted and ignored (the uid is immutable).
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+          description: PUT only, as an alternative to `If-Match`. Ignored on POST.
+      additionalProperties: false
+    TransactionPatch:
+      type: object
+      description: Body of PATCH. At least one changeable field. Unknown fields (incl. `account`) are a 400.
+      minProperties: 1
+      properties:
+        amount:
+          allOf:
+            - $ref: '#/components/schemas/DecimalInput'
+          description: New positive amount. `null` is a 422.
+        currency: { $ref: '#/components/schemas/Currency' }
+        type: { $ref: '#/components/schemas/TransactionWriteType' }
+        balance_uid: { type: string, format: uuid }
+        to_balance_uid:
+          type: string
+          format: uuid
+          nullable: true
+          description: '`null` clears it.'
+        category_uid:
+          type: string
+          format: uuid
+          nullable: true
+          description: '`null` clears it.'
+        spent_at: { type: string, format: date-time }
+        note:
+          type: string
+          nullable: true
+          maxLength: 1000
+          description: '`null` clears it.'
+        uid:
+          type: string
+          description: Ignored.
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Alternative to `If-Match`.
+      additionalProperties: false
+    TransactionList:
+      type: object
+      required: [transactions, count]
+      properties:
+        transactions:
+          type: array
+          items: { $ref: '#/components/schemas/Transaction' }
+        count:
+          type: integer
+          description: Number of items returned (not the total number of matches).
+          example: 1
+
+    BalanceType:
+      type: string
+      description: '`payment_account` and `other_asset` are assets (they have `balance`); `credit_card` and `other_liability` are liabilities (they have `debt` and `limit`).'
+      enum: [payment_account, credit_card, other_asset, other_liability]
+    Balance:
+      type: object
+      description: |
+        Fields that do not apply to the type are `null`: assets have `balance`; liabilities have
+        `debt`, `limit`, `available` and `over_limit`.
+      required: [uid, name, type, kind, currency, description, balance, balance_minor, debt, debt_minor, limit, limit_minor, available, available_minor, over_limit, created_at, updated_at, version]
+      properties:
+        uid: { $ref: '#/components/schemas/Uid' }
+        name: { type: string, maxLength: 100, example: KBank debit }
+        type: { $ref: '#/components/schemas/BalanceType' }
+        kind:
+          type: string
+          enum: [asset, liability]
+          description: Derived from `type`.
+        currency: { type: string, pattern: '^[A-Z]{3}$', example: THB }
+        description: { type: string, maxLength: 1000, example: '' }
+        balance:
+          type: string
+          nullable: true
+          description: Assets only. May be negative (overdraft).
+          example: '10000.00'
+        balance_minor: { type: integer, format: int64, nullable: true, example: 1000000 }
+        debt:
+          type: string
+          nullable: true
+          description: Liabilities only. May be negative (in credit).
+          example: null
+        debt_minor: { type: integer, format: int64, nullable: true, example: null }
+        limit:
+          type: string
+          nullable: true
+          description: Liabilities only; ≥ 0.
+          example: null
+        limit_minor: { type: integer, format: int64, nullable: true, example: null }
+        available:
+          type: string
+          nullable: true
+          description: limit − debt (liabilities only). Negative when over the limit.
+          example: null
+        available_minor: { type: integer, format: int64, nullable: true, example: null }
+        over_limit:
+          type: boolean
+          nullable: true
+          description: debt > limit (liabilities only).
+          example: null
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: UTC; `null` until changed manually or by a transaction.
+          example: null
+        version: { $ref: '#/components/schemas/Version' }
+    BalanceInput:
+      type: object
+      description: |
+        Body of POST and PUT. Amounts that are absent, `null` or `""` count as not provided. Unknown
+        fields are a 400. This includes read-only response fields such as `kind`, `*_minor`, `available`,
+        `over_limit`, `created_at` and `updated_at`.
+      required: [name, type, currency]
+      properties:
+        name:
+          type: string
+          maxLength: 100
+          description: Trimmed; unique case-insensitively.
+          example: KBank debit
+        type:
+          allOf:
+            - $ref: '#/components/schemas/BalanceType'
+          description: Required. On PUT it must equal the stored type (immutable).
+        currency: { $ref: '#/components/schemas/Currency' }
+        description: { type: string, nullable: true, maxLength: 1000 }
+        balance:
+          allOf:
+            - $ref: '#/components/schemas/DecimalInput'
+          nullable: true
+          description: Required for assets (may be negative). Not allowed for liabilities.
+        debt:
+          allOf:
+            - $ref: '#/components/schemas/DecimalInput'
+          nullable: true
+          description: Required for liabilities (may be negative). Not allowed for assets.
+        limit:
+          allOf:
+            - $ref: '#/components/schemas/DecimalInput'
+          nullable: true
+          description: Required for liabilities (≥ 0). Not allowed for assets.
+        uid:
+          type: string
+          description: Accepted and ignored.
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+          description: PUT only, as an alternative to `If-Match`. Ignored on POST.
+      additionalProperties: false
+    BalancePatch:
+      type: object
+      description: Body of PATCH. At least one changeable field. Unknown fields are a 400.
+      minProperties: 1
+      properties:
+        name: { type: string, maxLength: 100 }
+        type:
+          allOf:
+            - $ref: '#/components/schemas/BalanceType'
+          description: May be sent, but only with the stored value.
+        currency: { $ref: '#/components/schemas/Currency' }
+        description:
+          type: string
+          nullable: true
+          maxLength: 1000
+          description: '`null` clears it.'
+        balance:
+          allOf:
+            - $ref: '#/components/schemas/DecimalInput'
+          nullable: true
+          description: '`null` removes it.'
+        debt:
+          allOf:
+            - $ref: '#/components/schemas/DecimalInput'
+          nullable: true
+          description: '`null` removes it.'
+        limit:
+          allOf:
+            - $ref: '#/components/schemas/DecimalInput'
+          nullable: true
+          description: '`null` removes it.'
+        uid:
+          type: string
+          description: Ignored.
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Alternative to `If-Match`.
+      additionalProperties: false
+    BalanceTotals:
+      type: object
+      description: Sums for one currency over the returned balances (decimal strings only; no conversion).
+      required: [currency, assets, liabilities, net, credit_limit, available_credit]
+      properties:
+        currency: { type: string, example: THB }
+        assets: { type: string, description: Sum of asset balances., example: '10000.00' }
+        liabilities: { type: string, description: Sum of liability debts., example: '52000.00' }
+        net: { type: string, description: assets − liabilities., example: '-42000.00' }
+        credit_limit: { type: string, description: Sum of liability limits., example: '50000.00' }
+        available_credit: { type: string, description: credit_limit − liabilities., example: '-2000.00' }
+    BalanceList:
+      type: object
+      required: [balances, count, totals]
+      properties:
+        balances:
+          type: array
+          items: { $ref: '#/components/schemas/Balance' }
+        count: { type: integer, example: 2 }
+        totals:
+          type: array
+          description: One entry per currency, in alphabetical order.
+          items: { $ref: '#/components/schemas/BalanceTotals' }
+
+    CategoryType:
+      type: string
+      enum: [expense, income]
+    Category:
+      type: object
+      required: [uid, name, type, description, created_at, updated_at]
+      properties:
+        uid: { $ref: '#/components/schemas/Uid' }
+        name: { type: string, maxLength: 100, example: Food }
+        type: { $ref: '#/components/schemas/CategoryType' }
+        description: { type: string, maxLength: 1000, example: Groceries and restaurants }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        updated_at: { type: string, format: date-time, nullable: true, example: null }
+    CategoryInput:
+      type: object
+      description: Body of POST and PUT. Names are unique per type, case-insensitively. Unknown fields (including `created_at` / `updated_at`) are a 400.
+      required: [name, type]
+      properties:
+        name: { type: string, maxLength: 100, example: Food }
+        type: { $ref: '#/components/schemas/CategoryType' }
+        description: { type: string, nullable: true, maxLength: 1000 }
+        uid: { type: string, description: Accepted and ignored. }
+      additionalProperties: false
+    CategoryPatch:
+      type: object
+      minProperties: 1
+      properties:
+        name: { type: string, maxLength: 100 }
+        type: { $ref: '#/components/schemas/CategoryType' }
+        description: { type: string, nullable: true, maxLength: 1000, description: '`null` clears it.' }
+        uid: { type: string, description: Ignored. }
+      additionalProperties: false
+    CategoryList:
+      type: object
+      required: [categories, count]
+      properties:
+        categories:
+          type: array
+          items: { $ref: '#/components/schemas/Category' }
+        count: { type: integer, example: 1 }
+
+    Preferences:
+      type: object
+      description: Free-form client preferences, always a JSON object (at most 32 KiB compacted).
+      additionalProperties: true
+      example: { currency: THB }
+    User:
+      type: object
+      description: A user profile. The password hash is never returned; `has_password` says whether one is set.
+      required: [uid, username, email, email_verified_at, display_name, preferences, status, has_password, password_updated_at, last_login_at, created_at, updated_at]
+      properties:
+        uid: { $ref: '#/components/schemas/Uid' }
+        username:
+          type: string
+          nullable: true
+          description: Lowercase, 3–32 characters (letters, digits, `.`, `_`, `-`; starts with a letter or digit). Unique case-insensitively.
+          pattern: '^[a-z0-9][a-z0-9._-]{2,31}$'
+          example: nutmos
+        email:
+          type: string
+          format: email
+          nullable: true
+          description: Lowercased; unique.
+          example: n@example.com
+        email_verified_at: { type: string, format: date-time, nullable: true, description: Reserved for a future verification flow., example: null }
+        display_name: { type: string, maxLength: 100, example: Nattapong }
+        preferences: { $ref: '#/components/schemas/Preferences' }
+        status:
+          type: string
+          enum: [active, disabled]
+          description: Always `active` for now (`disabled` is reserved).
+        has_password: { type: boolean, example: false }
+        password_updated_at: { type: string, format: date-time, nullable: true, example: null }
+        last_login_at: { type: string, format: date-time, nullable: true, example: null }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        updated_at: { type: string, format: date-time, nullable: true, example: null }
+    UserInput:
+      type: object
+      description: |
+        Body of POST and PUT. `password` / `password_hash` and other unknown fields are a 400.
+        Read-only fields are accepted and ignored.
+      required: [display_name]
+      properties:
+        display_name: { type: string, maxLength: 100, description: Trimmed; required. }
+        username:
+          type: string
+          nullable: true
+          description: '`null`, `""` or omitted means none. Case-insensitive; stored lowercase. 3–32 characters: letters, digits, `.`, `_`, `-`, starting with a letter or digit.'
+        email:
+          type: string
+          nullable: true
+          maxLength: 254
+          description: '`null`, `""` or omitted means none. A bare address such as `name@example.com`.'
+        preferences:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Omitted or `null` means `{}`. Anything other than a JSON object is a 422 (max 32 KiB).
+        uid: { type: string, description: Ignored. }
+        status: { type: string, description: Ignored. }
+        has_password: { type: boolean, description: Ignored. }
+        email_verified_at: { type: string, nullable: true, description: Ignored. }
+        password_updated_at: { type: string, nullable: true, description: Ignored. }
+        last_login_at: { type: string, nullable: true, description: Ignored. }
+        created_at: { type: string, nullable: true, description: Ignored. }
+        updated_at: { type: string, nullable: true, description: Ignored. }
+      additionalProperties: false
+    UserPatch:
+      type: object
+      description: At least one of `display_name`, `username`, `email`, `preferences`. Read-only fields are ignored; unknown fields are a 400.
+      minProperties: 1
+      properties:
+        display_name: { type: string, maxLength: 100, description: '`null` is a 422.' }
+        username: { type: string, nullable: true, description: '`null` or `""` removes it.' }
+        email: { type: string, nullable: true, description: '`null` or `""` removes it.' }
+        preferences:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Replaces the whole object; `null` resets it to `{}`.
+        uid: { type: string, description: Ignored. }
+        status: { type: string, description: Ignored. }
+        has_password: { type: boolean, description: Ignored. }
+        email_verified_at: { type: string, nullable: true, description: Ignored. }
+        password_updated_at: { type: string, nullable: true, description: Ignored. }
+        last_login_at: { type: string, nullable: true, description: Ignored. }
+        created_at: { type: string, nullable: true, description: Ignored. }
+        updated_at: { type: string, nullable: true, description: Ignored. }
+      additionalProperties: false
+    UserList:
+      type: object
+      required: [users, count]
+      properties:
+        users:
+          type: array
+          items: { $ref: '#/components/schemas/User' }
+        count: { type: integer, example: 1 }
+    Identity:
+      type: object
+      description: A linked SSO account. (`provider`, `provider_subject`) is the provider's stable user id, unique per provider.
+      required: [uid, user_uid, provider, provider_subject, email, created_at, last_used_at]
+      properties:
+        uid: { $ref: '#/components/schemas/Uid' }
+        user_uid: { type: string, format: uuid, example: 3525dd1f-ae96-4c71-b996-06a43679cfa2 }
+        provider: { type: string, enum: [apple, google] }
+        provider_subject: { type: string, maxLength: 255, description: The OIDC `sub` claim., example: '001234.abcdef0123456789.0123' }
+        email: { type: string, nullable: true, description: As reported by the provider (may be a relay address)., example: null }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        last_used_at: { type: string, format: date-time, nullable: true, example: null }
+    IdentityList:
+      type: object
+      required: [identities, count]
+      properties:
+        identities:
+          type: array
+          items: { $ref: '#/components/schemas/Identity' }
+        count: { type: integer, example: 0 }
+
+  examples:
+    TransactionInputExpense:
+      summary: Expense with a category
+      value:
+        amount: '120.50'
+        currency: THB
+        balance_uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5
+        category_uid: 32b0d51e-e81f-41f0-a77c-38e6ec384153
+        spent_at: '2026-10-06T21:06:00+08:00'
+        note: Lunch
+    TransactionInputIncome:
+      summary: Income (amount as a JSON number)
+      value:
+        type: income
+        amount: 45000
+        currency: THB
+        balance_uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5
+        spent_at: '2026-10-01T09:00:00+07:00'
+        note: Salary
+    TransactionInputTransfer:
+      summary: Transfer (pay a credit card from a bank account)
+      value:
+        type: transfer
+        amount: '5000'
+        currency: THB
+        balance_uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5
+        to_balance_uid: a8465748-a48b-426a-9466-9a6706d8143a
+        spent_at: '2026-10-07T22:00:00+08:00'
+    TransactionExpense:
+      summary: Expense
+      value:
+        uid: 1a8af4f6-006a-4712-baba-eb8f433bccb1
+        amount: '120.50'
+        amount_minor: 12050
+        currency: THB
+        type: expense
+        balance_uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5
+        account: KBank debit
+        to_balance_uid: null
+        to_account: null
+        category_uid: 32b0d51e-e81f-41f0-a77c-38e6ec384153
+        spent_at: '2026-10-06T21:06:00+08:00'
+        note: Lunch
+        created_at: '2026-10-08T13:29:10Z'
+        updated_at: null
+        version: 1
+        adjusts_balances: true
+        adjustment_direction: null
+    TransactionTransfer:
+      summary: Transfer
+      value:
+        uid: ea67cb7c-9cef-4323-9b16-59a5139cb582
+        amount: '5000.00'
+        amount_minor: 500000
+        currency: THB
+        type: transfer
+        balance_uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5
+        account: KBank debit
+        to_balance_uid: a8465748-a48b-426a-9466-9a6706d8143a
+        to_account: KBank Visa
+        category_uid: null
+        spent_at: '2026-10-07T22:00:00+08:00'
+        note: ''
+        created_at: '2026-10-08T13:29:10Z'
+        updated_at: null
+        version: 1
+        adjusts_balances: true
+        adjustment_direction: null
+    TransactionAdjustment:
+      summary: Balance adjustment (server-created, read-only)
+      value:
+        uid: 18cf7c99-fa61-4924-ab1a-49daa00f3218
+        amount: '120.50'
+        amount_minor: 12050
+        currency: THB
+        type: balance_adjustment
+        balance_uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5
+        account: KBank debit
+        to_balance_uid: null
+        to_account: null
+        category_uid: null
+        spent_at: '2026-10-08T21:29:10+08:00'
+        note: 'Manual edit of balance: 4879.50 → 5000.00'
+        created_at: '2026-10-08T13:29:10Z'
+        updated_at: null
+        version: 1
+        adjusts_balances: false
+        adjustment_direction: increase
+    BalanceAsset:
+      summary: Payment account (asset)
+      value:
+        uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5
+        name: KBank debit
+        type: payment_account
+        kind: asset
+        currency: THB
+        description: ''
+        balance: '10000.00'
+        balance_minor: 1000000
+        debt: null
+        debt_minor: null
+        limit: null
+        limit_minor: null
+        available: null
+        available_minor: null
+        over_limit: null
+        created_at: '2026-10-08T13:28:56Z'
+        updated_at: null
+        version: 1
+    BalanceCard:
+      summary: Credit card over its limit (liability)
+      value:
+        uid: a8465748-a48b-426a-9466-9a6706d8143a
+        name: KBank Visa
+        type: credit_card
+        kind: liability
+        currency: THB
+        description: ''
+        balance: null
+        balance_minor: null
+        debt: '52000.00'
+        debt_minor: 5200000
+        limit: '50000.00'
+        limit_minor: 5000000
+        available: '-2000.00'
+        available_minor: -200000
+        over_limit: true
+        created_at: '2026-10-08T13:28:56Z'
+        updated_at: null
+        version: 1
+    CategoryFood:
+      summary: Expense category
+      value:
+        uid: 32b0d51e-e81f-41f0-a77c-38e6ec384153
+        name: Food
+        type: expense
+        description: Groceries and restaurants
+        created_at: '2026-10-08T13:29:10Z'
+        updated_at: null
+    UserExample:
+      summary: User profile
+      value:
+        uid: 3525dd1f-ae96-4c71-b996-06a43679cfa2
+        username: nutmos
+        email: n@example.com
+        email_verified_at: null
+        display_name: Nattapong
+        preferences: { currency: THB }
+        status: active
+        has_password: false
+        password_updated_at: null
+        last_login_at: null
+        created_at: '2026-10-08T13:29:11Z'
+        updated_at: null
+    ErrBadUid:
+      summary: Not a UUID (e.g. a numeric id)
+      value: { error: uid must be a UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) }
+    ErrTxValidation:
+      summary: Several invalid fields
+      value:
+        error: validation failed
+        fields:
+          currency: '"XYZ" is not a recognised ISO 4217 currency code'
+          spent_at: must be an RFC 3339 / ISO 8601 date-time with a timezone offset, e.g. 2026-10-06T21:06:00+08:00
+    ErrTxCurrencyMismatch:
+      summary: Currency differs from the balance's
+      value:
+        error: validation failed
+        fields:
+          balance_uid: 'balance "KBank debit" is in THB but the transaction is in USD; the currencies must match (no exchange-rate conversion yet)'
+    ErrTxAdjustmentType:
+      summary: type balance_adjustment is not writable
+      value:
+        error: validation failed
+        fields:
+          type: 'balance_adjustment transactions are created automatically when a balance amount is edited (PUT/PATCH /api/balances/:uid); they cannot be created or changed here'
+    ErrTxVersionConflict:
+      summary: Stale version
+      value:
+        error: 'version conflict: this transaction was changed since you read it (now at version 2); nothing was saved. Reload it, re-apply your change and send the new version'
+        fields: { version: is stale; the current version is 2 }
+        code: version_conflict
+        current:
+          uid: 1a8af4f6-006a-4712-baba-eb8f433bccb1
+          amount: '120.50'
+          amount_minor: 12050
+          currency: THB
+          type: expense
+          balance_uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5
+          account: KBank debit
+          to_balance_uid: null
+          to_account: null
+          category_uid: null
+          spent_at: '2026-10-06T21:06:00+08:00'
+          note: chicken rice
+          created_at: '2026-10-08T13:29:10Z'
+          updated_at: '2026-10-08T13:30:52Z'
+          version: 2
+          adjusts_balances: true
+          adjustment_direction: null
+    ErrTxReadOnly:
+      summary: Balance adjustments are read-only
+      value:
+        error: balance adjustments are created automatically and cannot be created, edited or deleted directly
+        code: balance_adjustment_readonly
+    ErrBalanceVersionConflict:
+      summary: Stale version
+      value:
+        error: 'version conflict: this balance was changed since you read it (now at version 3); nothing was saved. Reload it, re-apply your change and send the new version'
+        fields: { version: is stale; the current version is 3 }
+        code: version_conflict
+        current:
+          uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5
+          name: KBank debit
+          type: payment_account
+          kind: asset
+          currency: THB
+          description: ''
+          balance: '4879.50'
+          balance_minor: 487950
+          debt: null
+          debt_minor: null
+          limit: null
+          limit_minor: null
+          available: null
+          available_minor: null
+          over_limit: null
+          created_at: '2026-10-08T13:28:56Z'
+          updated_at: '2026-10-08T13:29:10Z'
+          version: 3
+    ErrBalanceInUse:
+      summary: Currency change while transactions reference the balance
+      value:
+        error: balance is used by transactions (2 transaction(s)); its currency cannot change
+        fields: { currency: cannot change while transactions reference this balance (no exchange-rate conversion) }
+        code: balance_in_use
+    ErrBalanceDuplicateName:
+      summary: Name already used
+      value:
+        error: a balance with this name already exists
+        fields: { name: is already used by another balance (names are case-insensitive) }
+    ErrCategoryInUseDelete:
+      summary: Category still referenced
+      value: { error: 'category is used by transactions (1 transaction(s)); it cannot be deleted; reassign or clear category_uid on those transactions first' }

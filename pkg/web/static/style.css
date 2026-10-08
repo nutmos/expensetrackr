@@ -45,6 +45,7 @@ button.edit, a.button.edit { padding: 4px 10px; font-size: 0.85rem; background: 
 .tab { padding: 8px 16px; text-decoration: none; color: var(--muted); font-weight: 600; border: 1px solid transparent; border-bottom: none; border-radius: 8px 8px 0 0; margin-bottom: -1px; }
 .tab:hover { color: var(--fg); }
 .tab.active { color: var(--accent); background: #fff; border-color: var(--border); }
+.tab-docs { margin-left: auto; }
 select { font: inherit; font-weight: 400; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
 h3 { margin: 18px 0 6px; font-size: 1rem; }
 .small { font-size: 0.85rem; margin: 0 0 6px; }
