@@ -97,14 +97,16 @@ func schemaObjects(t *testing.T, path string) map[string]string {
 	return out
 }
 
-// assertCurrentSchema checks the database is fully migrated (v5): transactions
-// (with balance_uid index) and balances tables, user_version 5.
+// assertCurrentSchema checks the database is fully migrated (latest version):
+// every table and index, and user_version.
 func assertCurrentSchema(t *testing.T, path string) {
 	t.Helper()
 	got := schemaObjects(t, path)
 	want := map[string]string{
 		"transactions": "table", "idx_transactions_spent_at_unix": "index", "idx_transactions_balance_uid": "index", "idx_transactions_uid": "index", "idx_transactions_type": "index", "idx_transactions_category_uid": "index", "categories": "table", "idx_categories_type_name": "index",
 		"balances": "table", "idx_balances_type": "index", "idx_balances_uid": "index",
+		"users": "table", "idx_users_username": "index", "idx_users_email": "index",
+		"user_identities": "table", "idx_user_identities_user_uid": "index",
 	}
 	if len(got) != len(want) {
 		t.Errorf("schema objects = %v, want exactly %v", got, want)
@@ -114,8 +116,8 @@ func assertCurrentSchema(t *testing.T, path string) {
 			t.Errorf("missing %s %q; have %v", typ, name, got)
 		}
 	}
-	if v := userVersion(t, path); v != 9 || SchemaVersion != 9 {
-		t.Errorf("user_version = %d (SchemaVersion %d), want 9", v, SchemaVersion)
+	if v := userVersion(t, path); v != 10 || SchemaVersion != 10 {
+		t.Errorf("user_version = %d (SchemaVersion %d), want 10", v, SchemaVersion)
 	}
 }
 
