@@ -422,6 +422,7 @@ only on validation, conflict and duplicate-name errors.
 | PATCH  | `/api/users/:uid`      | 200 + updated user | Partial; `preferences` **replaces** the whole object (`null` → `{}`); `username`/`email` `null` removes |
 | DELETE | `/api/users/:uid`      | 204 | Also deletes linked identities |
 | GET    | `/api/users/:uid/identities` | 200 `{"identities":[...],"count":n}` | Read-only SSO links (empty until SSO exists) |
+| GET    | `/api/currencies`    | 200 `{"currencies":[{"code":"THB","name":"Baht","scale":2},...],"count":n}` | Supported ISO 4217 codes (from `pkg/money`), sorted by code; the web page's currency dropdowns use it |
 | GET    | `/api/healthz`       | 200 `{"status":"ok"}` | |
 | GET    | `/api/openapi.yaml`  | 200 the OpenAPI 3.0 document | Hand-written spec, embedded in the binary |
 | GET    | `/api/openapi.json`  | 200 the same document as JSON | |
@@ -626,6 +627,14 @@ in the binary, and the Swagger UI assets are vendored (`swagger-ui-dist`
 5.33.1, Apache-2.0), so the docs work without network access. A test
 (`pkg/api/openapi_test.go`) fails when a `/api` route is missing from the
 spec, or a spec operation has no route.
+
+**Currency dropdowns.** The transaction and balance forms pick the currency
+from a searchable dropdown (the shared `combobox.js`) filled from
+`GET /api/currencies`, so the page offers exactly the codes the server accepts
+(`pkg/money`). Options read "THB — Baht"; search matches code or name. On the
+transaction form, choosing (or changing) the account sets the currency to that
+balance's currency; it can still be changed, and the server's mismatch error is
+shown. A new balance defaults to the currency most existing balances use.
 
 **Uids are never shown on the page.** They identify records only behind the
 scenes: in row `data-uid` attributes, dropdown option values, edit URLs

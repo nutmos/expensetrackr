@@ -49,6 +49,19 @@
     setStatus("");
   }
 
+  // Default currency for a new balance: the one most existing balances use.
+  async function defaultCurrency() {
+    try {
+      const res = await fetch("/api/balances");
+      const body = await res.json();
+      const n = new Map();
+      for (const b of body.balances || []) n.set(b.currency, (n.get(b.currency) || 0) + 1);
+      let best = "", max = 0;
+      for (const [c, k] of n) if (k > max) { best = c; max = k; }
+      return best;
+    } catch (_) { return ""; }
+  }
+
   async function enterForm(params) {
     const my = ++gen;
     editing = null;
@@ -57,6 +70,10 @@
     if (!params.uid) {
       $("#b-form-title").textContent = "Add a balance";
       $("#b-submit-btn").textContent = "Save balance";
+      await Promise.all([App.fillCurrencySelect($("#b-currency")), defaultCurrency()]).then(([, cur]) => {
+        if (my === gen && cur && !$("#b-currency").value) App.setCurrency($("#b-currency"), cur);
+      });
+      if (my !== gen) return;
       $("#b-name").focus();
       return;
     }
@@ -64,7 +81,7 @@
     $("#b-submit-btn").textContent = "Save changes";
     form.hidden = true; // until loaded
     try {
-      const res = await fetch(`/api/balances/${params.uid}`);
+      const [res] = await Promise.all([fetch(`/api/balances/${params.uid}`), App.fillCurrencySelect($("#b-currency"))]);
       const b = await res.json().catch(() => ({}));
       if (my !== gen) return;
       if (!res.ok) {
@@ -83,7 +100,7 @@
     typeSel.value = b.type;
     typeSel.disabled = true; // type is immutable once created
     $("#b-type-note").hidden = false;
-    $("#b-currency").value = b.currency;
+    App.setCurrency($("#b-currency"), b.currency);
     $("#b-description").value = b.description || "";
     $("#b-balance").value = b.balance ?? "";
     $("#b-debt").value = b.debt ?? "";
@@ -98,7 +115,7 @@
       name: $("#b-name").value.trim(),
       // The type is fixed after creation; an edit always sends the stored one.
       type: editing ? editing.type : typeSel.value,
-      currency: $("#b-currency").value.trim().toUpperCase(),
+      currency: $("#b-currency").value.toUpperCase(),
       description: $("#b-description").value.trim(),
     };
     if (kindOf(p.type) === "asset") {
@@ -280,6 +297,7 @@
   // ---- Init ----------------------------------------------------------------
 
   typeSel.addEventListener("change", syncTypeFields);
+  Combobox.enhance($("#b-currency")); // issue #25: searchable currency
   form.addEventListener("submit", submit);
   $("#b-cancel-btn").addEventListener("click", cancelForm);
   syncTypeFields();

@@ -75,11 +75,7 @@
             <small class="err" data-for="amount"></small>
           </label>
           <label>Currency
-            <input id="currency" name="currency" type="text" list="currency-list" maxlength="3" placeholder="THB" autocomplete="off" required>
-            <datalist id="currency-list">
-              <option value="THB"><option value="SGD"><option value="USD"><option value="EUR">
-              <option value="JPY"><option value="MYR"><option value="GBP"><option value="AUD">
-            </datalist>
+            <select id="currency" name="currency" required><option value="">Select a currency…</option></select>
             <small class="err" data-for="currency"></small>
           </label>
           <label>Type
@@ -191,7 +187,7 @@
             <small class="err" data-for="type"></small>
           </label>
           <label>Base currency
-            <input id="b-currency" name="currency" type="text" list="currency-list" maxlength="3" placeholder="THB" autocomplete="off" required>
+            <select id="b-currency" name="currency" required><option value="">Select a currency…</option></select>
             <small class="err" data-for="currency"></small>
           </label>
           <label class="asset-only">Balance
