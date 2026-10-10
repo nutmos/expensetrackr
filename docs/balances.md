@@ -53,7 +53,7 @@ A transaction's `currency` must equal the currency of every balance it moves
 rejected with **422** and nothing is written:
 
 ```json
-{"error":"validation failed","fields":{"balance_uid":"balance \"KBank\" is in THB but the transaction is in USD; the currencies must match (no exchange-rate conversion yet)"}}
+{"error":"validation failed","fields":{"balance_uid":"balance \"Wallet\" is in THB but the transaction is in USD; the currencies must match (no exchange-rate conversion yet)"}}
 ```
 
 - The error is on `to_balance_uid` when the destination is the mismatch.
