@@ -159,7 +159,7 @@ Every balance also has:
 - a **base `currency`** (ISO 4217)
 - an optional **`description`** (up to 1000 characters)
 
-The name is a short label like "KBank debit". Transactions identify the payment
+The name is a short label like "Wallet". Transactions identify the payment
 account by the balance's immutable **`uid`** (`balance_uid` on the transaction).
 There is **no SQLite foreign key**: deleting a balance leaves the transaction's
 `balance_uid` and the denormalized `account` name snapshot intact.
@@ -455,7 +455,7 @@ with `balance_uid`. The free-text `account` field is **not** accepted on write
 ```bash
 BAL_UID=$(curl -s -X POST http://127.0.0.1:8080/api/balances \
   -H 'Content-Type: application/json' \
-  -d '{"name":"KBank debit","type":"payment_account","currency":"THB","balance":"10000"}' \
+  -d '{"name":"Wallet","type":"payment_account","currency":"THB","balance":"10000"}' \
   | python3 -c 'import sys,json; print(json.load(sys.stdin)["uid"])')
 
 curl -s -X POST http://127.0.0.1:8080/api/transactions \
@@ -465,7 +465,7 @@ curl -s -X POST http://127.0.0.1:8080/api/transactions \
 
 ```json
 {"uid":"5f0c2e9a-7b1d-4c3e-9a8f-2d6b1e4c7a90","amount":"120.50","amount_minor":12050,"currency":"THB",
- "balance_uid":"a1b2c3d4-e5f6-4789-a012-3456789abcde","account":"KBank debit",
+ "balance_uid":"a1b2c3d4-e5f6-4789-a012-3456789abcde","account":"Wallet",
  "spent_at":"2026-10-06T21:06:00+08:00","note":"Lunch","created_at":"2026-10-06T13:20:11Z"}
 ```
 
@@ -478,7 +478,7 @@ curl -s -X POST http://127.0.0.1:8080/api/transactions -H 'Content-Type: applica
 
 ```json
 {"uid":"…","type":"transfer","amount":"5000.00","amount_minor":500000,"currency":"THB",
- "balance_uid":"…","account":"KBank debit","to_balance_uid":"…","to_account":"KBank Visa",
+ "balance_uid":"…","account":"Wallet","to_balance_uid":"…","to_account":"Credit Card",
  "spent_at":"2026-10-07T22:00:00+08:00","note":"","created_at":"…","updated_at":null}
 ```
 
@@ -522,11 +522,11 @@ Balances:
 
 ```bash
 curl -s -X POST http://127.0.0.1:8080/api/balances -H 'Content-Type: application/json' \
-  -d '{"name":"KBank Visa","type":"credit_card","currency":"THB","debt":"52000","limit":"50000"}'
+  -d '{"name":"Credit Card","type":"credit_card","currency":"THB","debt":"52000","limit":"50000"}'
 ```
 
 ```json
-{"uid":"a1b2c3d4-e5f6-4789-a012-3456789abcde","name":"KBank Visa","type":"credit_card","kind":"liability","currency":"THB","description":"",
+{"uid":"a1b2c3d4-e5f6-4789-a012-3456789abcde","name":"Credit Card","type":"credit_card","kind":"liability","currency":"THB","description":"",
  "balance":null,"balance_minor":null,"debt":"52000.00","debt_minor":5200000,"limit":"50000.00","limit_minor":5000000,
  "available":"-2000.00","available_minor":-200000,"over_limit":true,"created_at":"2026-10-07T00:21:55Z","updated_at":null}
 ```
@@ -631,7 +631,7 @@ spec, or a spec operation has no route.
 scenes: in row `data-uid` attributes, dropdown option values, edit URLs
 (`/<res>/<uid>/edit`) and API calls. Headings, rows, tooltips, messages and
 confirmations use human labels instead. For example, an edit page is titled
-"Edit transaction: 120.50 THB, 2026-10-08 12:30:00" or "Edit balance “KBank”".
+"Edit transaction: 120.50 THB, 2026-10-08 12:30:00" or "Edit balance “Wallet”".
 
 **Navigation**
 
