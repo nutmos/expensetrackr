@@ -111,6 +111,7 @@ func assertCurrentSchema(t *testing.T, path string) {
 		"users": "table", "idx_users_username": "index", "idx_users_email": "index",
 		"user_identities": "table", "idx_user_identities_user_uid": "index",
 		"idx_transactions_to_balance_uid": "index",
+		"sessions":                        "table", "idx_sessions_user_uid": "index", "idx_sessions_expires_at": "index",
 	}
 	if len(got) != len(want) {
 		t.Errorf("schema objects = %v, want exactly %v", got, want)
@@ -120,8 +121,8 @@ func assertCurrentSchema(t *testing.T, path string) {
 			t.Errorf("missing %s %q; have %v", typ, name, got)
 		}
 	}
-	if v := userVersion(t, path); v != 13 || SchemaVersion != 13 {
-		t.Errorf("user_version = %d (SchemaVersion %d), want 13", v, SchemaVersion)
+	if v := userVersion(t, path); v != 14 || SchemaVersion != 14 {
+		t.Errorf("user_version = %d (SchemaVersion %d), want 14", v, SchemaVersion)
 	}
 	// Every table has the same columns as a brand-new database (name, type,
 	// NOT NULL, default; transactions too, since v13 rebuilds it from the

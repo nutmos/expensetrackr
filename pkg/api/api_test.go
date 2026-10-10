@@ -24,7 +24,7 @@ func newTestServer(t *testing.T) http.Handler {
 	}
 	t.Cleanup(func() { st.Close() })
 	static := fstest.MapFS{"index.html": {Data: []byte("<!doctype html><title>Expense Log</title>")}}
-	return (&Server{Store: st, Static: static}).Router()
+	return loggedIn(t, (&Server{Store: st, Static: static}).Router(), st)
 }
 
 // do sends a request. For PUT on a single balance or transaction whose

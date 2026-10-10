@@ -87,3 +87,12 @@ tr.just-saved td { background: #ecfdf5; transition: background 2s; }
 .combo-option.active, .combo-option:hover { background: #eff4ff; color: var(--accent); }
 .combo-none { color: var(--muted); font-style: italic; }
 .combo-empty { padding: 6px 10px; color: var(--muted); font-style: italic; }
+/* Header with the signed-in user (issue #30). */
+.app-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.app-header h1 { margin: 0; }
+.user-bar { display: flex; align-items: center; gap: 8px; }
+.user-bar[hidden] { display: none; }
+.auth-card { max-width: 420px; }
+.auth-card label { display: block; margin-bottom: 12px; }
+.auth-card input { width: 100%; box-sizing: border-box; }
+.error { margin: 8px 0; padding: 8px 12px; border-radius: 6px; background: #fef2f2; color: var(--err); border: 1px solid #fecaca; }
