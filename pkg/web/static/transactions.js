@@ -443,6 +443,11 @@
 
   // ---- Init ----------------------------------------------------------------
 
+  // Searchable dropdowns (issue #24); the Type select stays a plain select.
+  Combobox.enhance($("#balance_uid"));
+  Combobox.enhance($("#to_balance_uid"));
+  Combobox.enhance($("#category_uid"), { clearable: true });
+
   spentAtInput.addEventListener("input", updatePreview);
   $("#type").addEventListener("change", () => applyType());
   // A transaction's currency must match its balance (no FX yet): picking a
