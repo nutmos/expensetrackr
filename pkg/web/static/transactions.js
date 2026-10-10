@@ -107,7 +107,22 @@
   };
   // Display names of transaction types (the API uses the lowercase values).
   const TYPE_LABEL = { expense: "Expense", income: "Income", transfer: "Transfer", balance_adjustment: "Balance Adjustment" };
-  const KIND = { payment_account: "account", credit_card: "card", other_asset: "asset", other_liability: "liability" };
+  const LIABILITY = new Set(["credit_card", "other_liability"]);
+  // Minor-unit digits per currency code, from GET /api/currencies (scale).
+  let currencyScale = new Map();
+
+  // Amount shown in a balance option (issue #28): assets show their balance,
+  // liabilities show what is owed as a negative amount.
+  function balanceAmountText(b) {
+    let v = String((LIABILITY.has(b.type) ? b.debt : b.balance) ?? "0").trim() || "0";
+    if (LIABILITY.has(b.type) && !/^-?0*\.?0*$/.test(v)) v = v.startsWith("-") ? v.slice(1) : "-" + v;
+    const scale = currencyScale.get(b.currency);
+    const opts = { style: "currency", currency: b.currency };
+    if (Number.isInteger(scale)) { opts.minimumFractionDigits = scale; opts.maximumFractionDigits = scale; }
+    try { return new Intl.NumberFormat(undefined, opts).format(v); } catch (_) { return v; }
+  }
+  // "Wallet · $50.00": name and current amount only (no uid, code or kind).
+  function balanceLabel(b) { return `${b.name} · ${balanceAmountText(b)}`; }
 
   function fillSelect(sel, types, keep) {
     sel.replaceChildren(Object.assign(document.createElement("option"), { value: "", textContent: "Select a balance…" }));
@@ -115,7 +130,7 @@
       if (!types.includes(b.type)) continue;
       const opt = document.createElement("option");
       opt.value = b.uid;
-      opt.textContent = `${b.name} (${b.currency}, ${KIND[b.type] || b.type})`;
+      opt.textContent = balanceLabel(b);
       sel.append(opt);
     }
     if (keep && [...sel.options].some((o) => o.value === keep)) sel.value = keep;
@@ -328,7 +343,10 @@
     return c ? c.name : "(unknown category)";
   }
 
+  // Refetched every time the form opens, so amounts reflect the latest saves.
   async function loadBalancesList() {
+    const list = await App.loadCurrencies();
+    currencyScale = new Map(list.filter((c) => Number.isInteger(c.scale)).map((c) => [c.code, c.scale]));
     try {
       const res = await fetch("/api/balances");
       const body = await res.json();
