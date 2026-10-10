@@ -174,9 +174,9 @@ func (s *Store) DeleteUser(ctx context.Context, id int64) error {
 }
 
 // SetPasswordHash stores (or with nil, removes) the password hash for a user
-// and stamps password_updated_at. Not exposed over HTTP: reserved for the
-// future login feature, which must hash passwords (e.g. argon2id) before
-// calling this. The hash is never returned by the API.
+// and stamps password_updated_at. Not exposed over HTTP; the auth endpoints
+// use RegisterUser / ChangePassword with a bcrypt hash (pkg/auth). The hash
+// is never returned by the API.
 func (s *Store) SetPasswordHash(ctx context.Context, uid string, hash *string) error {
 	if hash != nil && *hash == "" {
 		return errors.New("set password hash: empty hash")

@@ -4,8 +4,9 @@ A small expense-logging web service in Go (Gin) with a plain HTML + vanilla JS
 web page and a JSON API. Data is stored in SQLite through the pure-Go
 `modernc.org/sqlite` driver, so no CGO or C toolchain is needed.
 
-Status: prototype for local use. It listens on 127.0.0.1 only and has no
-authentication; see "Open questions".
+Status: prototype for local use. It listens on 127.0.0.1 by default and
+requires a username/password login (server-side sessions); see
+[docs/auth.md](docs/auth.md). Data is not per-user yet.
 
 ## Requirements
 
@@ -227,7 +228,8 @@ exposed; the API shows only `has_password`), `password_updated_at`,
 SSO links (Sign in with Apple / Google) go in `user_identities`, unique per
 `(provider, provider_subject)`.
 
-**No login, sessions or endpoint protection exist yet.** Existing data is not
+Username/password login uses `password_hash` (bcrypt) and the `sessions`
+table (v14); see [docs/auth.md](docs/auth.md). Existing data is still not
 tied to a user. Details and follow-ups are in
 [docs/user-profile.md](docs/user-profile.md).
 
@@ -341,6 +343,7 @@ The schema version is tracked in SQLite's `PRAGMA user_version`. The code is in
 | 11      | `balances` rebuilt (copy rows → drop → rename, indexes recreated, AUTOINCREMENT sequence kept) to add `version INTEGER NOT NULL DEFAULT 1` and drop `CHECK (debt_minor >= 0)` (negative debt = in credit); `transactions.version` (1) and `transactions.balance_applied` (0 for existing rows: they never moved a balance) + index on `to_balance_uid`. Existing balances are **not** recomputed. One SQL transaction, idempotent. See [docs/balances.md](docs/balances.md). |
 | 12      | `DROP TABLE IF EXISTS balance_adjustments` (plus its index and sequence row). Only a pre-release build of v11 created that table (manual-edit audit, removed before release); otherwise a no-op. One SQL transaction, idempotent. |
 | 13      | `transactions` rebuilt (create new → copy every row with the same ids/uids/values → drop → rename → recreate all indexes incl. unique uid → restore the AUTOINCREMENT counter) so `type` may be `balance_adjustment`; adds `adjustment_direction` (`increase`/`decrease`, NULL for existing rows) and table CHECKs tying it to that type (no destination/category, `balance_applied = 0`). One SQL transaction, idempotent. See [docs/balances.md](docs/balances.md). |
+| 14      | table `sessions` (login sessions: SHA-256 of the cookie token, `user_uid` → `users.uid` ON DELETE CASCADE, created/expires/last-seen, optional user agent) + indexes on `user_uid`, `expires_at`. Additive, one SQL transaction, idempotent. See [docs/auth.md](docs/auth.md). |
 
 Notes on version 2:
 
@@ -379,6 +382,13 @@ upgrading.
 
 ## API
 
+**Authentication** ([docs/auth.md](docs/auth.md)): every `/api` route needs a
+session cookie (from `POST /api/auth/login`) except login, register (first run
+only), logout, `/api/healthz` and the OpenAPI documents; otherwise **401**
+`{"error":"authentication required","code":"unauthenticated"}`.
+State-changing requests must be same-origin (`Origin` / `Sec-Fetch-Site`,
+**403** otherwise) and send JSON bodies as `application/json` (**415**).
+
 Resources are identified **only by `uid`** (UUID v4) in URLs and JSON;
 the internal integer row id is never returned or accepted. `Location`
 headers on create are `/api/transactions/<uid>` and `/api/balances/<uid>`.
@@ -415,6 +425,11 @@ only on validation, conflict and duplicate-name errors.
 | GET    | `/api/categories/:uid` | 200 + category | 400 if not UUID-shaped, 404 if missing |
 | PUT    | `/api/categories/:uid` | 200 + updated category | Full replace (omitted description clears it). 409 duplicate name, or type change while referenced by transactions |
 | DELETE | `/api/categories/:uid` | 204 | 409 if any transaction references it; 404 if missing |
+| POST   | `/api/auth/register`   | 201 + user | `username`, `password`, optional `display_name`. Anyone on first run (also logs in); afterwards only when logged in (403 `registration_closed`) |
+| POST   | `/api/auth/login`      | 200 + user, `Set-Cookie: session=…` | Generic 401 `invalid username or password`; 429 after 5 failures (username + IP) for 5 min |
+| POST   | `/api/auth/logout`     | 204 | Deletes the session, clears the cookie |
+| GET    | `/api/auth/me`         | 200 + user | 401 when signed out (`code: setup_required` before the first account exists) |
+| PUT    | `/api/auth/password`   | 204 | `current_password`, `new_password`; logs out all other sessions |
 | POST   | `/api/users`           | 201 + user, `Location: /api/users/<uid>` | `display_name` required; `username`, `email`, `preferences` (JSON object) optional. 422 invalid, 409 duplicate username/email, 400 unknown fields (incl. `password`, `password_hash`) |
 | GET    | `/api/users`           | 200 `{"users":[...],"count":n}` | Oldest first |
 | GET    | `/api/users/:uid`      | 200 + user | Never includes `password_hash`; `has_password` instead |
@@ -583,7 +598,7 @@ pkg/store/                         persistence (modernc.org/sqlite)
   adjustments.go                   balance_adjustment transactions recorded by manual balance edits
   categories.go                    table "categories": CreateCategory, ListCategories, GetCategoryByUID, UpdateCategory, DeleteCategory
   users.go                         tables "users", "user_identities": CreateUser, ListUsers, GetUserByUID, UpdateUser, DeleteUser, SetPasswordHash, CreateIdentity, ListIdentities, FindUserByIdentity
-  migrate.go                       current schema, versioned migrations (v0 -> … -> v13)
+  migrate.go                       current schema, versioned migrations (v0 -> … -> v14)
   store_test.go, balances_test.go  fresh DB, upgrades from v0/v1/v2, partial/ambiguous states
 pkg/api/                           Gin routes and handlers
   api.go                           router setup + shared helpers
@@ -604,6 +619,10 @@ pkg/apidoc/                        the API description, embedded into the binary
 ```
 
 ## Web page
+
+Signed out, the page shows only a **Log in** card (or **Create your account**
+on first run); signed in, the header shows the display name and a **Log out**
+button. See [docs/auth.md](docs/auth.md).
 
 A small single-page app (vanilla JS, no build step) with real,
 history-friendly URLs. Gin serves the same embedded `index.html` for every page
@@ -716,9 +735,9 @@ User data is only inserted with `textContent` / input `.value` (never
 
 ## Open questions
 
-- Authentication: the schema is ready (see docs/user-profile.md), but login,
-  sessions, SSO and per-user scoping of transactions, balances and categories
-  are follow-ups.
+- Authentication: username/password login exists (docs/auth.md). Follow-ups:
+  per-user ownership of transactions, balances and categories; SSO; roles;
+  password reset.
 - Currency conversion and reporting currency (e.g. totals in THB or SGD), and
   where exchange rates would come from.
 - Categories/tags, receipts or attachments; an edit history / audit log

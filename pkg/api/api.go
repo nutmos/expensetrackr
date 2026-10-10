@@ -10,8 +10,10 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/nutmos/expensetrackr/pkg/apidoc"
+	"github.com/nutmos/expensetrackr/pkg/auth"
 	"github.com/nutmos/expensetrackr/pkg/money"
 	"github.com/nutmos/expensetrackr/pkg/store"
 	"github.com/nutmos/expensetrackr/pkg/validate"
@@ -26,6 +28,12 @@ type Server struct {
 	Store *store.Store
 	// Static is the web assets filesystem; it must contain index.html.
 	Static fs.FS
+	// Throttle overrides the failed-login throttle (tests); nil = default.
+	Throttle *auth.Throttle
+	// Now overrides the clock for session expiry (tests); nil = time.Now.
+	Now func() time.Time
+
+	auth authState
 }
 
 // errorBody is the JSON shape of every error response.
@@ -44,8 +52,11 @@ func (s *Server) Router() *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
 	_ = r.SetTrustedProxies(nil)
+	r.Use(csrfGuard)
 
-	api := r.Group("/api")
+	// Every /api route needs a session except the few in publicAPI.
+	api := r.Group("/api", s.requireAuth)
+	s.registerAuthRoutes(api)
 	s.registerTransactionRoutes(api)
 	s.registerBalanceRoutes(api)
 	s.registerCategoryRoutes(api)

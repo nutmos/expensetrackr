@@ -122,6 +122,7 @@
   }
 
   function render() {
+    if (!signedIn) return;
     let path = location.pathname;
     // Old hash links (/#balances) from before real paths: map them once.
     const legacy = { "#transactions": "/transactions", "#balances": "/balances", "#categories": "/categories" };
@@ -251,6 +252,106 @@
     isUUID: (s) => UUID_RE.test(s),
   };
 
+  // ---- Authentication (issue #30) -----------------------------------------
+  // The app needs a session. On start (and whenever an API call answers 401)
+  // the login view replaces the app; on first run (no account yet) the same
+  // form creates the first account. Only the display name / username is shown.
+
+  let signedIn = false;
+  let setupMode = false;
+
+  function showApp(user) {
+    signedIn = true;
+    $("#view-login").hidden = true;
+    $("#app-nav").hidden = false;
+    $("#user-name").textContent = user.display_name || user.username || "";
+    $("#user-bar").hidden = false;
+    render();
+  }
+
+  function showLogin(setup) {
+    signedIn = false;
+    setupMode = !!setup;
+    document.querySelectorAll(".view").forEach((v) => (v.hidden = true));
+    $("#app-nav").hidden = true;
+    $("#user-bar").hidden = true;
+    $("#user-name").textContent = "";
+    $("#login-title").textContent = setup ? "Create your account" : "Log in";
+    $("#login-intro").textContent = setup
+      ? "No account exists yet. Choose a username (3–32 characters: lowercase letters, digits, . _ -) and a password (at least 8 characters)."
+      : "";
+    $("#login-display-row").hidden = !setup;
+    $("#login-password").autocomplete = setup ? "new-password" : "current-password";
+    $("#login-submit").textContent = setup ? "Create account" : "Log in";
+    $("#login-error").hidden = true;
+    $("#login-password").value = "";
+    clearErrors($("#login-form"));
+    document.title = (setup ? "Create account" : "Log in") + " · Expense Log";
+    $("#view-login").hidden = false;
+    $("#login-username").focus();
+  }
+
+  // Any API 401 (expired / revoked session) drops back to the login view.
+  const origFetch = window.fetch.bind(window);
+  window.fetch = async (input, init) => {
+    const res = await origFetch(input, init);
+    const url = typeof input === "string" ? input : input.url;
+    if (res.status === 401 && signedIn && url.startsWith("/api/") && !url.startsWith("/api/auth/")) {
+      res.clone().json().then((b) => showLogin(b && b.code === "setup_required"), () => showLogin(false));
+    }
+    return res;
+  };
+
+  $("#login-form").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const form = ev.target;
+    clearErrors(form);
+    const err = $("#login-error");
+    err.hidden = true;
+    const body = { username: $("#login-username").value.trim(), password: $("#login-password").value };
+    if (setupMode && $("#login-display").value.trim()) body.display_name = $("#login-display").value.trim();
+    const btn = $("#login-submit");
+    btn.disabled = true;
+    try {
+      const res = await origFetch(setupMode ? "/api/auth/register" : "/api/auth/login", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        $("#login-password").value = "";
+        showApp(data);
+        return;
+      }
+      if (res.status === 422) showFieldErrors(form, data.fields);
+      if (res.status === 403 && data.code === "registration_closed") { showLogin(false); }
+      err.textContent = data.error === "validation failed" ? "Please fix the fields above." : (data.error || "Something went wrong.");
+      err.hidden = false;
+      $("#login-password").value = "";
+      $("#login-password").focus();
+    } catch (e) {
+      err.textContent = "Network error: " + e.message;
+      err.hidden = false;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  $("#logout-btn").addEventListener("click", async () => {
+    await origFetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+    showLogin(false);
+  });
+
+  async function boot() {
+    try {
+      const res = await origFetch("/api/auth/me");
+      if (res.ok) { showApp(await res.json()); return; }
+      const b = await res.json().catch(() => ({}));
+      showLogin(b.code === "setup_required");
+    } catch (e) {
+      showLogin(false);
+    }
+  }
+
   // Start once every script has registered its routes.
-  document.addEventListener("DOMContentLoaded", render);
+  document.addEventListener("DOMContentLoaded", boot);
 })();

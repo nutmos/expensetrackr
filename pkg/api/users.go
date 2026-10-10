@@ -11,9 +11,9 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// User profiles. Authentication is not implemented yet: these endpoints are
-// open like the rest of the API, never accept or return passwords/hashes, and
-// expose linked SSO identities read-only.
+// User profiles. Like the rest of the API these endpoints require a session
+// (see auth.go); they never accept or return passwords/hashes (passwords are
+// set via /api/auth) and expose linked SSO identities read-only.
 func (s *Server) registerUserRoutes(api *gin.RouterGroup) {
 	api.POST("/users", s.createUser)
 	api.GET("/users", s.listUsers)

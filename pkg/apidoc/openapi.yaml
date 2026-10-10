@@ -12,7 +12,13 @@ info:
   version: "1.0.0"
   description: |
     JSON API of **expense-service**, a small expense-logging service (Go + Gin + SQLite).
-    It has no authentication yet. Run it on 127.0.0.1 only.
+    **Authentication:** username + password login with a server-side session in the
+    `session` cookie (HttpOnly, SameSite=Lax). Every `/api` route needs a valid session
+    (401 otherwise) except `POST /api/auth/login`, `POST /api/auth/register` (first-run only),
+    `POST /api/auth/logout`, `GET /api/healthz` and the API description itself.
+    State-changing requests must not be cross-site (`Origin` must match the host and
+    `Sec-Fetch-Site` must be `same-origin`/`none` when sent; 403 otherwise) and a request body
+    must be `application/json` (415). See docs/auth.md.
 
     ## Conventions
 
@@ -81,10 +87,15 @@ tags:
     description: Payment accounts, credit cards, other assets and liabilities. Type is fixed after creation. Manual amount edits record a balance_adjustment transaction.
   - name: categories
     description: Expense and income categories. Expense transactions may only use expense categories, income transactions income categories.
+  - name: auth
+    description: Login, logout, first-run registration, current user and password change.
   - name: users
-    description: User profiles (authentication is not implemented yet; secrets are never returned).
+    description: User profiles (password hashes are never returned; `has_password` instead).
   - name: meta
     description: Health check and this API description.
+
+security:
+  - cookieAuth: []
 
 paths:
   /api/transactions:
@@ -107,6 +118,7 @@ paths:
               income: { $ref: '#/components/examples/TransactionInputIncome' }
               transfer: { $ref: '#/components/examples/TransactionInputTransfer' }
       responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '201':
           description: Created. Balances have been moved.
           headers:
@@ -153,6 +165,7 @@ paths:
           description: Maximum number of rows.
           schema: { type: integer, minimum: 1, maximum: 5000, default: 500 }
       responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '200':
           description: The matching transactions.
           content:
@@ -178,6 +191,7 @@ paths:
       operationId: getTransaction
       summary: Get a transaction
       responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '200':
           description: The transaction. `ETag` carries its version.
           headers:
@@ -221,6 +235,7 @@ paths:
                   note: pad thai + drink
                   version: 1
       responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '200':
           description: Updated. `version` was incremented; `ETag` carries the new version.
           headers:
@@ -245,6 +260,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/IfMatchOptional'
       responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '204': { description: Deleted. }
         '400': { $ref: '#/components/responses/BadRequest' }
         '404': { $ref: '#/components/responses/TransactionNotFound' }
@@ -274,6 +290,7 @@ paths:
                 summary: Credit card
                 value: { name: Credit Card, type: credit_card, currency: THB, debt: '52000', limit: '50000' }
       responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '201':
           description: Created.
           headers:
@@ -314,6 +331,7 @@ paths:
             balances. **Any other value is treated as "not set"** (not a 400).
           schema: { type: string, example: '1' }
       responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '200':
           description: The balances and per-currency totals.
           content:
@@ -343,6 +361,7 @@ paths:
       operationId: getBalance
       summary: Get a balance
       responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '200':
           description: The balance. `ETag` carries its version.
           headers:
@@ -376,6 +395,7 @@ paths:
             schema: { $ref: '#/components/schemas/BalanceInput' }
             example: { name: Wallet, type: payment_account, currency: THB, description: Salary account, balance: '5000', version: 3 }
       responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '200':
           description: Updated. `ETag` carries the new version.
           headers:
@@ -400,6 +420,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/IfMatchOptional'
       responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '204': { description: Deleted. }
         '400': { $ref: '#/components/responses/BadRequest' }
         '404': { $ref: '#/components/responses/BalanceNotFound' }
@@ -426,6 +447,7 @@ paths:
             schema: { $ref: '#/components/schemas/CategoryInput' }
             example: { name: Food, type: expense, description: Groceries and restaurants }
       responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '201':
           description: Created.
           headers:
@@ -450,6 +472,7 @@ paths:
           description: Only categories of this type (case-insensitive).
           schema: { $ref: '#/components/schemas/CategoryType' }
       responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '200':
           description: The categories.
           content:
@@ -471,6 +494,7 @@ paths:
       operationId: getCategory
       summary: Get a category
       responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '200':
           description: The category.
           content:
@@ -493,6 +517,7 @@ paths:
             schema: { $ref: '#/components/schemas/CategoryInput' }
             example: { name: Food & drink, type: expense, description: '' }
       responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '200':
           description: Updated.
           content:
@@ -509,6 +534,7 @@ paths:
       summary: Delete a category
       description: 409 while any transaction references the category (reassign or clear `category_uid` first).
       responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '204': { description: Deleted. }
         '400': { $ref: '#/components/responses/BadUid' }
         '404': { $ref: '#/components/responses/CategoryNotFound' }
@@ -537,6 +563,7 @@ paths:
             schema: { $ref: '#/components/schemas/UserInput' }
             example: { display_name: Nattapong, username: nutmos, email: n@example.com, preferences: { currency: THB } }
       responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '201':
           description: Created.
           headers:
@@ -556,6 +583,7 @@ paths:
       summary: List user profiles
       description: Oldest first.
       responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '200':
           description: The users.
           content:
@@ -571,6 +599,7 @@ paths:
       operationId: getUser
       summary: Get a user profile
       responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '200':
           description: The user (never includes a password hash; see `has_password`).
           content:
@@ -593,6 +622,7 @@ paths:
             schema: { $ref: '#/components/schemas/UserInput' }
             example: { display_name: Nattapong E., username: nutmos, preferences: { currency: SGD, theme: dark } }
       responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '200':
           description: Updated.
           content:
@@ -624,6 +654,7 @@ paths:
                 summary: Remove the email
                 value: { email: null }
       responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '200':
           description: Updated.
           content:
@@ -640,6 +671,7 @@ paths:
       summary: Delete a user profile
       description: Also deletes the user's linked identities.
       responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '204': { description: Deleted. }
         '400': { $ref: '#/components/responses/BadUid' }
         '404': { $ref: '#/components/responses/UserNotFound' }
@@ -654,6 +686,7 @@ paths:
       summary: List a user's linked SSO identities
       description: Read-only. Identities (Sign in with Apple / Google) will be created by the future SSO flow, so the list is empty for now.
       responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '200':
           description: The identities, oldest first.
           content:
@@ -670,6 +703,7 @@ paths:
       summary: List supported currencies
       description: ISO 4217 codes accepted by the API, sorted by code, with English name and minor-unit scale (decimal places).
       responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '200':
           description: Supported currencies.
           content:
@@ -693,6 +727,7 @@ paths:
       tags: [meta]
       operationId: getHealth
       summary: Health check
+      security: []
       responses:
         '200':
           description: The server is up.
@@ -711,6 +746,7 @@ paths:
       operationId: getOpenAPIYAML
       summary: This API description (YAML)
       description: The OpenAPI 3.0 document embedded in the binary, served as-is. Swagger UI is at `/swagger/`.
+      security: []
       responses:
         '200':
           description: OpenAPI document.
@@ -724,6 +760,7 @@ paths:
       operationId: getOpenAPIJSON
       summary: This API description (JSON)
       description: The same document as `/api/openapi.yaml`, converted to JSON.
+      security: []
       responses:
         '200':
           description: OpenAPI document.
@@ -731,7 +768,158 @@ paths:
             application/json:
               schema: { type: object }
 
+  /api/auth/register:
+    post:
+      tags: [auth]
+      operationId: register
+      summary: Create an account (first-run setup, or by a logged-in user)
+      description: |
+        Creates a user with a username and password (no email). While **no user has a password**
+        (first run) anyone may call it, and the new user is logged in (`Set-Cookie: session=…`).
+        Afterwards it is **403** `registration_closed` unless the caller is logged in; a logged-in
+        caller creates the account without switching sessions.
+        Username: 3–32 characters, lowercase letters, digits, `.`, `_`, `-` (stored lowercased,
+        unique case-insensitively). Password: 8–72 bytes. `display_name` defaults to the username.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string, example: nat }
+                password: { type: string, format: password, minLength: 8, example: correct-horse }
+                display_name: { type: string, nullable: true, example: Nat }
+              additionalProperties: false
+      responses:
+        '201':
+          description: Created (and, on first run, logged in).
+          headers:
+            Set-Cookie: { description: 'First run only: the session cookie.', schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: Username already taken.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /api/auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      summary: Log in
+      description: |
+        Checks username (case-insensitive) and password and starts a session (cookie `session`,
+        HttpOnly, SameSite=Lax, Secure on TLS, 30 days sliding). Any failure — unknown user, wrong
+        password, disabled user — is the same 401 `invalid username or password`.
+        After 5 failures for the same username + client IP within 15 minutes, further attempts
+        get 429 for 5 minutes (in memory; reset on restart).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string, example: nat }
+                password: { type: string, format: password }
+              additionalProperties: false
+      responses:
+        '200':
+          description: Logged in; the user.
+          headers:
+            Set-Cookie: { description: The session cookie., schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401':
+          description: Invalid username or password.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: invalid username or password, code: invalid_credentials }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429':
+          description: Too many failed attempts; see `Retry-After` (seconds).
+          headers:
+            Retry-After: { schema: { type: integer } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      summary: Log out
+      description: Deletes the current session (if any) and clears the cookie. Always 204.
+      security: []
+      responses:
+        '204': { description: Logged out. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/auth/me:
+    get:
+      tags: [auth]
+      operationId: getMe
+      summary: The logged-in user
+      description: 401 if not logged in; its `code` is `setup_required` when no account with a password exists yet (first run).
+      responses:
+        '200':
+          description: The current user.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/auth/password:
+    put:
+      tags: [auth]
+      operationId: changePassword
+      summary: Change your password
+      description: Verifies `current_password`, sets `new_password` (8–72 bytes) and logs out every **other** session of the user.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password: { type: string, format: password }
+                new_password: { type: string, format: password, minLength: 8 }
+              additionalProperties: false
+      responses:
+        '204': { description: Password changed. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Current password is incorrect, or a cross-site request.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
 components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: session
+      description: Session cookie set by `POST /api/auth/login` (or first-run `POST /api/auth/register`).
+
   parameters:
     TransactionUid:
       name: uid
@@ -796,6 +984,22 @@ components:
       schema: { type: string, example: /api/users/3525dd1f-ae96-4c71-b996-06a43679cfa2 }
 
   responses:
+    Unauthorized:
+      description: 'Not logged in (no, unknown or expired session). `code` is `setup_required` while no account exists yet, else `unauthenticated`.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: authentication required, code: unauthenticated }
+    Forbidden:
+      description: 'Cross-site request rejected (`code: csrf`), or registration closed (`code: registration_closed`).'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    UnsupportedMediaType:
+      description: A request body that is not `Content-Type application/json`.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
     BadRequest:
       description: |
         Malformed request: invalid JSON, a body that is not one JSON object, unknown field, wrong JSON

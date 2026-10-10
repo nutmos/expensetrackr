@@ -46,6 +46,7 @@ import (
 //	    pre-release build of v11)
 //	v13 transactions rebuilt: type may be 'balance_adjustment', new column
 //	    adjustment_direction, table CHECKs for adjustment rows
+//	v14 table "sessions" (server-side login sessions, issue #30)
 //
 // A brand-new database is created directly at the latest version from
 // currentSchema. An existing database is upgraded by running the pending
@@ -60,7 +61,7 @@ import (
 // transactions.balance_applied: 1 if the row moved its balances (all rows
 // written by v11+); 0 for rows recorded before v11, whose edits/deletes
 // therefore never touch balances, and for balance_adjustment rows.
-var currentSchema = transactionsTable("transactions") + transactionsIndexes + balancesSchemaCurrent + categoriesSchema + usersSchema
+var currentSchema = transactionsTable("transactions") + transactionsIndexes + balancesSchemaCurrent + categoriesSchema + usersSchema + sessionsSchema
 
 // transactionsTable returns the CREATE TABLE statement of the current (v13+)
 // transactions table under the given name (also used by the v13 rebuild).
@@ -293,6 +294,8 @@ var migrations = []migration{
 	// v12 -> v13: allow type 'balance_adjustment' (rebuild of transactions,
 	// since SQLite cannot alter a CHECK) and add adjustment_direction.
 	rebuildTransactionsV13,
+	// v13 -> v14: add the sessions table (username/password login).
+	addSessions,
 }
 
 // SchemaVersion is the user_version a fully migrated database has.
@@ -857,6 +860,38 @@ func rebuildTransactionsV13(tx *sql.Tx) error {
 		if _, err := tx.Exec(`INSERT INTO sqlite_sequence (name, seq) VALUES ('transactions', ?)`, next); err != nil {
 			return fmt.Errorf("restore transactions sequence: %w", err)
 		}
+	}
+	return nil
+}
+
+// sessionsSchema creates the login sessions table (v14+). Used for brand-new
+// databases and by migration v13 -> v14 (IF NOT EXISTS: idempotent).
+//
+//   - token_hash: SHA-256 (hex) of the random cookie token; the raw token is
+//     never stored
+//   - user_uid: references users(uid); sessions go with their user
+//   - created_at, expires_at, last_seen_at: RFC 3339 UTC. expires_at slides
+//     forward on use (see pkg/auth.SessionTTL)
+//   - user_agent: optional, informational only
+const sessionsSchema = `
+CREATE TABLE IF NOT EXISTS sessions (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_hash   TEXT    NOT NULL UNIQUE CHECK (length(token_hash) = 64),
+    user_uid     TEXT    NOT NULL REFERENCES users (uid) ON DELETE CASCADE,
+    created_at   TEXT    NOT NULL,
+    expires_at   TEXT    NOT NULL,
+    last_seen_at TEXT    NOT NULL,
+    user_agent   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_user_uid ON sessions (user_uid);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions (expires_at);
+`
+
+// addSessions is migration v13 -> v14. Purely additive: no existing data is
+// touched.
+func addSessions(tx *sql.Tx) error {
+	if _, err := tx.Exec(sessionsSchema); err != nil {
+		return fmt.Errorf("create sessions: %w", err)
 	}
 	return nil
 }
