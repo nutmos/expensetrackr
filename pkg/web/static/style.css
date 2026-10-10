@@ -75,3 +75,15 @@ tr.just-saved td { background: #ecfdf5; transition: background 2s; }
 .back { margin: 0 0 6px; font-size: 0.9rem; }
 .back a { color: var(--accent); text-decoration: none; }
 .form-card { max-width: 760px; }
+.combo { position: relative; display: flex; }
+.combo-input { flex: 1; min-width: 0; padding-right: 52px; }
+.combo-input:disabled { opacity: 0.7; cursor: not-allowed; background: var(--bg); }
+.combo-toggle, .combo-clear { position: absolute; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--muted); padding: 2px 6px; font-size: 0.95rem; line-height: 1; }
+.combo-toggle { right: 4px; }
+.combo-clear { right: 26px; font-size: 1.1rem; }
+.combo-toggle:hover, .combo-clear:hover { color: var(--fg); filter: none; }
+.combo-list { position: absolute; z-index: 10; top: calc(100% + 2px); left: 0; right: 0; max-height: 240px; overflow-y: auto; margin: 0; padding: 4px 0; list-style: none; background: #fff; border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 6px 16px rgba(29, 35, 48, 0.12); font-weight: 400; }
+.combo-option { padding: 6px 10px; cursor: pointer; }
+.combo-option.active, .combo-option:hover { background: #eff4ff; color: var(--accent); }
+.combo-none { color: var(--muted); font-style: italic; }
+.combo-empty { padding: 6px 10px; color: var(--muted); font-style: italic; }
