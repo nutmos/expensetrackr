@@ -65,8 +65,8 @@
 
   function updatePreview() {
     const v = composedSpentAt();
-    let text = v ? "Will be saved as " + v : "Enter a date and time";
-    if (v && editing && v !== editing.spent_at) text += ` (was ${editing.spent_at})`;
+    let text = v ? "Will be saved as " + shownTime(v) : "Enter a date and time";
+    if (v && editing && v !== editing.spent_at) text += ` (was ${shownTime(editing.spent_at)})`;
     $("#spent-at-preview").textContent = text;
   }
 
@@ -384,12 +384,11 @@
         tr.dataset.uid = String(e.uid);
         if (highlightUID && e.uid === highlightUID) tr.classList.add("just-saved");
         const timeTd = cell(shownTime(e.spent_at), "time");
-        timeTd.title = "Stored as " + e.spent_at + " (shown in your device's time zone)";
         if (e.updated_at) {
           const mark = document.createElement("span");
           mark.className = "edited";
           mark.textContent = "edited";
-          mark.title = "Last edited " + new Date(e.updated_at).toLocaleString() + " (" + e.updated_at + ")";
+          mark.title = "Last edited " + shownTime(e.updated_at);
           timeTd.append(mark);
         }
         const t = e.type || "expense";
@@ -444,9 +443,6 @@
 
   // ---- Init ----------------------------------------------------------------
 
-  let tzName = "";
-  try { tzName = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (_) {}
-  $("#tz-label").textContent = `(your device's time zone: ${tzName ? tzName + ", " : ""}UTC${offsetString(new Date())})`;
   spentAtInput.addEventListener("input", updatePreview);
   $("#type").addEventListener("change", () => applyType());
   // A transaction's currency must match its balance (no FX yet): picking a
