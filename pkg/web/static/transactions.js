@@ -86,9 +86,11 @@
   function restoreDefaults() {
     try {
       const v = JSON.parse(localStorage.getItem(LS_KEY) || "{}");
-      if (v.currency) $("#currency").value = v.currency;
+      if (v.currency) App.setCurrency($("#currency"), v.currency);
       if (v.balance_uid) $("#balance_uid").value = v.balance_uid;
     } catch (_) {}
+    // Default the currency to the selected account's currency.
+    currencyFromBalance();
   }
 
   // Which balance types may be the source (balance_uid) for each type.
@@ -163,7 +165,7 @@
     if (!params.uid) {
       $("#form-title").textContent = "Add a transaction";
       $("#submit-btn").textContent = "Save transaction";
-      await Promise.all([loadBalancesList(), loadCategoriesList()]);
+      await Promise.all([loadBalancesList(), loadCategoriesList(), App.fillCurrencySelect($("#currency"))]);
       if (my !== gen) return;
       applyType("", "");
       restoreDefaults();
@@ -176,7 +178,7 @@
     form.hidden = true; // until loaded
     let e;
     try {
-      const [res] = await Promise.all([fetch(`/api/transactions/${params.uid}`), loadBalancesList(), loadCategoriesList()]);
+      const [res] = await Promise.all([fetch(`/api/transactions/${params.uid}`), loadBalancesList(), loadCategoriesList(), App.fillCurrencySelect($("#currency"))]);
       const body = await res.json().catch(() => ({}));
       if (my !== gen) return;
       if (!res.ok) {
@@ -198,7 +200,7 @@
     form.hidden = false;
     $("#form-title").textContent = `Edit transaction: ${e.amount} ${e.currency}, ${shownTime(e.spent_at)}`;
     $("#amount").value = e.amount;
-    $("#currency").value = e.currency;
+    App.setCurrency($("#currency"), e.currency);
     $("#type").value = e.type || "expense";
     applyType(e.balance_uid, e.to_balance_uid || "");
     fillCategories(currentType(), e.category_uid || "");
@@ -220,7 +222,7 @@
     const payload = {
       type,
       amount: $("#amount").value.trim(),
-      currency: $("#currency").value.trim().toUpperCase(),
+      currency: $("#currency").value.toUpperCase(),
       balance_uid: $("#balance_uid").value.trim(),
       spent_at: composedSpentAt() || "",
       note: $("#note").value.trim(),
@@ -447,15 +449,18 @@
   Combobox.enhance($("#balance_uid"));
   Combobox.enhance($("#to_balance_uid"));
   Combobox.enhance($("#category_uid"), { clearable: true });
+  Combobox.enhance($("#currency")); // issue #25; search matches code and name
 
   spentAtInput.addEventListener("input", updatePreview);
   $("#type").addEventListener("change", () => applyType());
   // A transaction's currency must match its balance (no FX yet): picking a
-  // balance fills in its currency.
-  $("#balance_uid").addEventListener("change", () => {
+  // balance fills in its currency (still selectable; the server reports a
+  // mismatch under the currency field).
+  function currencyFromBalance() {
     const b = allBalances.find((x) => x.uid === $("#balance_uid").value);
-    if (b) $("#currency").value = b.currency;
-  });
+    if (b) App.setCurrency($("#currency"), b.currency);
+  }
+  $("#balance_uid").addEventListener("change", currencyFromBalance);
   $("#now-btn").addEventListener("click", setNow);
   $("#cancel-btn").addEventListener("click", cancelForm);
   form.addEventListener("submit", submitTransaction);

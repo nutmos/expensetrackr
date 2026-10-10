@@ -663,6 +663,31 @@ paths:
         '404': { $ref: '#/components/responses/UserNotFound' }
         '500': { $ref: '#/components/responses/InternalError' }
 
+  /api/currencies:
+    get:
+      tags: [meta]
+      operationId: listCurrencies
+      summary: List supported currencies
+      description: ISO 4217 codes accepted by the API, sorted by code, with English name and minor-unit scale (decimal places).
+      responses:
+        '200':
+          description: Supported currencies.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [currencies, count]
+                properties:
+                  currencies:
+                    type: array
+                    items:
+                      type: object
+                      required: [code, name, scale]
+                      properties:
+                        code: { type: string, example: THB }
+                        name: { type: string, example: Baht }
+                        scale: { type: integer, example: 2 }
+                  count: { type: integer }
   /api/healthz:
     get:
       tags: [meta]

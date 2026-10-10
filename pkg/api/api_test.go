@@ -184,3 +184,25 @@ func putMergedH(t *testing.T, h http.Handler, path, changes string, hdr map[stri
 	t.Helper()
 	return doH(t, h, "PUT", path, fullBody(t, h, path, changes), hdr)
 }
+
+func TestListCurrencies(t *testing.T) {
+	h := newTestServer(t)
+	rec, body := do(t, h, "GET", "/api/currencies", "")
+	if rec.Code != 200 {
+		t.Fatalf("status %d", rec.Code)
+	}
+	cs, _ := body["currencies"].([]any)
+	if len(cs) < 150 || int(body["count"].(float64)) != len(cs) {
+		t.Fatalf("bad list: %d", len(cs))
+	}
+	found := false
+	for _, x := range cs {
+		m := x.(map[string]any)
+		if m["code"] == "JPY" {
+			found = m["scale"].(float64) == 0 && m["name"] == "Yen"
+		}
+	}
+	if !found {
+		t.Fatal("JPY missing or wrong")
+	}
+}

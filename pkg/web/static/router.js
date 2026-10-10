@@ -210,7 +210,42 @@
     current.route.onEscape();
   });
 
+  // ---- Currencies (issue #25) -------------------------------------------
+  // The list comes from GET /api/currencies (pkg/money is the source of
+  // truth). Fetched once; a small built-in list is used if it can't load.
+  const FALLBACK_CURRENCIES = ["AUD", "EUR", "GBP", "JPY", "MYR", "SGD", "THB", "USD"].map((code) => ({ code, name: "" }));
+  let currenciesP = null;
+  function loadCurrencies() {
+    if (!currenciesP) {
+      currenciesP = fetch("/api/currencies")
+        .then((r) => (r.ok ? r.json() : Promise.reject()))
+        .then((b) => (b.currencies && b.currencies.length ? b.currencies : FALLBACK_CURRENCIES))
+        .catch(() => { currenciesP = null; return FALLBACK_CURRENCIES; });
+    }
+    return currenciesP;
+  }
+  // Select `code` in a currency <select>, adding an option if it is unknown
+  // (so a stored value is never silently dropped).
+  function setCurrency(sel, code) {
+    code = (code || "").toUpperCase();
+    if (code && ![...sel.options].some((o) => o.value === code)) {
+      sel.append(Object.assign(document.createElement("option"), { value: code, textContent: code }));
+    }
+    sel.value = code;
+  }
+  // Fill a currency <select> with "THB — Baht" style options (value = code).
+  async function fillCurrencySelect(sel) {
+    const list = await loadCurrencies();
+    const keep = sel.value;
+    sel.replaceChildren(Object.assign(document.createElement("option"), { value: "", textContent: "Select a currency…" }));
+    for (const c of list) {
+      sel.append(Object.assign(document.createElement("option"), { value: c.code, textContent: c.name ? `${c.code} — ${c.name}` : c.code }));
+    }
+    setCurrency(sel, keep);
+  }
+
   window.App = {
+    loadCurrencies, setCurrency, fillCurrencySelect,
     $, cell, button, link, clearErrors, showFieldErrors, setStatus,
     setFlash, takeFlash, route, navigate, returnToList, replaceQuery, ifMatch, showConflict, hideConflict,
     isUUID: (s) => UUID_RE.test(s),
