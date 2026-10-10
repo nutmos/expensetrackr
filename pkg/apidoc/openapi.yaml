@@ -269,10 +269,10 @@ paths:
             examples:
               payment_account:
                 summary: Bank account
-                value: { name: KBank debit, type: payment_account, currency: THB, balance: '10000' }
+                value: { name: Wallet, type: payment_account, currency: THB, balance: '10000' }
               credit_card:
                 summary: Credit card
-                value: { name: KBank Visa, type: credit_card, currency: THB, debt: '52000', limit: '50000' }
+                value: { name: Credit Card, type: credit_card, currency: THB, debt: '52000', limit: '50000' }
       responses:
         '201':
           description: Created.
@@ -374,7 +374,7 @@ paths:
         content:
           application/json:
             schema: { $ref: '#/components/schemas/BalanceInput' }
-            example: { name: KBank debit, type: payment_account, currency: THB, description: Salary account, balance: '5000', version: 3 }
+            example: { name: Wallet, type: payment_account, currency: THB, description: Salary account, balance: '5000', version: 3 }
       responses:
         '200':
           description: Updated. `ETag` carries the new version.
@@ -1044,7 +1044,7 @@ components:
         account:
           type: string
           description: Snapshot of the balance's name when the transaction was written (read-only).
-          example: KBank debit
+          example: Wallet
         to_balance_uid:
           type: string
           format: uuid
@@ -1161,7 +1161,7 @@ components:
       required: [uid, name, type, kind, currency, description, balance, balance_minor, debt, debt_minor, limit, limit_minor, available, available_minor, over_limit, created_at, updated_at, version]
       properties:
         uid: { $ref: '#/components/schemas/Uid' }
-        name: { type: string, maxLength: 100, example: KBank debit }
+        name: { type: string, maxLength: 100, example: Wallet }
         type: { $ref: '#/components/schemas/BalanceType' }
         kind:
           type: string
@@ -1218,7 +1218,7 @@ components:
           type: string
           maxLength: 100
           description: Trimmed; unique case-insensitively.
-          example: KBank debit
+          example: Wallet
         type:
           allOf:
             - $ref: '#/components/schemas/BalanceType'
@@ -1459,7 +1459,7 @@ components:
         currency: THB
         type: expense
         balance_uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5
-        account: KBank debit
+        account: Wallet
         to_balance_uid: null
         to_account: null
         category_uid: 32b0d51e-e81f-41f0-a77c-38e6ec384153
@@ -1479,9 +1479,9 @@ components:
         currency: THB
         type: transfer
         balance_uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5
-        account: KBank debit
+        account: Wallet
         to_balance_uid: a8465748-a48b-426a-9466-9a6706d8143a
-        to_account: KBank Visa
+        to_account: Credit Card
         category_uid: null
         spent_at: '2026-10-07T22:00:00+08:00'
         note: ''
@@ -1499,7 +1499,7 @@ components:
         currency: THB
         type: balance_adjustment
         balance_uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5
-        account: KBank debit
+        account: Wallet
         to_balance_uid: null
         to_account: null
         category_uid: null
@@ -1514,7 +1514,7 @@ components:
       summary: Payment account (asset)
       value:
         uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5
-        name: KBank debit
+        name: Wallet
         type: payment_account
         kind: asset
         currency: THB
@@ -1535,7 +1535,7 @@ components:
       summary: Credit card over its limit (liability)
       value:
         uid: a8465748-a48b-426a-9466-9a6706d8143a
-        name: KBank Visa
+        name: Credit Card
         type: credit_card
         kind: liability
         currency: THB
@@ -1591,7 +1591,7 @@ components:
       value:
         error: validation failed
         fields:
-          balance_uid: 'balance "KBank debit" is in THB but the transaction is in USD; the currencies must match (no exchange-rate conversion yet)'
+          balance_uid: 'balance "Wallet" is in THB but the transaction is in USD; the currencies must match (no exchange-rate conversion yet)'
     ErrTxAdjustmentType:
       summary: type balance_adjustment is not writable
       value:
@@ -1611,7 +1611,7 @@ components:
           currency: THB
           type: expense
           balance_uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5
-          account: KBank debit
+          account: Wallet
           to_balance_uid: null
           to_account: null
           category_uid: null
@@ -1635,7 +1635,7 @@ components:
         code: version_conflict
         current:
           uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5
-          name: KBank debit
+          name: Wallet
           type: payment_account
           kind: asset
           currency: THB
