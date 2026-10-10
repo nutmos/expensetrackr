@@ -82,7 +82,7 @@ Errors:
 
 Read-only fields (`uid`, `status`, `has_password`, timestamps) may be sent
 back, e.g. a GET response used as a PUT body, and are ignored. Like the rest
-of the API, these endpoints do not require authentication yet.
+of the API, these endpoints require a login session (see [auth.md](auth.md)).
 
 ## Auth-readiness decisions
 

@@ -8,8 +8,39 @@
 </head>
 <body>
   <main>
-    <h1>Expense Log</h1>
-    <nav class="tabs" aria-label="Sections">
+    <header class="app-header">
+      <h1>Expense Log</h1>
+      <div id="user-bar" class="user-bar" hidden>
+        <span class="muted">Signed in as</span> <strong id="user-name"></strong>
+        <button type="button" id="logout-btn" class="secondary">Log out</button>
+      </div>
+    </header>
+
+    <!-- Login / first-run account creation (router.js). Shown instead of the app when signed out. -->
+    <div id="view-login" hidden>
+    <section class="card form-card auth-card">
+      <h2 id="login-title">Log in</h2>
+      <p id="login-intro" class="muted"></p>
+      <form id="login-form" novalidate>
+        <label>Username
+          <input id="login-username" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+          <small class="err" data-for="username"></small>
+        </label>
+        <label>Password
+          <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+          <small class="err" data-for="password"></small>
+        </label>
+        <label id="login-display-row" hidden>Display name <span class="muted">(optional)</span>
+          <input id="login-display" name="display_name" type="text" autocomplete="name">
+          <small class="err" data-for="display_name"></small>
+        </label>
+        <p id="login-error" class="error" role="alert" hidden></p>
+        <div class="actions"><button type="submit" id="login-submit">Log in</button></div>
+      </form>
+    </section>
+    </div>
+
+    <nav class="tabs" id="app-nav" aria-label="Sections" hidden>
       <a href="/transactions" id="tab-transactions" class="tab">Transactions</a>
       <a href="/balances" id="tab-balances" class="tab">Balances</a>
       <a href="/categories" id="tab-categories" class="tab">Categories</a>

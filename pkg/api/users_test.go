@@ -24,7 +24,7 @@ func newTestServerWithStore(t *testing.T) (http.Handler, *store.Store) {
 	}
 	t.Cleanup(func() { st.Close() })
 	static := fstest.MapFS{"index.html": {Data: []byte("<!doctype html><title>Expense Log</title>")}}
-	return (&Server{Store: st, Static: static}).Router(), st
+	return loggedIn(t, (&Server{Store: st, Static: static}).Router(), st), st
 }
 
 // noSecrets fails if a response body mentions the hash or its column.
@@ -99,7 +99,7 @@ func TestUsersCRUD(t *testing.T) {
 	}
 	noSecrets(t, "get", rec.Body.String())
 	rec, list := do(t, h, "GET", "/api/users", "")
-	if rec.Code != 200 || list["count"].(float64) != 2 {
+	if rec.Code != 200 || list["count"].(float64) != 3 { // + the logged-in "tester"
 		t.Errorf("list: %d %v", rec.Code, list)
 	}
 	noSecrets(t, "list", rec.Body.String())

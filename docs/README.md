@@ -27,6 +27,8 @@ match the Go JSON shapes.
 
 - [User profiles](user-profile.md): the `users` and `user_identities` tables
   (schema v10), the `/api/users` API, and the auth-readiness decisions.
+- [Authentication](auth.md): username/password login, sessions (schema
+  v14), first-run setup, public vs protected routes, CSRF and throttling.
 - [Balances](balances.md): automatic adjustment from transactions (sign
   rules), manual overrides via PUT recorded as Balance Adjustment
   transactions, optimistic locking (`version`, `ETag`, `If-Match`, 428/409),

@@ -8,6 +8,7 @@ require (
 	github.com/gin-gonic/gin v1.11.0
 	github.com/goccy/go-yaml v1.18.0
 	github.com/google/uuid v1.6.0
+	golang.org/x/crypto v0.43.0
 	modernc.org/sqlite v1.46.1
 )
 
@@ -37,7 +38,6 @@ require (
 	github.com/ugorji/go/codec v1.3.0 // indirect
 	go.uber.org/mock v0.5.0 // indirect
 	golang.org/x/arch v0.20.0 // indirect
-	golang.org/x/crypto v0.43.0 // indirect
 	golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546 // indirect
 	golang.org/x/mod v0.29.0 // indirect
 	golang.org/x/net v0.46.0 // indirect
