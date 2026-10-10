@@ -26,7 +26,8 @@ go.mod, go.sum   module github.com/nutmos/expensetrackr
 Makefile         build / run / test / vet / fmt / clean
 cmd/server/      the expense-server binary (main package)
 pkg/             library packages (api, store, transaction, balance, category, user,
-                 money, validate) and pkg/web (embedded web page)
+                 money, validate), pkg/web (embedded web page) and pkg/apidoc
+                 (embedded OpenAPI spec + offline Swagger UI)
 docs/            project documentation (non-code)
 README.md
 bin/, data/, server.log   local runtime files (git-ignored)
@@ -68,7 +69,11 @@ make build
 nohup ./bin/expense-server -db data/expenses.db > server.log 2>&1 &
 ```
 
-Open http://127.0.0.1:8080/ for the web page.
+Open http://127.0.0.1:8080/ for the web page, and
+http://127.0.0.1:8080/swagger/ for the API documentation (Swagger UI).
+The web page header links there too. The raw spec is at
+http://127.0.0.1:8080/api/openapi.yaml (YAML) and
+http://127.0.0.1:8080/api/openapi.json (JSON).
 
 ## Test
 
@@ -422,6 +427,9 @@ only on validation, conflict and duplicate-name errors.
 | DELETE | `/api/users/:uid`      | 204 | Also deletes linked identities |
 | GET    | `/api/users/:uid/identities` | 200 `{"identities":[...],"count":n}` | Read-only SSO links (empty until SSO exists) |
 | GET    | `/api/healthz`       | 200 `{"status":"ok"}` | |
+| GET    | `/api/openapi.yaml`  | 200 the OpenAPI 3.0 document | Hand-written spec, embedded in the binary |
+| GET    | `/api/openapi.json`  | 200 the same document as JSON | |
+| GET    | `/swagger/`, `/swagger` | Swagger UI (HTML) | `/swagger` redirects to `/swagger/`. Assets are vendored and embedded (offline; no CDN) |
 | GET    | `/`, `/transactions`, `/balances`, `/categories` | HTML page (list) | Same `index.html` for every page path; the client-side router picks the view. Static assets under `/static/` |
 | GET    | `/<res>/new`, `/<res>/:uid/edit` | HTML page (add / edit form) | `<res>` = `transactions`, `balances` or `categories`. `:uid` must be UUID-shaped (any case), else 404; an unknown uid is reported by the page itself. Other paths → 404 JSON |
 
@@ -596,6 +604,10 @@ pkg/api/                           Gin routes and handlers
 pkg/web/embed.go                   embeds web/static into the binary
 pkg/web/static/                    index.html (all views), style.css, router.js (history router + shared helpers),
                                    transactions.js, balances.js, categories.js (list + form page each)
+pkg/apidoc/                        the API description, embedded into the binary
+  openapi.yaml                     hand-written OpenAPI 3.0 spec (the source of truth for the docs)
+  apidoc.go                        serves GET /api/openapi.yaml, /api/openapi.json and /swagger/
+  swagger-ui/                      vendored swagger-ui-dist 5.33.1 (Apache-2.0; see VENDOR.md)
 ```
 
 ## Web page
@@ -611,9 +623,17 @@ path, and `router.js` shows the view for `location.pathname`:
 | `/transactions/<uid>/edit`   | Edit a transaction (same form) |
 | `/balances`, `/balances/new`, `/balances/<uid>/edit` | Balances list / add / edit |
 | `/categories`, `/categories/new`, `/categories/<uid>/edit` | Categories list / add / edit |
+| `/swagger/`                  | API documentation (Swagger UI; opens in a new tab from the header) |
 
 Old hash links (`/#balances`, `/#categories`, `/#transactions`) are rewritten
 to the matching path.
+
+**API docs.** The header's **API docs** link opens `/swagger/` (Swagger UI)
+in a new tab. The spec is hand-written (`pkg/apidoc/openapi.yaml`) and embedded
+in the binary, and the Swagger UI assets are vendored (`swagger-ui-dist`
+5.33.1, Apache-2.0), so the docs work without network access. A test
+(`pkg/api/openapi_test.go`) fails when a `/api` route is missing from the
+spec, or a spec operation has no route.
 
 **Uids are never shown on the page.** They identify records only behind the
 scenes: in row `data-uid` attributes, dropdown option values, edit URLs
