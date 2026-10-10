@@ -4,10 +4,7 @@
 package category
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -94,53 +91,7 @@ func (in Input) Validate() (Category, error) {
 	return c, nil
 }
 
-// Input returns the editable fields of c, for PATCH merging.
+// Input returns the editable fields of c, e.g. to build a PUT body from a stored record.
 func (c Category) Input() Input {
 	return Input{Name: c.Name, Type: string(c.Type), Description: c.Description}
-}
-
-var patchFields = map[string]bool{"name": true, "type": true, "description": true}
-
-// ApplyPatch overlays the fields present in patch onto in. "description": null
-// clears it; null for name/type is a validation error; "uid" is ignored.
-func (in *Input) ApplyPatch(patch map[string]json.RawMessage) error {
-	delete(patch, "uid") // immutable; ignored like balances and transactions
-	if len(patch) == 0 {
-		return &validate.RequestError{Msg: "patch must contain at least one of: name, type, description"}
-	}
-	var unknown []string
-	for k := range patch {
-		if !patchFields[k] {
-			unknown = append(unknown, fmt.Sprintf("%q", k))
-		}
-	}
-	if len(unknown) > 0 {
-		sort.Strings(unknown)
-		return &validate.RequestError{Msg: "unknown field " + strings.Join(unknown, ", ")}
-	}
-	nullFields := map[string]string{}
-	for _, f := range []struct {
-		name string
-		dst  *string
-	}{{"name", &in.Name}, {"type", &in.Type}, {"description", &in.Description}} {
-		raw, ok := patch[f.name]
-		if !ok {
-			continue
-		}
-		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-			if f.name == "description" {
-				*f.dst = ""
-			} else {
-				nullFields[f.name] = "cannot be null"
-			}
-			continue
-		}
-		if err := json.Unmarshal(raw, f.dst); err != nil {
-			return &validate.RequestError{Msg: fmt.Sprintf("field %q must be a string", f.name)}
-		}
-	}
-	if len(nullFields) > 0 {
-		return &validate.ValidationError{Fields: nullFields}
-	}
-	return nil
 }

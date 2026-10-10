@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"regexp"
@@ -18,7 +17,6 @@ func (s *Server) registerBalanceRoutes(api *gin.RouterGroup) {
 	api.GET("/balances", s.listBalances)
 	api.GET("/balances/:uid", s.getBalance)
 	api.PUT("/balances/:uid", s.replaceBalance)
-	api.PATCH("/balances/:uid", s.patchBalance)
 	api.DELETE("/balances/:uid", s.deleteBalance)
 }
 
@@ -185,40 +183,6 @@ func (s *Server) replaceBalance(c *gin.Context) {
 		return
 	}
 	s.saveBalance(c, cur, store.WriteOptions{Version: version}, func(existing balance.Balance) (balance.Balance, error) {
-		return in.ValidateUpdate(existing.Type)
-	})
-}
-
-// patchBalance handles PATCH: only fields present change; the merged result is
-// validated as a whole. "type" may be sent only with the stored value.
-// A "uid" field in the body is ignored. Versioning as for PUT.
-func (s *Server) patchBalance(c *gin.Context) {
-	cur, ok := s.resolveBalance(c)
-	if !ok {
-		return
-	}
-	var patch map[string]json.RawMessage
-	if !decodeBody(c, &patch, false) {
-		return
-	}
-	if patch == nil {
-		c.JSON(http.StatusBadRequest, errorBody{Error: "request body must be a JSON object"})
-		return
-	}
-	bodyVersion, err := takeVersion(patch)
-	if err != nil {
-		writeInputError(c, err)
-		return
-	}
-	version, ok := clientVersion(c, bodyVersion, true)
-	if !ok {
-		return
-	}
-	s.saveBalance(c, cur, store.WriteOptions{Version: version}, func(existing balance.Balance) (balance.Balance, error) {
-		in := existing.Input()
-		if err := in.ApplyPatch(patch); err != nil {
-			return balance.Balance{}, err
-		}
 		return in.ValidateUpdate(existing.Type)
 	})
 }

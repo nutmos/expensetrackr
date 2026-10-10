@@ -34,7 +34,7 @@ info:
     - **Optimistic locking (balances and transactions):** every balance and transaction has a
       `version` (1 on create, +1 on every change, including automatic balance moves caused by
       transactions). Single-record responses also send it as `ETag: "<version>"`.
-      `PUT`/`PATCH` must name the version they are based on, either as `If-Match: "<version>"`
+      `PUT` must name the version they are based on, either as `If-Match: "<version>"`
       (preferred; `W/"<version>"` also accepted) or as `"version": <n>` in the body:
       neither → **428** `version_required`; malformed, or header and body disagree → **400**;
       stale → **409** `version_conflict` with the current record in `current` and its `ETag`.
@@ -45,13 +45,16 @@ info:
       conflict and duplicate errors). `code` is one of `version_required`, `version_conflict`,
       `balance_in_use`, `balance_adjustment_readonly`.
       Status codes: **400** malformed request (bad JSON, unknown field, wrong JSON type, empty
-      patch, bad query parameter, bad uid, bad `If-Match`, body over 64 KiB), **404** not found,
+      users patch, bad query parameter, bad uid, bad `If-Match`, body over 64 KiB), **404** not found,
       **409** conflict, **422** validation failed (`fields`), **428** version required,
       **500** internal error. An unknown path *or method* is a 404 `{"error":"not found"}`
       (no 405, no `OPTIONS`/`HEAD` handling, no CORS).
     - **Writes** take `application/json` bodies. Unknown fields are rejected (400). On `POST`/`PUT`
       a `uid` field is accepted so a response can be sent back, but it is ignored.
-      `PATCH` changes only the fields present and then validates the merged record as a whole.
+      `PUT` is a **full replacement**: send the whole record (all editable fields). There is no `PATCH`
+      for transactions, balances or categories (a `PATCH` there is a 404 like any unknown method). To
+      clear an optional field (`note`, `category_uid`, `to_balance_uid`, `description`), omit it or
+      send `""` in the full `PUT` body.
 
     ## Transaction types
 
@@ -63,10 +66,10 @@ info:
     | `balance_adjustment` | the edited balance | — | none (**read-only**, server-created) |
 
     The transaction `currency` must equal the currency of its balance(s) (422 otherwise).
-    `balance_adjustment` transactions are created automatically when `PUT`/`PATCH /api/balances/{uid}`
+    `balance_adjustment` transactions are created automatically when `PUT /api/balances/{uid}`
     changes a balance's `balance` (asset) or `debt` (liability). Their `amount` is the absolute difference and
     `adjustment_direction` is `increase` or `decrease`. They are read-only: `type: balance_adjustment`
-    on create/replace/patch is a 422, and `PUT`/`PATCH`/`DELETE` of one is a 409
+    on create/replace is a 422, and `PUT`/`DELETE` of one is a 409
     `balance_adjustment_readonly`.
 servers:
   - url: /
@@ -231,53 +234,6 @@ paths:
         '422': { $ref: '#/components/responses/TransactionValidationFailed' }
         '428': { $ref: '#/components/responses/VersionRequired' }
         '500': { $ref: '#/components/responses/InternalError' }
-    patch:
-      tags: [transactions]
-      operationId: patchTransaction
-      summary: Partially update a transaction
-      description: |
-        Only the fields present change, then the merged record is validated like a create.
-        - `null` clears `note`, `to_balance_uid` and `category_uid`. `null` for any other field is a 422.
-        - Changing `type` away from `transfer` drops the destination. Changing `type` drops the
-          category unless `category_uid` is sent too. Changing to `transfer` needs
-          `to_balance_uid` in the same patch.
-        - Changing `currency` re-reads the current amount with the new currency's decimals (no
-          conversion). If the amount cannot be expressed in the new currency, the request is a 422:
-          send `amount` along with `currency`.
-        - `{}` (or only `uid`/`version`) is a 400. `account` is rejected (use `balance_uid`).
-
-        Requires `If-Match` or `"version"`. Read-only `balance_adjustment` rows answer 409.
-      parameters:
-        - $ref: '#/components/parameters/IfMatch'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/TransactionPatch' }
-            examples:
-              note:
-                summary: Change the note (If-Match header sent)
-                value: { note: chicken rice }
-              currency:
-                summary: Change currency and amount together, version in the body
-                value: { currency: JPY, amount: '2800', version: 2 }
-              clearCategory:
-                summary: Remove the category
-                value: { category_uid: null }
-      responses:
-        '200':
-          description: Updated. `ETag` carries the new version.
-          headers:
-            ETag: { $ref: '#/components/headers/ETag' }
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Transaction' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '404': { $ref: '#/components/responses/TransactionNotFound' }
-        '409': { $ref: '#/components/responses/TransactionConflict' }
-        '422': { $ref: '#/components/responses/TransactionValidationFailed' }
-        '428': { $ref: '#/components/responses/VersionRequired' }
-        '500': { $ref: '#/components/responses/InternalError' }
     delete:
       tags: [transactions]
       operationId: deleteTransaction
@@ -410,7 +366,7 @@ paths:
         transactions did to the balance. A change of `balance` (assets) or `debt` (liabilities) records
         a read-only `balance_adjustment` transaction. Limit-only, name, description and currency changes
         record nothing. The currency cannot change while transactions reference the balance (409
-        `balance_in_use`). Requires `If-Match` or `"version"`.
+        `balance_in_use`). An omitted `description` is cleared. Requires `If-Match` or `"version"`.
       parameters:
         - $ref: '#/components/parameters/IfMatch'
       requestBody:
@@ -419,45 +375,6 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/BalanceInput' }
             example: { name: KBank debit, type: payment_account, currency: THB, description: Salary account, balance: '5000', version: 3 }
-      responses:
-        '200':
-          description: Updated. `ETag` carries the new version.
-          headers:
-            ETag: { $ref: '#/components/headers/ETag' }
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Balance' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '404': { $ref: '#/components/responses/BalanceNotFound' }
-        '409': { $ref: '#/components/responses/BalanceConflict' }
-        '422': { $ref: '#/components/responses/BalanceValidationFailed' }
-        '428': { $ref: '#/components/responses/VersionRequired' }
-        '500': { $ref: '#/components/responses/InternalError' }
-    patch:
-      tags: [balances]
-      operationId: patchBalance
-      summary: Partially update a balance (manual override)
-      description: |
-        Only the fields present change, then the merged balance is validated as a whole.
-        `type` may be sent only with the stored value. `"description": null` clears it.
-        `"balance"`/`"debt"`/`"limit": null` removes that amount, which is a 422 if the type needs it.
-        `null` for `name`, `type` or `currency` is a 422. A currency change re-reads the amounts with the
-        new currency's decimals (no conversion). `{}` is a 400. Adjustment recording,
-        `balance_in_use` and versioning work as for PUT.
-      parameters:
-        - $ref: '#/components/parameters/IfMatch'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/BalancePatch' }
-            examples:
-              balance:
-                summary: Set the balance (If-Match header sent)
-                value: { balance: '1200.50' }
-              limit:
-                summary: Raise a card limit, version in the body
-                value: { limit: '80000', version: 4 }
       responses:
         '200':
           description: Updated. `ETag` carries the new version.
@@ -575,30 +492,6 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/CategoryInput' }
             example: { name: Food & drink, type: expense, description: '' }
-      responses:
-        '200':
-          description: Updated.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Category' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '404': { $ref: '#/components/responses/CategoryNotFound' }
-        '409': { $ref: '#/components/responses/CategoryConflict' }
-        '422': { $ref: '#/components/responses/ValidationFailed' }
-        '500': { $ref: '#/components/responses/InternalError' }
-    patch:
-      tags: [categories]
-      operationId: patchCategory
-      summary: Partially update a category
-      description: |
-        Only the fields present change. `"description": null` clears it. `null` for `name` or `type`
-        is a 422. `{}` is a 400. 409 rules as for PUT.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/CategoryPatch' }
-            example: { name: Eating out }
       responses:
         '200':
           description: Updated.
@@ -881,7 +774,7 @@ components:
     BadRequest:
       description: |
         Malformed request: invalid JSON, a body that is not one JSON object, unknown field, wrong JSON
-        type, empty patch, body over 64 KiB, a uid that is not UUID-shaped, or a malformed / disagreeing `If-Match`.
+        type, empty users patch, body over 64 KiB, a uid that is not UUID-shaped, or a malformed / disagreeing `If-Match`.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
@@ -889,7 +782,6 @@ components:
             malformed_json: { value: { error: malformed JSON at byte 12 } }
             unknown_field: { value: { error: 'unknown field "account"' } }
             wrong_type: { value: { error: 'field "note" must be a string' } }
-            empty_patch: { value: { error: 'patch must contain at least one of: amount, currency, type, balance_uid, to_balance_uid, category_uid, spent_at, note' } }
             bad_uid: { $ref: '#/components/examples/ErrBadUid' }
             bad_if_match: { value: { error: 'If-Match must be a single version entity tag such as "3" (the ETag header or "version" field of your last read)' } }
             versions_disagree: { value: { error: 'If-Match ("3") and the body "version" (2) disagree; send one, or the same value in both' } }
@@ -1245,43 +1137,6 @@ components:
           minimum: 1
           description: PUT only, as an alternative to `If-Match`. Ignored on POST.
       additionalProperties: false
-    TransactionPatch:
-      type: object
-      description: Body of PATCH. At least one changeable field. Unknown fields (incl. `account`) are a 400.
-      minProperties: 1
-      properties:
-        amount:
-          allOf:
-            - $ref: '#/components/schemas/DecimalInput'
-          description: New positive amount. `null` is a 422.
-        currency: { $ref: '#/components/schemas/Currency' }
-        type: { $ref: '#/components/schemas/TransactionWriteType' }
-        balance_uid: { type: string, format: uuid }
-        to_balance_uid:
-          type: string
-          format: uuid
-          nullable: true
-          description: '`null` clears it.'
-        category_uid:
-          type: string
-          format: uuid
-          nullable: true
-          description: '`null` clears it.'
-        spent_at: { type: string, format: date-time }
-        note:
-          type: string
-          nullable: true
-          maxLength: 1000
-          description: '`null` clears it.'
-        uid:
-          type: string
-          description: Ignored.
-        version:
-          type: integer
-          format: int64
-          minimum: 1
-          description: Alternative to `If-Match`.
-      additionalProperties: false
     TransactionList:
       type: object
       required: [transactions, count]
@@ -1394,46 +1249,6 @@ components:
           minimum: 1
           description: PUT only, as an alternative to `If-Match`. Ignored on POST.
       additionalProperties: false
-    BalancePatch:
-      type: object
-      description: Body of PATCH. At least one changeable field. Unknown fields are a 400.
-      minProperties: 1
-      properties:
-        name: { type: string, maxLength: 100 }
-        type:
-          allOf:
-            - $ref: '#/components/schemas/BalanceType'
-          description: May be sent, but only with the stored value.
-        currency: { $ref: '#/components/schemas/Currency' }
-        description:
-          type: string
-          nullable: true
-          maxLength: 1000
-          description: '`null` clears it.'
-        balance:
-          allOf:
-            - $ref: '#/components/schemas/DecimalInput'
-          nullable: true
-          description: '`null` removes it.'
-        debt:
-          allOf:
-            - $ref: '#/components/schemas/DecimalInput'
-          nullable: true
-          description: '`null` removes it.'
-        limit:
-          allOf:
-            - $ref: '#/components/schemas/DecimalInput'
-          nullable: true
-          description: '`null` removes it.'
-        uid:
-          type: string
-          description: Ignored.
-        version:
-          type: integer
-          format: int64
-          minimum: 1
-          description: Alternative to `If-Match`.
-      additionalProperties: false
     BalanceTotals:
       type: object
       description: Sums for one currency over the returned balances (decimal strings only; no conversion).
@@ -1480,15 +1295,6 @@ components:
         type: { $ref: '#/components/schemas/CategoryType' }
         description: { type: string, nullable: true, maxLength: 1000 }
         uid: { type: string, description: Accepted and ignored. }
-      additionalProperties: false
-    CategoryPatch:
-      type: object
-      minProperties: 1
-      properties:
-        name: { type: string, maxLength: 100 }
-        type: { $ref: '#/components/schemas/CategoryType' }
-        description: { type: string, nullable: true, maxLength: 1000, description: '`null` clears it.' }
-        uid: { type: string, description: Ignored. }
       additionalProperties: false
     CategoryList:
       type: object
@@ -1791,7 +1597,7 @@ components:
       value:
         error: validation failed
         fields:
-          type: 'balance_adjustment transactions are created automatically when a balance amount is edited (PUT/PATCH /api/balances/:uid); they cannot be created or changed here'
+          type: 'balance_adjustment transactions are created automatically when a balance amount is edited (PUT /api/balances/:uid); they cannot be created or changed here'
     ErrTxVersionConflict:
       summary: Stale version
       value:

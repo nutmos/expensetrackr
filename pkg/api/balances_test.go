@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -133,7 +134,7 @@ func TestBalanceCreateErrors(t *testing.T) {
 	}
 }
 
-func TestBalancePutAndPatch(t *testing.T) {
+func TestBalancePut(t *testing.T) {
 	h := newTestServer(t)
 	path, orig := createBal(t, h, `{"name":"KBank","type":"payment_account","currency":"THB","balance":"100.50","description":"main"}`)
 	createBal(t, h, `{"name":"Other","type":"other_asset","currency":"THB","balance":"1"}`)
@@ -174,59 +175,66 @@ func TestBalancePutAndPatch(t *testing.T) {
 		t.Errorf("PUT duplicate name: %d", rec.Code)
 	}
 
-	// PATCH partial; sending the stored type is allowed.
-	rec, body = do(t, h, "PATCH", path, `{"type":"payment_account","balance":"-12"}`)
+	// Full-record PUT with one field changed; sending the stored type is allowed.
+	rec, body = putMerged(t, h, path, `{"type":"payment_account","balance":"-12"}`)
 	if rec.Code != 200 || body["balance"] != "-12.00" || body["name"] != "KBank Main" || body["type"] != "payment_account" {
-		t.Errorf("PATCH same type: %d %v", rec.Code, body)
+		t.Errorf("PUT same type: %d %v", rec.Code, body)
 	}
-	// PATCH with another type is 422 on "type", with or without amounts.
+	// PUT with another type is 422 on "type", with or without amounts.
 	for _, b := range []string{`{"type":"credit_card"}`, `{"type":"credit_card","debt":"1","limit":"2"}`, `{"type":"other_asset"}`} {
-		rec, body := do(t, h, "PATCH", path, b)
+		rec, body := putMerged(t, h, path, b)
 		if rec.Code != 422 || fieldsOf(body)["type"] != "balance type cannot be changed after creation" {
-			t.Errorf("PATCH type change %s: %d %v", b, rec.Code, body)
+			t.Errorf("PUT type change %s: %d %v", b, rec.Code, body)
 		}
 	}
 	// The amount edits above recorded balance adjustments, so KBank's
 	// currency is now fixed (409 balance_in_use).
-	if rec, body := do(t, h, "PATCH", path, `{"currency":"KWD"}`); rec.Code != 409 || code(body) != "balance_in_use" {
-		t.Errorf("PATCH currency of referenced balance: %d %v", rec.Code, body)
+	if rec, body := putMerged(t, h, path, `{"currency":"KWD"}`); rec.Code != 409 || code(body) != "balance_in_use" {
+		t.Errorf("PUT currency of referenced balance: %d %v", rec.Code, body)
 	}
-	// PATCH currency re-scale / rejection on a balance nothing references
+	// PUT currency re-scale / rejection on a balance nothing references
 	// (a currency change records no adjustment, so it stays unreferenced).
 	rpath, _ := createBal(t, h, `{"name":"Rescale","type":"payment_account","currency":"THB","balance":"-12"}`)
-	rec, body = do(t, h, "PATCH", rpath, `{"currency":"KWD"}`)
+	rec, body = putMerged(t, h, rpath, `{"currency":"KWD"}`)
 	if rec.Code != 200 || body["balance"] != "-12.000" || body["balance_minor"].(float64) != -12000 {
-		t.Errorf("PATCH KWD: %d %v", rec.Code, body)
+		t.Errorf("PUT KWD: %d %v", rec.Code, body)
 	}
-	if rec, body := do(t, h, "PATCH", rpath, `{"currency":"THB","balance":"-12.5"}`); rec.Code != 200 {
-		t.Errorf("PATCH back to THB: %d %v", rec.Code, body)
+	if rec, body := putMerged(t, h, rpath, `{"currency":"THB","balance":"-12.5"}`); rec.Code != 200 {
+		t.Errorf("PUT back to THB: %d %v", rec.Code, body)
 	}
-	rec, body = do(t, h, "PATCH", rpath, `{"currency":"JPY"}`)
+	rec, body = putMerged(t, h, rpath, `{"currency":"JPY"}`)
 	if rec.Code != 422 || fieldsOf(body)["balance"] == nil {
-		t.Errorf("PATCH JPY with fractional balance: %d %v", rec.Code, body)
+		t.Errorf("PUT JPY with fractional balance: %d %v", rec.Code, body)
 	}
-	// PATCH errors.
+	// PUT errors (full body built from the stored record unless raw).
 	for _, c := range []struct {
 		path, body string
 		status     int
+		raw        bool
 	}{
-		{"/api/balances/00000000-0000-4000-8000-000000009999", `{"name":"x"}`, 404},
-		{"/api/balances/abc", `{"name":"x"}`, 400}, // malformed uid
-		{path, `{}`, 400},
-		{path, `null`, 400},
-		{path, `{"colour":"red"}`, 400},
-		{path, `{"name":5}`, 400},
-		{path, `{"name":null}`, 422},
-		{path, `{"name":"OTHER"}`, 409},
-		{path, `{"debt":"5"}`, 422}, // asset now: debt not used
+		{"/api/balances/00000000-0000-4000-8000-000000009999", `{"name":"x"}`, 404, false},
+		{"/api/balances/abc", `{"name":"x"}`, 400, false}, // malformed uid
+		{path, `{}`, 422, true},   // full replace: required fields missing
+		{path, `null`, 422, true}, // like POST: decodes to an empty record
+		{path, `{"colour":"red"}`, 400, false},
+		{path, `{"name":5}`, 400, false},
+		{path, `{"name":null}`, 422, false},
+		{path, `{"name":"OTHER"}`, 409, false},
+		{path, `{"debt":"5"}`, 422, false}, // asset now: debt not used
 	} {
-		if rec, body := do(t, h, "PATCH", c.path, c.body); rec.Code != c.status {
-			t.Errorf("PATCH %s %s: %d, want %d (%v)", c.path, c.body, rec.Code, c.status, body)
+		put := putMerged
+		if c.raw {
+			put = func(t *testing.T, h http.Handler, path, body string) (*httptest.ResponseRecorder, map[string]any) {
+				return do(t, h, "PUT", path, body)
+			}
+		}
+		if rec, body := put(t, h, c.path, c.body); rec.Code != c.status {
+			t.Errorf("PUT %s %s: %d, want %d (%v)", c.path, c.body, rec.Code, c.status, body)
 		}
 	}
 	_, got := do(t, h, "GET", path, "")
 	if got["balance"] != "-12.00" || got["currency"] != "THB" {
-		t.Errorf("failed PATCHes changed the record: %v", got)
+		t.Errorf("failed PUTs changed the record: %v", got)
 	}
 }
 
@@ -277,15 +285,15 @@ func TestBalanceUIDAssignedAndLookup(t *testing.T) {
 	if rec.Code != 200 || body["uid"] != uid || body["balance"] != "200.00" {
 		t.Errorf("PUT by uid: %d %v", rec.Code, body)
 	}
-	// PATCH with only uid: empty after ignore -> 400.
-	rec, body = do(t, h, "PATCH", path, `{"uid":"11111111-1111-4111-8111-111111111111"}`)
-	if rec.Code != 400 {
-		t.Errorf("PATCH uid-only: %d %v", rec.Code, body)
+	// PUT with only uid: uid ignored, so the required fields are missing -> 422.
+	rec, body = do(t, h, "PUT", path, `{"uid":"11111111-1111-4111-8111-111111111111"}`)
+	if rec.Code != 422 {
+		t.Errorf("PUT uid-only: %d %v", rec.Code, body)
 	}
-	// PATCH with uid + real field: uid ignored, field applied.
-	rec, body = do(t, h, "PATCH", "/api/balances/"+uid, `{"uid":"11111111-1111-4111-8111-111111111111","balance":"-5"}`)
+	// PUT of the full record with a foreign uid: uid ignored, field applied.
+	rec, body = putMerged(t, h, "/api/balances/"+uid, `{"uid":"11111111-1111-4111-8111-111111111111","balance":"-5"}`)
 	if rec.Code != 200 || body["uid"] != uid || body["balance"] != "-5.00" {
-		t.Errorf("PATCH with uid: %d %v", rec.Code, body)
+		t.Errorf("PUT with uid: %d %v", rec.Code, body)
 	}
 	// DELETE by uid.
 	if rec, _ := do(t, h, "DELETE", "/api/balances/"+uid, ""); rec.Code != http.StatusNoContent {

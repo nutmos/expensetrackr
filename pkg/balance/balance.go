@@ -4,8 +4,6 @@
 package balance
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -232,7 +230,7 @@ func (in Input) Validate() (Balance, error) {
 const ErrTypeChanged = "balance type cannot be changed after creation"
 
 // ValidateUpdate validates in as the new state of a stored balance of type
-// stored (PUT, and PATCH after ApplyPatch). The type is fixed at creation: in
+// stored (PUT). The type is fixed at creation: in
 // must carry the same type (case/space-insensitive); a different one is a
 // validation error on "type". The other fields are then still checked against
 // the stored type, so every problem is reported at once.
@@ -255,7 +253,7 @@ func (in Input) ValidateUpdate(stored Type) (Balance, error) {
 	return Balance{}, &validate.ValidationError{Fields: fields}
 }
 
-// Input returns the editable fields of a stored balance, for PATCH merging.
+// Input returns the editable fields of a stored balance, e.g. to build a PUT body from a stored record.
 func (b Balance) Input() Input {
 	dec := func(s *string) *money.DecimalInput {
 		if s == nil {
@@ -268,83 +266,6 @@ func (b Balance) Input() Input {
 		Name: b.Name, Type: string(b.Type), Currency: b.Currency, Description: b.Description,
 		Balance: dec(b.Balance), Debt: dec(b.Debt), Limit: dec(b.Limit),
 	}
-}
-
-var patchFields = map[string]bool{
-	"name": true, "type": true, "currency": true, "description": true,
-	"balance": true, "debt": true, "limit": true,
-}
-
-func isNull(raw json.RawMessage) bool { return bytes.Equal(bytes.TrimSpace(raw), []byte("null")) }
-
-// ApplyPatch overlays the fields present in a JSON-object patch onto in.
-// Absent fields are unchanged. "description": null clears the description;
-// "balance"/"debt"/"limit": null removes that amount. null for name, type or
-// currency is a validation error. "type" may be sent but must equal the stored
-// type; the caller must run ValidateUpdate (which enforces that) on the result.
-func (in *Input) ApplyPatch(patch map[string]json.RawMessage) error {
-	// uid is immutable; drop it so round-tripping a previous response is fine.
-	// "version" is request metadata, read by the API before this point, not a
-	// field of the balance.
-	delete(patch, "uid")
-	delete(patch, "version")
-	if len(patch) == 0 {
-		return &validate.RequestError{Msg: "patch must contain at least one of: name, type, currency, description, balance, debt, limit"}
-	}
-	var unknown []string
-	for k := range patch {
-		if !patchFields[k] {
-			unknown = append(unknown, fmt.Sprintf("%q", k))
-		}
-	}
-	if len(unknown) > 0 {
-		sort.Strings(unknown)
-		return &validate.RequestError{Msg: "unknown field " + strings.Join(unknown, ", ")}
-	}
-
-	nullFields := map[string]string{}
-	for _, f := range []struct {
-		name string
-		dst  *string
-	}{{"name", &in.Name}, {"type", &in.Type}, {"currency", &in.Currency}, {"description", &in.Description}} {
-		raw, ok := patch[f.name]
-		if !ok {
-			continue
-		}
-		if isNull(raw) {
-			if f.name == "description" {
-				*f.dst = ""
-			} else {
-				nullFields[f.name] = "cannot be null"
-			}
-			continue
-		}
-		if err := json.Unmarshal(raw, f.dst); err != nil {
-			return &validate.RequestError{Msg: fmt.Sprintf("field %q must be a string", f.name)}
-		}
-	}
-	for _, f := range []struct {
-		name string
-		dst  **money.DecimalInput
-	}{{"balance", &in.Balance}, {"debt", &in.Debt}, {"limit", &in.Limit}} {
-		raw, ok := patch[f.name]
-		if !ok {
-			continue
-		}
-		if isNull(raw) {
-			*f.dst = nil
-			continue
-		}
-		var d money.DecimalInput
-		if err := json.Unmarshal(raw, &d); err != nil {
-			return &validate.RequestError{Msg: fmt.Sprintf("field %q must be a decimal string or number", f.name)}
-		}
-		*f.dst = &d
-	}
-	if len(nullFields) > 0 {
-		return &validate.ValidationError{Fields: nullFields}
-	}
-	return nil
 }
 
 // ErrOverflow is returned by ApplyValueDelta when the result does not fit.

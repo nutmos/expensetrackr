@@ -23,7 +23,7 @@ func fixClock(t *testing.T) {
 	t.Cleanup(func() { clock = old })
 }
 
-// edit runs a manual balance edit (the PUT/PATCH path).
+// edit runs a manual balance edit (the PUT path).
 func (f *fixture) edit(b balance.Balance, opts WriteOptions, mut func(*balance.Input)) (balance.Balance, error) {
 	f.t.Helper()
 	return f.st.UpdateBalanceWith(context.Background(), b.ID, opts, func(cur balance.Balance) (balance.Balance, error) {
