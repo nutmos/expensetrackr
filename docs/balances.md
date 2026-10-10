@@ -77,10 +77,11 @@ rejected with **422** and nothing is written:
 - A change that would overflow the stored integer is rejected (422 on
   `amount`). With 13 integer digits per amount this is theoretical.
 
-## 2. Manual adjustment (PUT/PATCH on a balance)
+## 2. Manual adjustment (PUT on a balance)
 
 You can still set `balance` (assets) or `debt` (liabilities) directly with
-the existing `PUT`/`PATCH /api/balances/:uid` (versioned like every other
+the existing `PUT /api/balances/:uid` (a full replace: send the whole
+record; versioned like every other
 write, see §3). **A manual value overrides** whatever transactions did; later
 transactions move the balance from the new value. There is no separate
 adjustments API.
@@ -116,9 +117,9 @@ When nothing is recorded:
   recorded adjustment counts as a reference.
 
 **Read-only via the API.** Adjustments are created only by balance edits:
-- `POST /api/transactions` with `"type":"balance_adjustment"`, or a PUT/PATCH
+- `POST /api/transactions` with `"type":"balance_adjustment"`, or a PUT
   that changes a transaction to that type: **422** on `type`.
-- `PUT`, `PATCH` or `DELETE` on an existing adjustment: **409** with
+- `PUT` or `DELETE` on an existing adjustment: **409** with
   `"code":"balance_adjustment_readonly"` (whatever the body or version).
   To correct one, edit the balance again (which records another adjustment).
 - They appear in `GET /api/transactions` and can be filtered with
@@ -139,19 +140,19 @@ shows a read-only message.
 
 Each balance and transaction has `version INTEGER NOT NULL DEFAULT 1`. It
 starts at 1 and goes up by one on **every** change:
-- a PUT or PATCH;
+- a PUT;
 - for a balance, also every transaction create, update or delete that moves
   it.
 
 Exposed as:
 - `"version": n` in every JSON representation, lists included;
-- an **`ETag: "n"`** header on POST (201), GET, PUT and PATCH of a single
+- an **`ETag: "n"`** header on POST (201), GET and PUT of a single
   balance or transaction. This is a strong ETag: the representation of a
   given version never changes.
 
 ### Requests
 
-PUT and PATCH on `/api/balances/:uid` and `/api/transactions/:uid` **require**
+PUT on `/api/balances/:uid` and `/api/transactions/:uid` **require**
 the version the edit is based on, in either of two places:
 
 1. **`If-Match: "n"`** header. This is preferred; `W/"n"` is accepted too.
@@ -185,9 +186,9 @@ Typical flow:
 
 ```sh
 curl -si http://127.0.0.1:8080/api/balances/$UID | grep -i etag     # ETag: "4"
-curl -s -X PATCH http://127.0.0.1:8080/api/balances/$UID \
+curl -s -X PUT http://127.0.0.1:8080/api/balances/$UID \
   -H 'Content-Type: application/json' -H 'If-Match: "4"' \
-  -d '{"balance":"1200.50"}'                                         # 200, version 5
+  -d '{"name":"Cash","type":"payment_account","currency":"THB","balance":"1200.50"}'                                         # 200, version 5
 # Same request again (still If-Match "4"):
 # 409 {"error":"version conflict: …","code":"version_conflict","fields":{"version":"is stale; the current version is 5"},"current":{…}}
 ```

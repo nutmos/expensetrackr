@@ -67,21 +67,21 @@ func TestCategoriesCRUD(t *testing.T) {
 		t.Errorf("upper: %d", rec.Code)
 	}
 
-	// PUT / PATCH keep uid; PATCH description null clears; rename to dup -> 409.
+	// PUT keeps uid; omitting description clears it; rename to dup -> 409.
 	rec, b = do(t, h, "PUT", path, `{"name":"Meals","type":"expense","description":"eat","uid":"11111111-1111-4111-8111-111111111111"}`)
 	if rec.Code != 200 || b["uid"] != uid || b["name"] != "Meals" || b["updated_at"] == nil {
 		t.Errorf("PUT: %d %v", rec.Code, b)
 	}
-	rec, b = do(t, h, "PATCH", path, `{"description":null}`)
+	rec, b = putMerged(t, h, path, `{"description":null}`)
 	if rec.Code != 200 || b["description"] != "" || b["name"] != "Meals" {
-		t.Errorf("PATCH: %d %v", rec.Code, b)
+		t.Errorf("PUT: %d %v", rec.Code, b)
 	}
 	mkCat(t, h, "Transport", "expense")
-	if rec, _ := do(t, h, "PATCH", path, `{"name":"transport"}`); rec.Code != 409 {
+	if rec, _ := putMerged(t, h, path, `{"name":"transport"}`); rec.Code != 409 {
 		t.Errorf("rename dup: %d", rec.Code)
 	}
 	// Unreferenced type change is allowed.
-	if rec, b := do(t, h, "PATCH", path, `{"type":"income"}`); rec.Code != 200 || b["type"] != "income" {
+	if rec, b := putMerged(t, h, path, `{"type":"income"}`); rec.Code != 200 || b["type"] != "income" {
 		t.Errorf("type change: %d %v", rec.Code, b)
 	}
 	if rec, _ := do(t, h, "DELETE", path, ""); rec.Code != 204 {
@@ -142,10 +142,10 @@ func TestTransactionCategories(t *testing.T) {
 	if rec, _ := do(t, h, "DELETE", "/api/categories/"+food, ""); rec.Code != 409 {
 		t.Errorf("delete referenced: %d", rec.Code)
 	}
-	if rec, _ := do(t, h, "PATCH", "/api/categories/"+food, `{"type":"income"}`); rec.Code != 409 {
+	if rec, _ := putMerged(t, h, "/api/categories/"+food, `{"type":"income"}`); rec.Code != 409 {
 		t.Errorf("type change referenced: %d", rec.Code)
 	}
-	if rec, _ := do(t, h, "PATCH", "/api/categories/"+food, `{"name":"Meals"}`); rec.Code != 200 {
+	if rec, _ := putMerged(t, h, "/api/categories/"+food, `{"name":"Meals"}`); rec.Code != 200 {
 		t.Errorf("rename referenced: %d", rec.Code)
 	}
 	txPath := "/api/transactions/" + e["uid"].(string)
@@ -153,16 +153,16 @@ func TestTransactionCategories(t *testing.T) {
 		t.Errorf("category_uid changed: %v", g)
 	}
 
-	// PATCH: type change drops category; clear with null; then delete works.
-	rec, p := do(t, h, "PATCH", txPath, `{"type":"income"}`)
+	// PUT full record: a type change must also clear the category (omit it); omitting category_uid clears it; then delete works.
+	rec, p := putMerged(t, h, txPath, `{"type":"income","category_uid":null}`)
 	if rec.Code != 200 || p["category_uid"] != nil {
 		t.Errorf("type change drops category: %d %v", rec.Code, p)
 	}
-	rec, p = do(t, h, "PATCH", txPath, `{"type":"expense","category_uid":"`+food+`"}`)
+	rec, p = putMerged(t, h, txPath, `{"type":"expense","category_uid":"`+food+`"}`)
 	if rec.Code != 200 || p["category_uid"] != food {
 		t.Errorf("set category: %d %v", rec.Code, p)
 	}
-	rec, p = do(t, h, "PATCH", txPath, `{"category_uid":null}`)
+	rec, p = putMerged(t, h, txPath, `{"category_uid":null}`)
 	if rec.Code != 200 || p["category_uid"] != nil {
 		t.Errorf("clear category: %d %v", rec.Code, p)
 	}

@@ -1,14 +1,10 @@
 package api
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
-
-	"github.com/nutmos/expensetrackr/pkg/validate"
 
 	"github.com/gin-gonic/gin"
 )
@@ -87,21 +83,6 @@ func clientVersion(c *gin.Context, bodyVersion *int64, required bool) (version i
 		return 0, false
 	}
 	return 0, true
-}
-
-// takeVersion removes "version" from a PATCH body and returns it (nil if
-// absent or null).
-func takeVersion(patch map[string]json.RawMessage) (*int64, error) {
-	raw, ok := patch["version"]
-	delete(patch, "version")
-	if !ok || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		return nil, nil
-	}
-	var v int64
-	if err := json.Unmarshal(raw, &v); err != nil {
-		return nil, &validate.RequestError{Msg: `field "version" must be a positive integer`}
-	}
-	return &v, nil
 }
 
 // writeVersionConflict answers 409 with the current record and its ETag.

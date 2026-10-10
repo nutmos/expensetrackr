@@ -74,12 +74,12 @@ func TestPutErrors(t *testing.T) {
 	}
 }
 
-func TestPatchPartialUpdate(t *testing.T) {
+func TestPutFullRecordUpdate(t *testing.T) {
 	h := newTestServer(t)
 	uid := seedPayable(t, h, "KBank debit", "THB")
 	path, orig := create(t, h, `{"amount":"120.50","currency":"THB","balance_uid":"`+uid+`","spent_at":"2026-10-05T09:00:00+07:00","note":"lunch"}`)
 
-	rec, body := do(t, h, "PATCH", path, `{"note":"team lunch"}`)
+	rec, body := putMerged(t, h, path, `{"note":"team lunch"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("patch: %d %s", rec.Code, rec.Body)
 	}
@@ -92,24 +92,24 @@ func TestPatchPartialUpdate(t *testing.T) {
 		t.Errorf("unexpected patch body: %v", body)
 	}
 
-	_, body = do(t, h, "PATCH", path, `{"spent_at":"2026-10-05T11:15:00+08:00"}`)
+	_, body = putMerged(t, h, path, `{"spent_at":"2026-10-05T11:15:00+08:00"}`)
 	if body["spent_at"] != "2026-10-05T11:15:00+08:00" || body["note"] != "team lunch" {
 		t.Errorf("spent_at patch: %v", body)
 	}
 
-	_, body = do(t, h, "PATCH", path, `{"note":null}`)
+	_, body = putMerged(t, h, path, `{"note":null}`)
 	if body["note"] != "" {
 		t.Errorf("note null: %v", body)
 	}
 
 	cash := seedPayable(t, h, "Cash", "THB")
-	rec, body = do(t, h, "PATCH", path, `{"balance_uid":"`+cash+`"}`)
+	rec, body = putMerged(t, h, path, `{"balance_uid":"`+cash+`"}`)
 	if rec.Code != 200 || body["balance_uid"] != cash || body["account"] != "Cash" {
 		t.Errorf("balance_uid patch: %d %v", rec.Code, body)
 	}
 }
 
-func TestPatchCurrencyChange(t *testing.T) {
+func TestPutCurrencyChange(t *testing.T) {
 	h := newTestServer(t)
 	uid := seedPayable(t, h, "Cash", "THB")
 	jpy := seedPayable(t, h, "Yen wallet", "JPY")
@@ -118,12 +118,12 @@ func TestPatchCurrencyChange(t *testing.T) {
 
 	// The transaction currency must match its balance (no FX), so a currency
 	// change goes together with a balance in that currency.
-	rec, body := do(t, h, "PATCH", path, `{"currency":"JPY","amount":"1500"}`)
+	rec, body := putMerged(t, h, path, `{"currency":"JPY","amount":"1500"}`)
 	if rec.Code != http.StatusUnprocessableEntity || body["fields"].(map[string]any)["balance_uid"] == nil {
 		t.Fatalf("THB->JPY on a THB balance: %d %s", rec.Code, rec.Body)
 	}
 
-	rec, body = do(t, h, "PATCH", path, `{"currency":"JPY","balance_uid":"`+jpy+`"}`)
+	rec, body = putMerged(t, h, path, `{"currency":"JPY","balance_uid":"`+jpy+`"}`)
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("THB->JPY: %d %s", rec.Code, rec.Body)
 	}
@@ -131,57 +131,80 @@ func TestPatchCurrencyChange(t *testing.T) {
 		t.Errorf("want amount field error, got %v", body)
 	}
 
-	rec, body = do(t, h, "PATCH", path, `{"currency":"JPY","amount":"1500","balance_uid":"`+jpy+`"}`)
+	rec, body = putMerged(t, h, path, `{"currency":"JPY","amount":"1500","balance_uid":"`+jpy+`"}`)
 	if rec.Code != http.StatusOK || body["amount"] != "1500" || body["amount_minor"].(float64) != 1500 {
 		t.Errorf("JPY with amount: %d %v", rec.Code, body)
 	}
 
-	rec, body = do(t, h, "PATCH", path, `{"currency":"kwd","balance_uid":"`+kwd+`"}`)
+	rec, body = putMerged(t, h, path, `{"currency":"kwd","balance_uid":"`+kwd+`"}`)
 	if rec.Code != http.StatusOK || body["amount"] != "1500.000" || body["amount_minor"].(float64) != 1500000 {
 		t.Errorf("JPY->KWD: %d %v", rec.Code, body)
 	}
 
-	rec, body = do(t, h, "PATCH", path, `{"currency":"JPY","balance_uid":"`+jpy+`"}`)
+	rec, body = putMerged(t, h, path, `{"currency":"JPY","balance_uid":"`+jpy+`"}`)
 	if rec.Code != http.StatusOK || body["amount"] != "1500" {
 		t.Errorf("KWD->JPY: %d %v", rec.Code, body)
 	}
 }
 
-func TestPatchErrors(t *testing.T) {
+func TestPutFullRecordErrors(t *testing.T) {
 	h := newTestServer(t)
 	uid := seedPayable(t, h, "Cash", "THB")
 	path, _ := create(t, h, `{"amount":"120.50","currency":"THB","balance_uid":"`+uid+`","spent_at":"2026-10-05T09:00:00+07:00","note":"lunch"}`)
 	cases := []struct {
 		name, path, body string
 		status           int
+		raw              bool
 	}{
-		{"missing id", "/api/transactions/00000000-0000-4000-8000-000000009999", `{"note":"x"}`, 404},
-		{"bad id", "/api/transactions/1", `{"note":"x"}`, 400},
-		{"empty object", path, `{}`, 400},
-		{"null body", path, `null`, 400},
-		{"array body", path, `[1]`, 400},
-		{"unknown field", path, `{"tip":"5"}`, 400},
-		{"legacy account", path, `{"account":"Cash"}`, 400},
-		{"wrong type", path, `{"balance_uid":5}`, 400},
-		{"null amount", path, `{"amount":null}`, 422},
-		{"bad amount", path, `{"amount":"-3"}`, 422},
-		{"blank balance_uid", path, `{"balance_uid":"   "}`, 422},
-		{"no offset", path, `{"spent_at":"2026-10-05T09:00:00"}`, 422},
-		{"malformed", path, `{"note":`, 400},
+		{"missing id", "/api/transactions/00000000-0000-4000-8000-000000009999", `{"note":"x"}`, 404, false},
+		{"bad id", "/api/transactions/1", `{"note":"x"}`, 400, false},
+		{"empty object", path, `{}`, 422, true},
+		{"null body", path, `null`, 422, true}, // like POST: an empty record
+		{"array body", path, `[1]`, 400, true},
+		{"unknown field", path, `{"tip":"5"}`, 400, false},
+		{"legacy account", path, `{"account":"Cash"}`, 400, false},
+		{"wrong type", path, `{"balance_uid":5}`, 400, false},
+		{"null amount", path, `{"amount":null}`, 422, false},
+		{"bad amount", path, `{"amount":"-3"}`, 422, false},
+		{"blank balance_uid", path, `{"balance_uid":"   "}`, 422, false},
+		{"no offset", path, `{"spent_at":"2026-10-05T09:00:00"}`, 422, false},
+		{"malformed", path, `{"note":`, 400, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			rec, body := do(t, h, "PATCH", c.path, c.body)
+			body := c.body
+			if !c.raw {
+				body = fullBody(t, h, c.path, c.body)
+			}
+			rec, resp := do(t, h, "PUT", c.path, body)
 			if rec.Code != c.status {
 				t.Fatalf("status %d, want %d: %s", rec.Code, c.status, rec.Body)
 			}
-			if body["error"] == nil {
-				t.Errorf("missing error message: %v", body)
+			if resp["error"] == nil {
+				t.Errorf("missing error message: %v", resp)
 			}
 		})
 	}
 	_, got := do(t, h, "GET", path, "")
 	if got["updated_at"] != nil || got["note"] != "lunch" {
-		t.Errorf("record changed by failed PATCHes: %v", got)
+		t.Errorf("record changed by failed PUTs: %v", got)
+	}
+}
+
+// TestPatchNotRouted: issue #21 removed PATCH for transactions, balances and
+// categories; it is now an unknown method (404) and changes nothing.
+func TestPatchNotRouted(t *testing.T) {
+	h := newTestServer(t)
+	cash := seedPayable(t, h, "Cash", "THB")
+	txPath, _ := create(t, h, `{"amount":"10","currency":"THB","balance_uid":"`+cash+`","spent_at":"2026-10-05T09:00:00+07:00","note":"lunch"}`)
+	_, cat := do(t, h, "POST", "/api/categories", `{"name":"Food","type":"expense"}`)
+	for _, path := range []string{txPath, "/api/balances/" + cash, "/api/categories/" + cat["uid"].(string)} {
+		rec, body := doH(t, h, "PATCH", path, `{"note":"x"}`, ifMatch(`"1"`))
+		if rec.Code != http.StatusNotFound || body["error"] != "not found" {
+			t.Errorf("PATCH %s: %d %v", path, rec.Code, body)
+		}
+	}
+	if _, got := do(t, h, "GET", txPath, ""); got["note"] != "lunch" || got["version"].(float64) != 1 {
+		t.Errorf("PATCH changed the transaction: %v", got)
 	}
 }

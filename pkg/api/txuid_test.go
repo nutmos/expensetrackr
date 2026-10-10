@@ -53,11 +53,11 @@ func TestTransactionUID(t *testing.T) {
 	if rec.Code != 200 || put["uid"] != uid || put["amount"] != "150.00" {
 		t.Errorf("PUT: %d %v", rec.Code, put)
 	}
-	// PATCH with uid in body: ignored, uid unchanged.
-	rec, pat := do(t, h, http.MethodPatch, "/api/transactions/"+uid,
+	// PUT with uid in body: ignored, uid unchanged.
+	rec, pat := putMerged(t, h, "/api/transactions/"+uid,
 		`{"note":"x","uid":"22222222-2222-4222-8222-222222222222"}`)
 	if rec.Code != 200 || pat["uid"] != uid || pat["note"] != "x" {
-		t.Errorf("PATCH: %d %v", rec.Code, pat)
+		t.Errorf("PUT: %d %v", rec.Code, pat)
 	}
 
 	// Unknown uid -> 404; DELETE by uid -> 204.

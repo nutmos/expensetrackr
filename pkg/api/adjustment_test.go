@@ -20,7 +20,7 @@ func TestBalanceAdjustmentAPI(t *testing.T) {
 
 	// Manual edits record exactly one adjustment each; the response is the
 	// balance as typed (the adjustment does not move it again).
-	rec, b := doH(t, h, "PATCH", "/api/balances/"+cash, `{"balance":"9876.5"}`, ifMatch(`"1"`))
+	rec, b := putMergedH(t, h, "/api/balances/"+cash, `{"balance":"9876.5"}`, ifMatch(`"1"`))
 	if rec.Code != 200 || b["balance"] != "9876.50" || b["version"].(float64) != 2 {
 		t.Fatalf("manual edit: %d %v", rec.Code, b)
 	}
@@ -29,10 +29,10 @@ func TestBalanceAdjustmentAPI(t *testing.T) {
 		t.Fatalf("manual debt: %d %v", rec.Code, b)
 	}
 	// Limit-only and no-op edits record nothing.
-	if rec, b := doH(t, h, "PATCH", "/api/balances/"+card, `{"limit":"60000"}`, ifMatch(`"2"`)); rec.Code != 200 {
+	if rec, b := putMergedH(t, h, "/api/balances/"+card, `{"limit":"60000"}`, ifMatch(`"2"`)); rec.Code != 200 {
 		t.Fatalf("limit edit: %d %v", rec.Code, b)
 	}
-	if rec, b := doH(t, h, "PATCH", "/api/balances/"+cash, `{"balance":"9876.50","description":"main"}`, ifMatch(`"2"`)); rec.Code != 200 {
+	if rec, b := putMergedH(t, h, "/api/balances/"+cash, `{"balance":"9876.50","description":"main"}`, ifMatch(`"2"`)); rec.Code != 200 {
 		t.Fatalf("no-op edit: %d %v", rec.Code, b)
 	}
 	adj := list("?type=balance_adjustment")
@@ -80,14 +80,14 @@ func TestBalanceAdjustmentAPI(t *testing.T) {
 	if rec, b := doH(t, h, "PUT", expPath, body, ifMatch(`"1"`)); rec.Code != 422 || fieldsOf(b)["type"] == nil {
 		t.Errorf("PUT to adjustment: %d %v", rec.Code, b)
 	}
-	if rec, b := doH(t, h, "PATCH", expPath, `{"type":"balance_adjustment"}`, ifMatch(`"1"`)); rec.Code != 422 || fieldsOf(b)["type"] == nil {
-		t.Errorf("PATCH to adjustment: %d %v", rec.Code, b)
+	if rec, b := putMergedH(t, h, expPath, `{"type":"balance_adjustment"}`, ifMatch(`"1"`)); rec.Code != 422 || fieldsOf(b)["type"] == nil {
+		t.Errorf("PUT to adjustment: %d %v", rec.Code, b)
 	}
-	if rec, b := doH(t, h, "PATCH", expPath, `{"adjustment_direction":"increase"}`, ifMatch(`"1"`)); rec.Code != 400 {
-		t.Errorf("PATCH direction: %d %v", rec.Code, b)
+	if rec, b := putMergedH(t, h, expPath, `{"adjustment_direction":"increase"}`, ifMatch(`"1"`)); rec.Code != 400 {
+		t.Errorf("PUT direction: %d %v", rec.Code, b)
 	}
 
-	// Existing adjustments are read-only: PUT/PATCH/DELETE -> 409, with or
+	// Existing adjustments are read-only: PUT/DELETE -> 409, with or
 	// without a version, and nothing changes.
 	a := byBalance[cash]
 	aPath := "/api/transactions/" + a["uid"].(string)
@@ -96,8 +96,7 @@ func TestBalanceAdjustmentAPI(t *testing.T) {
 		hdr          map[string]string
 	}{
 		{"PUT", `{"type":"expense","amount":"1","currency":"THB","balance_uid":"` + cash + `","spent_at":"2026-10-08T12:00:00+08:00"}`, ifMatch(`"1"`)},
-		{"PATCH", `{"note":"x"}`, ifMatch(`"1"`)},
-		{"PATCH", `{"note":"x"}`, nil},
+		{"PUT", `{"type":"expense","amount":"1","currency":"THB","balance_uid":"` + cash + `","spent_at":"2026-10-08T12:00:00+08:00"}`, nil},
 		{"DELETE", "", nil},
 		{"DELETE", "", ifMatch(`"1"`)},
 	} {
@@ -114,7 +113,7 @@ func TestBalanceAdjustmentAPI(t *testing.T) {
 		t.Errorf("cash: %v", b)
 	}
 	// A referenced balance (here only by its adjustment) keeps its currency.
-	if rec, b := doH(t, h, "PATCH", "/api/balances/"+card, `{"currency":"USD"}`, ifMatch(`"3"`)); rec.Code != 409 || code(b) != "balance_in_use" {
+	if rec, b := putMergedH(t, h, "/api/balances/"+card, `{"currency":"USD"}`, ifMatch(`"3"`)); rec.Code != 409 || code(b) != "balance_in_use" {
 		t.Errorf("currency change: %d %v", rec.Code, b)
 	}
 }

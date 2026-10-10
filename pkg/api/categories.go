@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -17,7 +16,6 @@ func (s *Server) registerCategoryRoutes(api *gin.RouterGroup) {
 	api.GET("/categories", s.listCategories)
 	api.GET("/categories/:uid", s.getCategory)
 	api.PUT("/categories/:uid", s.replaceCategory)
-	api.PATCH("/categories/:uid", s.patchCategory)
 	api.DELETE("/categories/:uid", s.deleteCategory)
 }
 
@@ -114,34 +112,6 @@ func (s *Server) replaceCategory(c *gin.Context) {
 	}
 	updated, err := s.Store.UpdateCategory(c.Request.Context(), cur.ID, func(category.Category) (category.Category, error) {
 		return next, nil
-	})
-	if err != nil {
-		writeCategoryError(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, updated)
-}
-
-// patchCategory handles PATCH (only fields present change).
-func (s *Server) patchCategory(c *gin.Context) {
-	cur, ok := s.resolveCategory(c)
-	if !ok {
-		return
-	}
-	var patch map[string]json.RawMessage
-	if !decodeBody(c, &patch, false) {
-		return
-	}
-	if patch == nil {
-		c.JSON(http.StatusBadRequest, errorBody{Error: "request body must be a JSON object"})
-		return
-	}
-	updated, err := s.Store.UpdateCategory(c.Request.Context(), cur.ID, func(existing category.Category) (category.Category, error) {
-		in := existing.Input()
-		if err := in.ApplyPatch(patch); err != nil {
-			return category.Category{}, err
-		}
-		return in.Validate()
 	})
 	if err != nil {
 		writeCategoryError(c, err)

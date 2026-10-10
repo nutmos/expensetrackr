@@ -73,22 +73,22 @@ func TestTransactionTypes(t *testing.T) {
 		t.Errorf("bad type filter: %d", rec.Code)
 	}
 
-	// PATCH transfer -> expense drops destination.
+	// PUT transfer -> expense: omit to_balance_uid.
 	id := tr["uid"].(string)
-	rec, p := do(t, h, "PATCH", "/api/transactions/"+id, `{"type":"expense"}`)
+	rec, p := putMerged(t, h, "/api/transactions/"+id, `{"type":"expense","to_balance_uid":null}`)
 	if rec.Code != 200 || p["type"] != "expense" || p["to_balance_uid"] != nil || p["to_account"] != nil {
-		t.Errorf("patch to expense: %d %v", rec.Code, p)
+		t.Errorf("put to expense: %d %v", rec.Code, p)
 	}
-	// PATCH expense -> transfer needs destination.
-	if rec, _ := do(t, h, "PATCH", "/api/transactions/"+id, `{"type":"transfer"}`); rec.Code != 422 {
-		t.Errorf("patch to transfer w/o dest: %d", rec.Code)
+	// PUT expense -> transfer needs a destination.
+	if rec, _ := putMerged(t, h, "/api/transactions/"+id, `{"type":"transfer","to_balance_uid":null}`); rec.Code != 422 {
+		t.Errorf("put to transfer w/o dest: %d", rec.Code)
 	}
-	rec, p = do(t, h, "PATCH", "/api/transactions/"+id, `{"type":"transfer","to_balance_uid":"`+gold+`"}`)
+	rec, p = putMerged(t, h, "/api/transactions/"+id, `{"type":"transfer","to_balance_uid":"`+gold+`"}`)
 	if rec.Code != 200 || p["to_account"] != "Gold" {
-		t.Errorf("patch to transfer: %d %v", rec.Code, p)
+		t.Errorf("put to transfer: %d %v", rec.Code, p)
 	}
-	// PATCH note only keeps the transfer.
-	rec, p = do(t, h, "PATCH", "/api/transactions/"+id, `{"note":"x"}`)
+	// PUT of the full record with only the note changed keeps the transfer.
+	rec, p = putMerged(t, h, "/api/transactions/"+id, `{"note":"x"}`)
 	if rec.Code != 200 || p["to_balance_uid"] != gold {
 		t.Errorf("patch note on transfer: %d %v", rec.Code, p)
 	}

@@ -24,11 +24,15 @@ func TestBalanceVersioningAPI(t *testing.T) {
 	put := `{"name":"Cash","type":"payment_account","currency":"THB","balance":"90"}`
 
 	// Missing version: 428, nothing changes.
-	for _, m := range []string{"PUT", "PATCH"} {
+	for _, m := range []string{"PUT"} {
 		rec, body := doH(t, h, m, path, put, nil)
 		if rec.Code != http.StatusPreconditionRequired || code(body) != "version_required" {
 			t.Errorf("%s without version: %d %v", m, rec.Code, body)
 		}
+	}
+	// PUT is no longer routed for balances (issue #21): 404, nothing changes.
+	if rec, body := doH(t, h, "PATCH", path, `{"balance":"1"}`, ifMatch(`"1"`)); rec.Code != http.StatusNotFound {
+		t.Errorf("PUT: %d %v", rec.Code, body)
 	}
 	// Malformed / disagreeing preconditions: 400.
 	for _, c := range []struct {
@@ -48,8 +52,8 @@ func TestBalanceVersioningAPI(t *testing.T) {
 			t.Errorf("PUT %v %s: %d %v", c.hdr, c.body, rec.Code, body)
 		}
 	}
-	if rec, body := doH(t, h, "PATCH", path, `{"version":"x","balance":"1"}`, nil); rec.Code != 400 {
-		t.Errorf("PATCH bad version: %d %v", rec.Code, body)
+	if rec, body := putMergedH(t, h, path, `{"version":"x","balance":"1"}`, nil); rec.Code != 400 {
+		t.Errorf("PUT bad version: %d %v", rec.Code, body)
 	}
 	if _, body := doH(t, h, "GET", path, "", nil); body["balance"] != "100.00" || body["version"].(float64) != 1 {
 		t.Fatalf("rejected writes changed the balance: %v", body)
@@ -67,12 +71,12 @@ func TestBalanceVersioningAPI(t *testing.T) {
 		t.Errorf("stale PUT: %d %v", rec.Code, body)
 	}
 	// Stale beats invalid: a stale client must reload before anything else.
-	if rec, body := doH(t, h, "PATCH", path, `{"balance":"x"}`, ifMatch(`"1"`)); rec.Code != 409 {
-		t.Errorf("stale + invalid PATCH: %d %v", rec.Code, body)
+	if rec, body := putMergedH(t, h, path, `{"balance":"x"}`, ifMatch(`"1"`)); rec.Code != 409 {
+		t.Errorf("stale + invalid PUT: %d %v", rec.Code, body)
 	}
-	// Version in the body (PATCH), and a weak ETag (PUT), are accepted.
-	if rec, body := doH(t, h, "PATCH", path, `{"version":2,"balance":"70"}`, nil); rec.Code != 200 || body["version"].(float64) != 3 {
-		t.Errorf("PATCH body version: %d %v", rec.Code, body)
+	// Version in the body (PUT), and a weak ETag (PUT), are accepted.
+	if rec, body := putMergedH(t, h, path, `{"version":2,"balance":"70"}`, nil); rec.Code != 200 || body["version"].(float64) != 3 {
+		t.Errorf("PUT body version: %d %v", rec.Code, body)
 	}
 	if rec, body := doH(t, h, "PUT", path, put, ifMatch(`W/"3"`)); rec.Code != 200 || body["version"].(float64) != 4 {
 		t.Errorf("PUT weak etag: %d %v", rec.Code, body)
@@ -92,8 +96,8 @@ func TestBalanceVersioningAPI(t *testing.T) {
 	if rec, _ := doH(t, h, "PUT", path, put, nil); rec.Code != 404 {
 		t.Errorf("PUT deleted: %d", rec.Code)
 	}
-	if rec, _ := doH(t, h, "PATCH", "/api/balances/abc", `{}`, nil); rec.Code != 400 {
-		t.Errorf("PATCH bad uid: %d", rec.Code)
+	if rec, _ := putMergedH(t, h, "/api/balances/abc", `{}`, nil); rec.Code != 400 {
+		t.Errorf("PUT bad uid: %d", rec.Code)
 	}
 }
 
@@ -109,7 +113,7 @@ func TestTransactionVersioningAPI(t *testing.T) {
 	if rec, _ := doH(t, h, "GET", path, "", nil); rec.Header().Get("ETag") != `"1"` {
 		t.Errorf("GET etag %q", rec.Header().Get("ETag"))
 	}
-	for _, m := range []string{"PUT", "PATCH"} {
+	for _, m := range []string{"PUT"} {
 		rec, b := doH(t, h, m, path, `{"amount":"5","currency":"THB","balance_uid":"`+cash+`","spent_at":"2026-10-08T12:00:00+08:00"}`, nil)
 		if rec.Code != 428 || code(b) != "version_required" {
 			t.Errorf("%s without version: %d %v", m, rec.Code, b)
@@ -124,11 +128,11 @@ func TestTransactionVersioningAPI(t *testing.T) {
 	if cur, _ := b["current"].(map[string]any); rec.Code != 409 || code(b) != "version_conflict" || cur["amount"] != "150.00" {
 		t.Errorf("stale PUT: %d %v", rec.Code, b)
 	}
-	if rec, b := doH(t, h, "PATCH", path, `{"note":"x"}`, ifMatch(`"1"`)); rec.Code != 409 {
-		t.Errorf("stale PATCH: %d %v", rec.Code, b)
+	if rec, b := putMergedH(t, h, path, `{"note":"x"}`, ifMatch(`"1"`)); rec.Code != 409 {
+		t.Errorf("stale PUT: %d %v", rec.Code, b)
 	}
-	if rec, b := doH(t, h, "PATCH", path, `{"note":"x"}`, ifMatch(`"2"`)); rec.Code != 200 || b["version"].(float64) != 3 {
-		t.Errorf("PATCH: %d %v", rec.Code, b)
+	if rec, b := putMergedH(t, h, path, `{"note":"x"}`, ifMatch(`"2"`)); rec.Code != 200 || b["version"].(float64) != 3 {
+		t.Errorf("PUT: %d %v", rec.Code, b)
 	}
 	if _, bal := doH(t, h, "GET", "/api/balances/"+cash, "", nil); bal["balance"] != "9850.00" {
 		t.Errorf("balance after edits: %v", bal["balance"])
@@ -183,16 +187,16 @@ func TestTransactionsMoveBalancesAPI(t *testing.T) {
 	if rec.Code != 200 || b["balance"] != "9690.50" || b["version"].(float64) != 3 {
 		t.Errorf("manual edit: %d %v", rec.Code, b)
 	}
-	if rec, b := doH(t, h, "PATCH", "/api/balances/"+cash, `{"balance":"9690.25"}`, ifMatch(`"3"`)); rec.Code != 200 || b["balance"] != "9690.25" || b["version"].(float64) != 4 {
-		t.Errorf("manual PATCH: %d %v", rec.Code, b)
+	if rec, b := putMergedH(t, h, "/api/balances/"+cash, `{"balance":"9690.25"}`, ifMatch(`"3"`)); rec.Code != 200 || b["balance"] != "9690.25" || b["version"].(float64) != 4 {
+		t.Errorf("manual PUT: %d %v", rec.Code, b)
 	}
 	// There is no separate adjustments API or note field: unknown fields are
 	// rejected as for any other body, and nothing changes.
 	if rec, b := doH(t, h, "PUT", "/api/balances/"+cash, `{"name":"Cash","type":"payment_account","currency":"THB","balance":"1","adjustment_note":"x"}`, ifMatch(`"4"`)); rec.Code != 400 {
 		t.Errorf("PUT with adjustment_note: %d %v", rec.Code, b)
 	}
-	if rec, b := doH(t, h, "PATCH", "/api/balances/"+cash, `{"balance":"1","adjustment_note":"x"}`, ifMatch(`"4"`)); rec.Code < 400 || rec.Code > 422 {
-		t.Errorf("PATCH with adjustment_note: %d %v", rec.Code, b)
+	if rec, b := putMergedH(t, h, "/api/balances/"+cash, `{"balance":"1","adjustment_note":"x"}`, ifMatch(`"4"`)); rec.Code < 400 || rec.Code > 422 {
+		t.Errorf("PUT with adjustment_note: %d %v", rec.Code, b)
 	}
 	if rec, _ := doH(t, h, "GET", "/api/balances/"+cash+"/adjustments", "", nil); rec.Code != 404 {
 		t.Errorf("adjustments route still exists: %d", rec.Code)
@@ -220,13 +224,13 @@ func TestTransactionsMoveBalancesAPI(t *testing.T) {
 		t.Errorf("rejected transactions moved the balance: %v -> %v", before, after)
 	}
 	// A balance with transactions cannot change currency.
-	rec, b = doH(t, h, "PATCH", "/api/balances/"+cash, `{"currency":"USD"}`, ifMatch(`"5"`))
+	rec, b = putMergedH(t, h, "/api/balances/"+cash, `{"currency":"USD"}`, ifMatch(`"5"`))
 	if rec.Code != 409 || code(b) != "balance_in_use" || fieldsOf(b)["currency"] == nil {
 		t.Errorf("currency change in use: %d %v", rec.Code, b)
 	}
 }
 
-func TestConcurrentBalancePatchesOneWins(t *testing.T) {
+func TestConcurrentBalancePutsOneWins(t *testing.T) {
 	h := newTestServer(t)
 	cash := seedPayable(t, h, "Cash", "THB")
 	const n = 20
@@ -236,7 +240,7 @@ func TestConcurrentBalancePatchesOneWins(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			rec, _ := doH(t, h, "PATCH", "/api/balances/"+cash, `{"balance":"1"}`, ifMatch(`"1"`))
+			rec, _ := putMergedH(t, h, "/api/balances/"+cash, `{"balance":"1"}`, ifMatch(`"1"`))
 			codes <- rec.Code
 		}()
 	}

@@ -340,7 +340,7 @@ func TestVersionChecks(t *testing.T) {
 	}
 }
 
-// Manual PUT/PATCH values override what transactions did; later transactions
+// Manual PUT values override what transactions did; later transactions
 // continue from the manual value.
 func TestManualOverride(t *testing.T) {
 	f := newFixture(t)
@@ -387,7 +387,7 @@ func TestConcurrentWritesStayConsistent(t *testing.T) {
 	f.want(f.pay, "960.00", 1+n)
 	f.want(f.card, "80.00", 1+n/2)
 
-	// Many clients PATCH the same balance from the same version: exactly one wins.
+	// Many clients PUT the same balance from the same version: exactly one wins.
 	b, _ := f.st.GetBalanceByUID(ctx, f.gold.UID)
 	var mu sync.Mutex
 	wins, conflicts := 0, 0

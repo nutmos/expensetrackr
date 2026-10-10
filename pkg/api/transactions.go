@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -43,7 +42,6 @@ func (s *Server) registerTransactionRoutes(api *gin.RouterGroup) {
 	api.GET("/transactions", s.listTransactions)
 	api.GET("/transactions/:uid", s.getTransaction)
 	api.PUT("/transactions/:uid", s.replaceTransaction)
-	api.PATCH("/transactions/:uid", s.patchTransaction)
 	api.DELETE("/transactions/:uid", s.deleteTransaction)
 }
 
@@ -164,69 +162,6 @@ func (s *Server) replaceTransaction(c *gin.Context) {
 		return
 	}
 	next, err := in.Validate()
-	if err != nil {
-		writeInputError(c, err)
-		return
-	}
-	if err := s.attachPaymentBalance(c, &next); err != nil {
-		writeInputError(c, err)
-		return
-	}
-	s.saveTransaction(c, cur, version, next)
-}
-
-// patchTransaction handles PATCH: only fields present in the body change, then the
-// merged result is validated as a whole (e.g. the amount is re-parsed against
-// the new currency's minor-unit scale when the currency changes). Versioning
-// as for PUT.
-func (s *Server) patchTransaction(c *gin.Context) {
-	cur, ok := s.resolveTransaction(c)
-	if !ok {
-		return
-	}
-	if cur.Type == transaction.BalanceAdjustment { // read-only, whatever the body or version
-		writeInputError(c, store.ErrReadOnly)
-		return
-	}
-	var patch map[string]json.RawMessage
-	if !decodeBody(c, &patch, false) {
-		return
-	}
-	if patch == nil { // body was JSON null
-		c.JSON(http.StatusBadRequest, errorBody{Error: "request body must be a JSON object"})
-		return
-	}
-	bodyVersion, err := takeVersion(patch)
-	if err != nil {
-		writeInputError(c, err)
-		return
-	}
-	version, ok := clientVersion(c, bodyVersion, true)
-	if !ok {
-		return
-	}
-	if version != cur.Version {
-		s.transactionConflict(c, cur.ID)
-		return
-	}
-	// Resolve the patch outside the write transaction: attachPaymentBalance
-	// needs its own DB reads, and the store uses a single SQLite connection.
-	// The version check inside UpdateWith catches any change in between.
-	in := cur.Input()
-	if err := in.ApplyPatch(patch); err != nil {
-		writeInputError(c, err)
-		return
-	}
-	next, err := in.Validate()
-	var ve *validate.ValidationError
-	_, hasCur := patch["currency"]
-	_, hasAmt := patch["amount"]
-	if hasCur && !hasAmt && errors.As(err, &ve) && ve.Fields["amount"] != "" {
-		ve.Fields["amount"] = fmt.Sprintf("the current amount %s (%s) cannot be expressed in %s: %s; send a new amount together with the currency (no exchange-rate conversion is done)",
-			cur.Amount, cur.Currency, in.Currency, ve.Fields["amount"])
-		writeInputError(c, err)
-		return
-	}
 	if err != nil {
 		writeInputError(c, err)
 		return

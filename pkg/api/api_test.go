@@ -27,14 +27,14 @@ func newTestServer(t *testing.T) http.Handler {
 	return (&Server{Store: st, Static: static}).Router()
 }
 
-// do sends a request. For PUT/PATCH on a single balance or transaction whose
+// do sends a request. For PUT on a single balance or transaction whose
 // body has no "version", it first GETs the record and sends its ETag as
 // If-Match, like a well-behaved client, so tests that are not about
 // versioning need not handle it. Use doH to control headers exactly.
 func do(t *testing.T, h http.Handler, method, path, body string) (*httptest.ResponseRecorder, map[string]any) {
 	t.Helper()
 	var hdr map[string]string
-	if (method == "PUT" || method == "PATCH") && !strings.Contains(body, `"version"`) &&
+	if method == "PUT" && !strings.Contains(body, `"version"`) &&
 		(strings.HasPrefix(path, "/api/balances/") || strings.HasPrefix(path, "/api/transactions/")) {
 		if rec, _ := doH(t, h, "GET", path, "", nil); rec.Code == http.StatusOK && rec.Header().Get("ETag") != "" {
 			hdr = map[string]string{"If-Match": rec.Header().Get("ETag")}
@@ -126,4 +126,61 @@ func TestPayableBalancesFilter(t *testing.T) {
 			t.Errorf("non-payable in list: %s", typ)
 		}
 	}
+}
+
+// editableFields lists the fields a PUT body carries, per resource prefix.
+var editableFields = map[string][]string{
+	"/api/transactions/": {"amount", "currency", "type", "balance_uid", "to_balance_uid", "category_uid", "spent_at", "note"},
+	"/api/balances/":     {"name", "type", "currency", "description", "balance", "debt", "limit"},
+	"/api/categories/":   {"name", "type", "description"},
+}
+
+// fullBody GETs the record at path and returns a full PUT body: its editable
+// fields with the JSON object changes overlaid (a null in changes omits that
+// field, which PUT treats as empty/absent). This is how a client edits only
+// some fields now that there is no PATCH: it sends the whole record.
+func fullBody(t *testing.T, h http.Handler, path, changes string) string {
+	t.Helper()
+	rec, cur := doH(t, h, "GET", path, "", nil)
+	if rec.Code != http.StatusOK {
+		return changes // let the PUT report the 400/404
+	}
+	var keys []string
+	for prefix, k := range editableFields {
+		if strings.HasPrefix(path, prefix) {
+			keys = k
+		}
+	}
+	body := map[string]any{}
+	for _, k := range keys {
+		if v, ok := cur[k]; ok && v != nil {
+			body[k] = v
+		}
+	}
+	var ch map[string]any
+	if err := json.Unmarshal([]byte(changes), &ch); err != nil {
+		t.Fatalf("changes %q: %v", changes, err)
+	}
+	for k, v := range ch {
+		if v == nil {
+			delete(body, k)
+		} else {
+			body[k] = v
+		}
+	}
+	b, _ := json.Marshal(body)
+	return string(b)
+}
+
+// putMerged PUTs the record at path with changes applied (see fullBody),
+// sending If-Match like do.
+func putMerged(t *testing.T, h http.Handler, path, changes string) (*httptest.ResponseRecorder, map[string]any) {
+	t.Helper()
+	return do(t, h, "PUT", path, fullBody(t, h, path, changes))
+}
+
+// putMergedH is putMerged with exactly the given headers (see doH).
+func putMergedH(t *testing.T, h http.Handler, path, changes string, hdr map[string]string) (*httptest.ResponseRecorder, map[string]any) {
+	t.Helper()
+	return doH(t, h, "PUT", path, fullBody(t, h, path, changes), hdr)
 }

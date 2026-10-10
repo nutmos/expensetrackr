@@ -3,7 +3,6 @@ package balance
 import (
 	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/nutmos/expensetrackr/pkg/money"
@@ -120,15 +119,6 @@ func TestJSONNullAmountIsAbsent(t *testing.T) {
 	}
 }
 
-func patchOf(t *testing.T, s string) map[string]json.RawMessage {
-	t.Helper()
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(s), &m); err != nil {
-		t.Fatal(err)
-	}
-	return m
-}
-
 func stored(t *testing.T, in Input) Balance {
 	t.Helper()
 	b, err := in.Validate()
@@ -136,78 +126,6 @@ func stored(t *testing.T, in Input) Balance {
 		t.Fatal(err)
 	}
 	return b
-}
-
-func TestApplyPatch(t *testing.T) {
-	acct := stored(t, Input{Name: "KBank", Type: "payment_account", Currency: "THB", Balance: dec("100.50"), Description: "d"})
-
-	in := acct.Input()
-	if err := in.ApplyPatch(patchOf(t, `{"balance":"-20","description":null}`)); err != nil {
-		t.Fatal(err)
-	}
-	b, err := in.Validate()
-	if err != nil || *b.Balance != "-20.00" || b.Description != "" || b.Name != "KBank" {
-		t.Errorf("simple patch: %+v %v", b, err)
-	}
-
-	// type may be sent in a patch, but ValidateUpdate only accepts the stored one.
-	in = acct.Input()
-	if err := in.ApplyPatch(patchOf(t, `{"type":" Payment_Account ","balance":"1"}`)); err != nil {
-		t.Fatal(err)
-	}
-	if b, err := in.ValidateUpdate(acct.Type); err != nil || *b.Balance != "1.00" || b.Type != PaymentAccount {
-		t.Errorf("same type: %+v %v", b, err)
-	}
-	for _, patch := range []string{
-		`{"type":"credit_card"}`,
-		`{"type":"credit_card","debt":"10","limit":"100"}`,
-		`{"type":"other_asset"}`,
-		`{"type":"bogus"}`,
-	} {
-		in = acct.Input()
-		if err := in.ApplyPatch(patchOf(t, patch)); err != nil {
-			t.Fatalf("%s: %v", patch, err)
-		}
-		_, err := in.ValidateUpdate(acct.Type)
-		if f := fieldErrs(t, err); f["type"] != ErrTypeChanged {
-			t.Errorf("%s: want type error, got %v", patch, f)
-		}
-		// Amounts are judged against the stored type: debt/limit are not used by
-		// payment_account, the existing balance is still fine.
-		if f := fieldErrs(t, err); strings.Contains(patch, "debt") != (f["debt"] != "") || f["balance"] != "" {
-			t.Errorf("%s: other fields: %v", patch, f)
-		}
-	}
-	// Currency change re-scales: THB 100.50 -> JPY rejected, -> KWD 100.500.
-	in = acct.Input()
-	_ = in.ApplyPatch(patchOf(t, `{"currency":"JPY"}`))
-	if _, err := in.Validate(); fieldErrs(t, err)["balance"] == "" {
-		t.Errorf("THB->JPY should fail on balance")
-	}
-	in = acct.Input()
-	_ = in.ApplyPatch(patchOf(t, `{"currency":"KWD"}`))
-	if b, err := in.Validate(); err != nil || *b.Balance != "100.500" || *b.BalanceMinor != 100500 {
-		t.Errorf("THB->KWD: %+v %v", b, err)
-	}
-
-	var re *validate.RequestError
-	for _, bad := range []string{`{}`, `{"foo":1}`, `{"name":5}`} {
-		in = acct.Input()
-		if err := in.ApplyPatch(patchOf(t, bad)); !errors.As(err, &re) {
-			t.Errorf("%s: expected RequestError, got %v", bad, err)
-		}
-	}
-	// A non-numeric literal is kept verbatim and rejected by Validate (422), as for expenses.
-	in = acct.Input()
-	if err := in.ApplyPatch(patchOf(t, `{"balance":true}`)); err != nil {
-		t.Errorf("literal true: %v", err)
-	} else if _, err := in.Validate(); fieldErrs(t, err)["balance"] == "" {
-		t.Errorf("balance true should fail validation")
-	}
-	in = acct.Input()
-	if err := in.ApplyPatch(patchOf(t, `{"name":null,"type":null}`)); len(fieldErrs(t, err)) != 2 {
-		t.Errorf("null name/type: %v", err)
-	}
 }
 
 func TestComputeTotals(t *testing.T) {
