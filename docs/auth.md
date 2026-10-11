@@ -25,7 +25,7 @@ in the flow (the `users.email` column stays, optional). SSO (Apple / Google via
 | POST | `/api/auth/register` | first run: none; afterwards: session | `{"username","password","display_name"?}` → 201 user. First run also logs the new user in. 422 rule violations, 409 username taken, 403 `registration_closed`, 400 unknown fields (e.g. `email`). |
 | POST | `/api/auth/login` | none | `{"username","password"}` → 200 user + `Set-Cookie`. Updates `last_login_at`. Unknown user, wrong password and `status != active` all give the same **401 `invalid username or password`**; an unknown user still costs one bcrypt comparison (dummy hash) so timing does not reveal which usernames exist. 429 when throttled. |
 | POST | `/api/auth/logout` | none | Deletes the session (if any), clears the cookie. Always 204. |
-| GET | `/api/auth/me` | session | 200 current user; 401 otherwise, with `code: "setup_required"` while no account exists (the web page then shows "Create your account"). |
+| GET | `/api/auth/me` | session | 200 current user; 401 otherwise, with `code: "setup_required"` while no account exists (the web page then offers the Create account button on its Log in page). |
 | PUT | `/api/auth/password` | session | `{"current_password","new_password"}` → 204. 403 wrong current password, 422 rules. **Every other session of the user is deleted**; the current one stays. |
 
 ## What is public
@@ -81,9 +81,15 @@ Deleting a user deletes their sessions.
 ## First run
 
 1. Start the server with an empty (or existing, password-less) database.
-2. Open the page: it shows **Create your account** (username, password,
-   optional display name). This calls `POST /api/auth/register` and logs you in.
-3. From then on the page shows **Log in**; registration is closed to anonymous
+2. Open the page: signed-out visitors always land on **Log in** (`/login`;
+   other URLs redirect to `/login?next=<url>` and return there after login).
+   While no account exists it also shows "No account yet — create one to get
+   started." and a **Create account** button leading to `/register`
+   (username, password, optional display name, and a "Back to log in" button).
+   This calls `POST /api/auth/register` and logs you in.
+3. From then on the Log in page has no Create account button (visiting
+   `/register` falls back to Log in with a "registration is closed" note);
+   registration is closed to anonymous
    callers. Pre-existing passwordless profiles (from `/api/users`) do not count
    as "set up" and cannot log in; a new account cannot reuse their username
    (409) — rename or delete such a profile first.
