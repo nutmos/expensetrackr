@@ -124,6 +124,10 @@
   function render() {
     if (!signedIn) return;
     let path = location.pathname;
+    if (path === "/login" || path === "/register") {
+      history.replaceState(null, "", nextParam() || "/transactions");
+      path = location.pathname;
+    }
     // Old hash links (/#balances) from before real paths: map them once.
     const legacy = { "#transactions": "/transactions", "#balances": "/balances", "#categories": "/categories" };
     if (path === "/" && legacy[location.hash]) {
@@ -203,7 +207,7 @@
     navigate(u.pathname + u.search);
   });
 
-  window.addEventListener("popstate", render);
+  window.addEventListener("popstate", () => { if (signedIn) render(); else showAuth(); });
 
   // Escape on a form page = Cancel (onEscape is the form's cancel handler).
   document.addEventListener("keydown", (ev) => {
@@ -252,13 +256,27 @@
     isUUID: (s) => UUID_RE.test(s),
   };
 
-  // ---- Authentication (issue #30) -----------------------------------------
-  // The app needs a session. On start (and whenever an API call answers 401)
-  // the login view replaces the app; on first run (no account yet) the same
-  // form creates the first account. Only the display name / username is shown.
+  // ---- Authentication (issues #30, #32) -----------------------------------
+  // Signed-out visitors always get the Log in page (/login). A separate
+  // Create account page (/register) is reachable from it only while
+  // registration is open, i.e. on first run when no account exists yet (the
+  // server answers GET /api/auth/me with 401 code setup_required). Deep links
+  // go to /login?next=<original URL> and return there after logging in.
+  // Only the display name / username is shown, never uids.
 
   let signedIn = false;
-  let setupMode = false;
+  let setupMode = false;        // current page is Create account
+  let registrationOpen = false; // from setup_required
+
+  // Only same-site app paths are valid return targets.
+  function safeNext(n) {
+    if (!n || n[0] !== "/" || n.startsWith("//") || n.startsWith("/\\")) return "";
+    const p = new URL(n, location.origin).pathname;
+    if (p === "/login" || p === "/register" || p.startsWith("/api/") || p.startsWith("/static/")) return "";
+    return n;
+  }
+  function nextParam() { return safeNext(new URLSearchParams(location.search).get("next")); }
+  function authURL(path, next) { return path + (next ? "?next=" + encodeURIComponent(next) : ""); }
 
   function showApp(user) {
     signedIn = true;
@@ -266,23 +284,57 @@
     $("#app-nav").hidden = false;
     $("#user-name").textContent = user.display_name || user.username || "";
     $("#user-bar").hidden = false;
+    const p = location.pathname;
+    if (p === "/login" || p === "/register") history.replaceState(null, "", nextParam() || "/transactions");
     render();
   }
 
-  function showLogin(setup) {
+  // Show the signed-out page for the current URL. Anything other than
+  // /login or /register becomes /login?next=<that URL>.
+  function showAuth(notice) {
     signedIn = false;
-    setupMode = !!setup;
+    let p = location.pathname;
+    if (p !== "/login" && p !== "/register") {
+      const next = safeNext(currentURL());
+      history.replaceState(null, "", authURL("/login", next && next !== "/" ? next : ""));
+      p = "/login";
+    }
+    if (p === "/register" && !registrationOpen) {
+      history.replaceState(null, "", authURL("/login", nextParam()));
+      p = "/login";
+      notice = notice || "Registration is closed. Ask an existing user to create an account for you.";
+    }
+    const setup = p === "/register";
+    setupMode = setup;
     document.querySelectorAll(".view").forEach((v) => (v.hidden = true));
     $("#app-nav").hidden = true;
     $("#user-bar").hidden = true;
     $("#user-name").textContent = "";
-    $("#login-title").textContent = setup ? "Create your account" : "Log in";
+    $("#login-title").textContent = setup ? "Create account" : "Log in";
     $("#login-intro").textContent = setup
-      ? "No account exists yet. Choose a username (3–32 characters: lowercase letters, digits, . _ -) and a password (at least 8 characters)."
+      ? "Choose a username (3–32 characters: lowercase letters, digits, . _ -) and a password (at least 8 characters)."
       : "";
+    $("#login-intro").hidden = !setup;
+    const nt = $("#login-notice");
+    nt.textContent = notice || "";
+    nt.hidden = !notice;
     $("#login-display-row").hidden = !setup;
     $("#login-password").autocomplete = setup ? "new-password" : "current-password";
     $("#login-submit").textContent = setup ? "Create account" : "Log in";
+    // Switch button: login -> Create account only while registration is open;
+    // register -> back to Log in always.
+    const sw = $("#auth-switch"), swb = $("#auth-switch-btn");
+    if (setup) {
+      $("#auth-switch-hint").textContent = "Already have an account?";
+      swb.textContent = "Back to log in";
+      swb.href = authURL("/login", nextParam());
+      sw.hidden = false;
+    } else {
+      $("#auth-switch-hint").textContent = "No account yet — create one to get started.";
+      swb.textContent = "Create account";
+      swb.href = authURL("/register", nextParam());
+      sw.hidden = !registrationOpen;
+    }
     $("#login-error").hidden = true;
     $("#login-password").value = "";
     clearErrors($("#login-form"));
@@ -290,6 +342,17 @@
     $("#view-login").hidden = false;
     $("#login-username").focus();
   }
+
+  function showLogin(setup) { registrationOpen = !!setup; showAuth(); }
+
+  // Switching between Log in and Create account (no full reload).
+  $("#auth-switch-btn").addEventListener("click", (ev) => {
+    if (ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    history.pushState(null, "", ev.currentTarget.getAttribute("href"));
+    showAuth();
+  });
 
   // Any API 401 (expired / revoked session) drops back to the login view.
   const origFetch = window.fetch.bind(window);
@@ -323,7 +386,12 @@
         return;
       }
       if (res.status === 422) showFieldErrors(form, data.fields);
-      if (res.status === 403 && data.code === "registration_closed") { showLogin(false); }
+      if (res.status === 403 && data.code === "registration_closed") {
+        registrationOpen = false;
+        history.replaceState(null, "", authURL("/login", nextParam()));
+        showAuth("Registration is closed. Ask an existing user to create an account for you.");
+        return;
+      }
       err.textContent = data.error === "validation failed" ? "Please fix the fields above." : (data.error || "Something went wrong.");
       err.hidden = false;
       $("#login-password").value = "";
@@ -338,7 +406,9 @@
 
   $("#logout-btn").addEventListener("click", async () => {
     await origFetch("/api/auth/logout", { method: "POST" }).catch(() => {});
-    showLogin(false);
+    registrationOpen = false;
+    history.pushState(null, "", "/login");
+    showAuth();
   });
 
   async function boot() {

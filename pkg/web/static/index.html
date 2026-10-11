@@ -16,10 +16,11 @@
       </div>
     </header>
 
-    <!-- Login / first-run account creation (router.js). Shown instead of the app when signed out. -->
+    <!-- Log in (/login) and Create account (/register) pages (router.js). Shown instead of the app when signed out. -->
     <div id="view-login" hidden>
     <section class="card form-card auth-card">
       <h2 id="login-title">Log in</h2>
+      <p id="login-notice" class="flash" role="status" hidden></p>
       <p id="login-intro" class="muted"></p>
       <form id="login-form" novalidate>
         <label>Username
@@ -37,6 +38,10 @@
         <p id="login-error" class="error" role="alert" hidden></p>
         <div class="actions"><button type="submit" id="login-submit">Log in</button></div>
       </form>
+      <div id="auth-switch" class="auth-switch" hidden>
+        <p id="auth-switch-hint" class="muted"></p>
+        <a id="auth-switch-btn" class="button secondary" href="/register">Create account</a>
+      </div>
     </section>
     </div>
 

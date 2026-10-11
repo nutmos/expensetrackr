@@ -15,11 +15,14 @@ import (
 //	/<res>/new          add form
 //	/<res>/:uid/edit    edit form (uid must look like a UUID, else 404)
 //
-// "/" is the transactions list.
+// "/" is the transactions list; /login and /register are the signed-out pages.
 var pageResources = []string{"transactions", "balances", "categories"}
 
 func (s *Server) registerPageRoutes(r *gin.Engine) {
 	r.GET("/", s.index)
+	// Signed-out pages (issue #32): log in, and create account (first run).
+	r.GET("/login", s.index)
+	r.GET("/register", s.index)
 	for _, res := range pageResources {
 		r.GET("/"+res, s.index)
 		r.GET("/"+res+"/new", s.index)
