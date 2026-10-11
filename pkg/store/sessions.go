@@ -83,6 +83,11 @@ func (s *Store) RegisterUser(ctx context.Context, u *user.User, hash string, fir
 	if err != nil {
 		return err
 	}
+	// Categories migrated from a database that had no users (v15) go to the
+	// first user to register.
+	if err := claimUnclaimedCategories(ctx, tx, uid); err != nil {
+		return fmt.Errorf("register: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("register: %w", err)
 	}

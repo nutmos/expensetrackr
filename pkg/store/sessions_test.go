@@ -21,7 +21,7 @@ func downgradeToV13(t *testing.T, path string, dropSessions bool) {
 		t.Fatal(err)
 	}
 	st.Close()
-	script := `INSERT INTO users (uid, username, display_name, created_at) VALUES ('11111111-1111-4111-8111-111111111111', 'keep', 'Keep Me', '2026-01-01T00:00:00Z');
+	script := "DROP TABLE user_categories;\nDROP TABLE meta;\n" + categoriesSchema + `INSERT INTO users (uid, username, display_name, created_at) VALUES ('11111111-1111-4111-8111-111111111111', 'keep', 'Keep Me', '2026-01-01T00:00:00Z');
 INSERT INTO categories (uid, name, type, description, created_at) VALUES ('22222222-2222-4222-8222-222222222222', 'Food', 'expense', '', '2026-01-01T00:00:00Z');
 PRAGMA user_version = 13;`
 	if dropSessions {

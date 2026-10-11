@@ -75,6 +75,9 @@ func (s *Server) Router() *gin.Engine {
 		s.registerPageRoutes(r)
 		r.StaticFS("/static", http.FS(s.Static))
 	}
+	// Browsers ask for /favicon.ico on every page; answer 204 (no icon)
+	// instead of a 404 JSON error so consoles stay clean.
+	r.GET("/favicon.ico", func(c *gin.Context) { c.Status(http.StatusNoContent) })
 	r.NoRoute(func(c *gin.Context) {
 		c.JSON(http.StatusNotFound, errorBody{Error: "not found"})
 	})

@@ -1,11 +1,16 @@
 package store
 
 import (
+	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"strings"
+	"time"
+
+	"github.com/nutmos/expensetrackr/pkg/category"
 )
 
 // Schema notes, table "transactions" (one row per expense):
@@ -47,6 +52,9 @@ import (
 //	v13 transactions rebuilt: type may be 'balance_adjustment', new column
 //	    adjustment_direction, table CHECKs for adjustment rows
 //	v14 table "sessions" (server-side login sessions, issue #30)
+//	v15 categories become per-user: table "user_categories" (one row per user,
+//	    categories as a JSON array) + "meta"; table "categories" dropped
+//	    (issue #34, see docs/categories.md)
 //
 // A brand-new database is created directly at the latest version from
 // currentSchema. An existing database is upgraded by running the pending
@@ -61,7 +69,7 @@ import (
 // transactions.balance_applied: 1 if the row moved its balances (all rows
 // written by v11+); 0 for rows recorded before v11, whose edits/deletes
 // therefore never touch balances, and for balance_adjustment rows.
-var currentSchema = transactionsTable("transactions") + transactionsIndexes + balancesSchemaCurrent + categoriesSchema + usersSchema + sessionsSchema
+var currentSchema = transactionsTable("transactions") + transactionsIndexes + balancesSchemaCurrent + usersSchema + sessionsSchema + userCategoriesSchema
 
 // transactionsTable returns the CREATE TABLE statement of the current (v13+)
 // transactions table under the given name (also used by the v13 rebuild).
@@ -134,8 +142,8 @@ CREATE TABLE IF NOT EXISTS balances (
 CREATE INDEX IF NOT EXISTS idx_balances_type ON balances (type, name);
 `
 
-// categoriesSchema creates the categories table (v8+). Used both for brand-new
-// databases and by migration v7 -> v8 (IF NOT EXISTS makes it idempotent).
+// categoriesSchema is the v8..v14 categories table, created by migration
+// v7 -> v8 and dropped by v14 -> v15 (no longer part of currentSchema) (IF NOT EXISTS makes it idempotent).
 //   - uid: server-assigned UUID v4, immutable, unique
 //   - name: unique case-insensitively (ASCII NOCASE) within the same type
 //   - type: expense | income
@@ -296,6 +304,8 @@ var migrations = []migration{
 	rebuildTransactionsV13,
 	// v13 -> v14: add the sessions table (username/password login).
 	addSessions,
+	// v14 -> v15: per-user categories stored as JSON (issue #34).
+	migrateUserCategories,
 }
 
 // SchemaVersion is the user_version a fully migrated database has.
@@ -892,6 +902,169 @@ CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions (expires_at);
 func addSessions(tx *sql.Tx) error {
 	if _, err := tx.Exec(sessionsSchema); err != nil {
 		return fmt.Errorf("create sessions: %w", err)
+	}
+	return nil
+}
+
+// userCategoriesSchema (v15+): categories are stored per user, all of a
+// user's categories in one row as a JSON array (issue #34). Used for brand-new
+// databases and by migration v14 -> v15 (IF NOT EXISTS: idempotent).
+//
+// user_categories: one row per user, created lazily on the first write (a
+// missing row reads as no categories).
+//   - categories: JSON array of {uid, name, type, description, created_at,
+//     updated_at}; uids are globally unique UUID v4 (transactions link to
+//     them by transactions.category_uid). Validated in Go (pkg/category,
+//     store limits); the CHECK only guarantees a JSON array.
+//   - version: optimistic-locking counter (1 on insert, +1 per write); every
+//     write is a read-modify-write that requires the version it read.
+//   - user_uid references users(uid); the row goes with its user.
+//
+// meta: small key/value table for server bookkeeping. Key
+// 'unclaimed_categories' holds (as a JSON array) the categories of a database
+// that had categories but no users when it was migrated to v15; the first
+// user to register claims them.
+const userCategoriesSchema = `
+CREATE TABLE IF NOT EXISTS user_categories (
+    user_uid   TEXT    PRIMARY KEY REFERENCES users (uid) ON DELETE CASCADE,
+    categories TEXT    NOT NULL DEFAULT '[]' CHECK (json_valid(categories) AND json_type(categories) = 'array'),
+    version    INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+    created_at TEXT    NOT NULL,
+    updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS meta (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL CHECK (json_valid(value)),
+    updated_at TEXT NOT NULL
+);
+`
+
+const unclaimedCategoriesKey = "unclaimed_categories"
+
+// migrateUserCategories is migration v14 -> v15. In one SQL transaction:
+//
+//  1. creates user_categories and meta;
+//  2. if the old categories table exists, moves every row (uid, name, type,
+//     description, timestamps unchanged; ordered by id) to the oldest user
+//     with a password, else the oldest user. With no users at all they are
+//     stashed in meta['unclaimed_categories'] for the first user to register;
+//  3. drops the categories table (its index goes with it) and its
+//     AUTOINCREMENT counter.
+//
+// Merging is by uid, so a re-run after a partial run never duplicates.
+// Transactions are untouched: category_uid values keep pointing at the same
+// uids. Idempotent.
+func migrateUserCategories(tx *sql.Tx) error {
+	if _, err := tx.Exec(userCategoriesSchema); err != nil {
+		return fmt.Errorf("create user_categories: %w", err)
+	}
+	has, err := objectExists(tx, "table", "categories")
+	if err != nil {
+		return err
+	}
+	if !has {
+		return nil
+	}
+	rows, err := tx.Query(`SELECT uid, name, type, description, created_at, updated_at FROM categories ORDER BY id`)
+	if err != nil {
+		return fmt.Errorf("read categories: %w", err)
+	}
+	var cats []category.Category
+	for rows.Next() {
+		var c category.Category
+		var typ string
+		var upd sql.NullString
+		if err := rows.Scan(&c.UID, &c.Name, &typ, &c.Description, &c.CreatedAt, &upd); err != nil {
+			rows.Close()
+			return fmt.Errorf("read categories: %w", err)
+		}
+		c.UID = strings.ToLower(c.UID)
+		c.Type = category.Type(typ)
+		if upd.Valid {
+			c.UpdatedAt = &upd.String
+		}
+		cats = append(cats, c)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(cats) > 0 {
+		var owner string
+		err := tx.QueryRow(`SELECT uid FROM users ORDER BY password_hash IS NULL, id LIMIT 1`).Scan(&owner)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			if err := mergeUnclaimed(tx, cats); err != nil {
+				return err
+			}
+		case err != nil:
+			return fmt.Errorf("pick category owner: %w", err)
+		default:
+			if err := mergeUserCategories(tx, owner, cats); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := tx.Exec(`DROP TABLE categories`); err != nil {
+		return fmt.Errorf("drop categories: %w", err)
+	}
+	if seq, err := objectExists(tx, "table", "sqlite_sequence"); err != nil {
+		return err
+	} else if seq {
+		if _, err := tx.Exec(`DELETE FROM sqlite_sequence WHERE name = 'categories'`); err != nil {
+			return fmt.Errorf("clear categories sequence: %w", err)
+		}
+	}
+	log.Printf("migration 15: moved %d categories to per-user storage", len(cats))
+	return nil
+}
+
+// mergeByUID appends to cur every category of add whose uid is not in cur.
+func mergeByUID(cur, add []category.Category) []category.Category {
+	seen := map[string]bool{}
+	for _, c := range cur {
+		seen[c.UID] = true
+	}
+	for _, c := range add {
+		if !seen[c.UID] {
+			cur = append(cur, c)
+			seen[c.UID] = true
+		}
+	}
+	return cur
+}
+
+func mergeUserCategories(tx *sql.Tx, userUID string, add []category.Category) error {
+	cur, version, err := readUserCategories(context.Background(), tx, userUID)
+	if err != nil {
+		return err
+	}
+	return writeUserCategories(context.Background(), tx, userUID, mergeByUID(cur, add), version)
+}
+
+func mergeUnclaimed(tx *sql.Tx, add []category.Category) error {
+	var cur []category.Category
+	var raw string
+	err := tx.QueryRow(`SELECT value FROM meta WHERE key = ?`, unclaimedCategoriesKey).Scan(&raw)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("read unclaimed categories: %w", err)
+	}
+	if err == nil {
+		if err := json.Unmarshal([]byte(raw), &cur); err != nil {
+			return fmt.Errorf("decode unclaimed categories: %w", err)
+		}
+	}
+	b, err := json.Marshal(mergeByUID(cur, add))
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(`INSERT INTO meta (key, value, updated_at) VALUES (?, ?, ?)
+		ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+		unclaimedCategoriesKey, string(b), ts(time.Now()))
+	if err != nil {
+		return fmt.Errorf("stash unclaimed categories: %w", err)
 	}
 	return nil
 }
