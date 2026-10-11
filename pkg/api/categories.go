@@ -19,8 +19,16 @@ func (s *Server) registerCategoryRoutes(api *gin.RouterGroup) {
 	api.DELETE("/categories/:uid", s.deleteCategory)
 }
 
+// sessionUserUID is the uid of the logged-in user. Categories are per user:
+// every category route (and transaction category validation) is scoped to it.
+// requireAuth guarantees a user on these routes; "" would match no categories.
+func sessionUserUID(c *gin.Context) string {
+	u, _ := currentUser(c)
+	return u.UID
+}
+
 // writeCategoryError maps category errors: 404 not found, 409 duplicate name
-// or in use, then the shared 422/400/500 handling.
+// or in use or limit reached, then the shared 422/400/500 handling.
 func writeCategoryError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
@@ -30,6 +38,8 @@ func writeCategoryError(c *gin.Context, err error) {
 			Error:  "a category with this name and type already exists",
 			Fields: map[string]string{"name": "is already used by another category of this type (names are case-insensitive)"},
 		})
+	case errors.Is(err, store.ErrCategoryLimit):
+		c.JSON(http.StatusConflict, errorBody{Error: err.Error()})
 	case errors.Is(err, store.ErrCategoryInUse):
 		c.JSON(http.StatusConflict, errorBody{Error: err.Error() +
 			"; reassign or clear category_uid on those transactions first"})
@@ -44,7 +54,7 @@ func (s *Server) resolveCategory(c *gin.Context) (category.Category, bool) {
 	if !ok {
 		return category.Category{}, false
 	}
-	cat, err := s.Store.GetCategoryByUID(c.Request.Context(), uid)
+	cat, err := s.Store.GetCategoryByUID(c.Request.Context(), sessionUserUID(c), uid)
 	if err != nil {
 		writeCategoryError(c, err)
 		return category.Category{}, false
@@ -62,7 +72,7 @@ func (s *Server) createCategory(c *gin.Context) {
 		writeCategoryError(c, err)
 		return
 	}
-	if err := s.Store.CreateCategory(c.Request.Context(), &cat); err != nil {
+	if err := s.Store.CreateCategory(c.Request.Context(), sessionUserUID(c), &cat); err != nil {
 		writeCategoryError(c, err)
 		return
 	}
@@ -81,7 +91,7 @@ func (s *Server) listCategories(c *gin.Context) {
 		}
 		typ = t
 	}
-	items, err := s.Store.ListCategories(c.Request.Context(), typ)
+	items, err := s.Store.ListCategories(c.Request.Context(), sessionUserUID(c), typ)
 	if err != nil {
 		internalError(c, err)
 		return
@@ -110,7 +120,7 @@ func (s *Server) replaceCategory(c *gin.Context) {
 		writeCategoryError(c, err)
 		return
 	}
-	updated, err := s.Store.UpdateCategory(c.Request.Context(), cur.ID, func(category.Category) (category.Category, error) {
+	updated, err := s.Store.UpdateCategory(c.Request.Context(), sessionUserUID(c), cur.UID, func(category.Category) (category.Category, error) {
 		return next, nil
 	})
 	if err != nil {
@@ -126,7 +136,7 @@ func (s *Server) deleteCategory(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := s.Store.DeleteCategory(c.Request.Context(), cur.ID); err != nil {
+	if err := s.Store.DeleteCategory(c.Request.Context(), sessionUserUID(c), cur.UID); err != nil {
 		writeCategoryError(c, err)
 		return
 	}

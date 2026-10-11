@@ -189,7 +189,7 @@ overrides and versioning are covered in [docs/balances.md](docs/balances.md).
 - Uniqueness uses SQLite `NOCASE`, which ignores case for ASCII letters only.
   Thai names have no case, so this is enough.
 
-### Categories (table `categories`)
+### Categories (per user, table `user_categories`)
 
 A **category** classifies expenses and income. Fields: server-assigned
 immutable `uid` (UUID v4), `name` (required, ≤ 100 chars), `type`
@@ -197,11 +197,19 @@ immutable `uid` (UUID v4), `name` (required, ≤ 100 chars), `type`
 `updated_at`. Names are unique **case-insensitively within a type**
 (`Food` as expense and `food` as income may coexist); a duplicate is 409.
 
+Categories are **per user** (schema v15, issue #34): every `/api/categories`
+call works on the logged-in user's own set, and another user's category uid
+is a 404. All of a user's categories are stored in **one row** of
+`user_categories` as a JSON array (at most 500 per user, 409 beyond). See
+[docs/categories.md](docs/categories.md). Transactions and balances are not
+per-user yet.
+
 Rules linking transactions and categories:
 
 - `category_uid` is optional on expense and income transactions. An expense
   must use an `expense` category and income an `income` category (422 on
-  `category_uid` otherwise, also for unknown or malformed uids). A transfer
+  `category_uid` otherwise, also for unknown or malformed uids, or a uid of
+  another user's category). A transfer
   must not have a category (422).
 - The transaction stores **only `category_uid`** (no name copy, unlike
   `account`). Clients look the name up from `GET /api/categories` (the web
@@ -344,6 +352,7 @@ The schema version is tracked in SQLite's `PRAGMA user_version`. The code is in
 | 12      | `DROP TABLE IF EXISTS balance_adjustments` (plus its index and sequence row). Only a pre-release build of v11 created that table (manual-edit audit, removed before release); otherwise a no-op. One SQL transaction, idempotent. |
 | 13      | `transactions` rebuilt (create new → copy every row with the same ids/uids/values → drop → rename → recreate all indexes incl. unique uid → restore the AUTOINCREMENT counter) so `type` may be `balance_adjustment`; adds `adjustment_direction` (`increase`/`decrease`, NULL for existing rows) and table CHECKs tying it to that type (no destination/category, `balance_applied = 0`). One SQL transaction, idempotent. See [docs/balances.md](docs/balances.md). |
 | 14      | table `sessions` (login sessions: SHA-256 of the cookie token, `user_uid` → `users.uid` ON DELETE CASCADE, created/expires/last-seen, optional user agent) + indexes on `user_uid`, `expires_at`. Additive, one SQL transaction, idempotent. See [docs/auth.md](docs/auth.md). |
+| 15      | Per-user categories (issue #34): `CREATE TABLE IF NOT EXISTS user_categories (user_uid PK → users.uid ON DELETE CASCADE, categories JSON array, version, timestamps)` and `meta (key, value JSON)`; every row of `categories` (uids, names, types, descriptions, timestamps unchanged) moves to the oldest user with a password, else the oldest user, or — with no users — into `meta['unclaimed_categories']` for the first user to register; then `DROP TABLE categories`. Transactions are untouched (`category_uid` links stay valid). Merges by uid, so it is idempotent; one SQL transaction. **Back up the database first** (operator step). See [docs/categories.md](docs/categories.md). |
 
 Notes on version 2:
 
@@ -420,9 +429,9 @@ only on validation, conflict and duplicate-name errors.
 | GET    | `/api/balances/:uid`  | 200 + balance | `:uid` is the balance UUID. 400 if not UUID-shaped (numeric ids are no longer accepted), 404 if missing. Same for PUT/DELETE |
 | PUT    | `/api/balances/:uid`  | 200 + updated balance | Full replace (manual override of the amounts; a balance/debt change records a `balance_adjustment` transaction). `type` is required and must equal the stored type (422 on `type` otherwise). `uid` in the body is ignored. Requires `If-Match` or `"version"` (428 / 409). 409 `balance_in_use` for a currency change while transactions reference it. Returns 404, 409, 422 or 400 as for POST |
 | DELETE | `/api/balances/:uid`  | 204 | Optional `If-Match` (409 if stale). 404 if missing |
-| POST   | `/api/categories`      | 201 + category, `Location: /api/categories/<uid>` | 422 on validation errors, 409 duplicate name within the type, 400 malformed JSON / unknown fields |
-| GET    | `/api/categories`      | 200 `{"categories":[...],"count":n}` | Expense first, then income, by name. Optional `type=expense\|income` (400 if invalid) |
-| GET    | `/api/categories/:uid` | 200 + category | 400 if not UUID-shaped, 404 if missing |
+| POST   | `/api/categories`      | 201 + category, `Location: /api/categories/<uid>` | Adds to the logged-in user's categories. 422 on validation errors, 409 duplicate name within the type or 500-category limit reached, 400 malformed JSON / unknown fields |
+| GET    | `/api/categories`      | 200 `{"categories":[...],"count":n}` | The logged-in user's categories. Expense first, then income, by name. Optional `type=expense\|income` (400 if invalid) |
+| GET    | `/api/categories/:uid` | 200 + category | 400 if not UUID-shaped, 404 if missing or another user's |
 | PUT    | `/api/categories/:uid` | 200 + updated category | Full replace (omitted description clears it). 409 duplicate name, or type change while referenced by transactions |
 | DELETE | `/api/categories/:uid` | 204 | 409 if any transaction references it; 404 if missing |
 | POST   | `/api/auth/register`   | 201 + user | `username`, `password`, optional `display_name`. Anyone on first run (also logs in); afterwards only when logged in (403 `registration_closed`) |
@@ -443,6 +452,7 @@ only on validation, conflict and duplicate-name errors.
 | GET    | `/api/openapi.json`  | 200 the same document as JSON | |
 | GET    | `/swagger/`, `/swagger` | Swagger UI (HTML) | `/swagger` redirects to `/swagger/`. Assets are vendored and embedded (offline; no CDN) |
 | GET    | `/`, `/transactions`, `/balances`, `/categories` | HTML page (list) | Same `index.html` for every page path; the client-side router picks the view. Static assets under `/static/` |
+| GET    | `/favicon.ico` | 204 | No icon; answered so browsers do not log a 404 |
 | GET    | `/<res>/new`, `/<res>/:uid/edit` | HTML page (add / edit form) | `<res>` = `transactions`, `balances` or `categories`. `:uid` must be UUID-shaped (any case), else 404; an unknown uid is reported by the page itself. Other paths → 404 JSON |
 
 ### Examples

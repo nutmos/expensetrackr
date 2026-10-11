@@ -44,7 +44,8 @@ type WriteOptions struct {
 
 // Store wraps the SQLite database.
 type Store struct {
-	db *sql.DB
+	db   *sql.DB
+	path string
 }
 
 // Open opens (creating if needed) the SQLite database at path and brings its
@@ -71,7 +72,7 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Store{db: db}, nil
+	return &Store{db: db, path: path}, nil
 }
 
 // Close closes the database.

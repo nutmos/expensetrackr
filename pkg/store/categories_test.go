@@ -32,7 +32,7 @@ func TestMigrationV7ToV8AddsCategories(t *testing.T) {
 			t.Errorf("row %d has category after migration: %v", e.ID, e.CategoryUID)
 		}
 	}
-	cats, err := st.ListCategories(ctx, "")
+	cats, err := st.ListCategories(ctx, "", "")
 	if err != nil || len(cats) != 0 {
 		t.Errorf("categories: %v %v", cats, err)
 	}

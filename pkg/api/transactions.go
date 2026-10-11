@@ -20,13 +20,13 @@ const (
 	maxLimit     = 5000
 )
 
-// attachCategory resolves e.CategoryUID (if any), checks it matches the
-// transaction type. Only the uid is stored.
+// attachCategory resolves e.CategoryUID (if any) among the logged-in user's
+// categories and checks it matches the transaction type. Only the uid is stored.
 func (s *Server) attachCategory(c *gin.Context, e *transaction.Transaction) error {
 	if e.CategoryUID == nil {
 		return nil
 	}
-	cat, err := s.Store.GetCategoryByUID(c.Request.Context(), *e.CategoryUID)
+	cat, err := s.Store.GetCategoryByUID(c.Request.Context(), sessionUserUID(c), *e.CategoryUID)
 	if errors.Is(err, store.ErrNotFound) {
 		return &validate.ValidationError{Fields: map[string]string{"category_uid": "does not match any category"}}
 	}

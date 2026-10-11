@@ -86,7 +86,7 @@ tags:
   - name: balances
     description: Payment accounts, credit cards, other assets and liabilities. Type is fixed after creation. Manual amount edits record a balance_adjustment transaction.
   - name: categories
-    description: Expense and income categories. Expense transactions may only use expense categories, income transactions income categories.
+    description: Expense and income categories. Categories belong to the logged-in user (each user has their own set; another user's category uid is a 404). Expense transactions may only use expense categories, income transactions income categories.
   - name: auth
     description: Login, logout, first-run registration, current user and password change.
   - name: users
@@ -465,7 +465,7 @@ paths:
       tags: [categories]
       operationId: listCategories
       summary: List categories
-      description: Expense categories first, then income, each by name (case-insensitive).
+      description: The logged-in user's categories, expense first, then income, each by name (case-insensitive).
       parameters:
         - name: type
           in: query
@@ -1118,7 +1118,7 @@ components:
             balance_in_use: { $ref: '#/components/examples/ErrBalanceInUse' }
             duplicate_name: { $ref: '#/components/examples/ErrBalanceDuplicateName' }
     CategoryConflict:
-      description: Duplicate name within the type (case-insensitive), or a type change while transactions use the category.
+      description: Duplicate name within the type among the user's categories (case-insensitive), a type change while transactions use the category, or the per-user limit (500 categories) reached.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
@@ -1129,6 +1129,8 @@ components:
                 fields: { name: is already used by another category of this type (names are case-insensitive) }
             in_use:
               value: { error: 'category is used by transactions (2 transaction(s)); its type cannot change; reassign or clear category_uid on those transactions first' }
+            limit:
+              value: { error: 'category limit reached (at most 500 categories per user)' }
     UserConflict:
       description: Username or email already used by another user (case-insensitive).
       content:

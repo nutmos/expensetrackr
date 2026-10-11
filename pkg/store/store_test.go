@@ -106,12 +106,13 @@ func assertCurrentSchema(t *testing.T, path string) {
 	t.Helper()
 	got := schemaObjects(t, path)
 	want := map[string]string{
-		"transactions": "table", "idx_transactions_spent_at_unix": "index", "idx_transactions_balance_uid": "index", "idx_transactions_uid": "index", "idx_transactions_type": "index", "idx_transactions_category_uid": "index", "categories": "table", "idx_categories_type_name": "index",
+		"transactions": "table", "idx_transactions_spent_at_unix": "index", "idx_transactions_balance_uid": "index", "idx_transactions_uid": "index", "idx_transactions_type": "index", "idx_transactions_category_uid": "index",
 		"balances": "table", "idx_balances_type": "index", "idx_balances_uid": "index",
 		"users": "table", "idx_users_username": "index", "idx_users_email": "index",
 		"user_identities": "table", "idx_user_identities_user_uid": "index",
 		"idx_transactions_to_balance_uid": "index",
 		"sessions":                        "table", "idx_sessions_user_uid": "index", "idx_sessions_expires_at": "index",
+		"user_categories": "table", "meta": "table",
 	}
 	if len(got) != len(want) {
 		t.Errorf("schema objects = %v, want exactly %v", got, want)
@@ -121,8 +122,8 @@ func assertCurrentSchema(t *testing.T, path string) {
 			t.Errorf("missing %s %q; have %v", typ, name, got)
 		}
 	}
-	if v := userVersion(t, path); v != 14 || SchemaVersion != 14 {
-		t.Errorf("user_version = %d (SchemaVersion %d), want 14", v, SchemaVersion)
+	if v := userVersion(t, path); v != 15 || SchemaVersion != 15 {
+		t.Errorf("user_version = %d (SchemaVersion %d), want 15", v, SchemaVersion)
 	}
 	// Every table has the same columns as a brand-new database (name, type,
 	// NOT NULL, default; transactions too, since v13 rebuilds it from the
@@ -135,7 +136,7 @@ func assertCurrentSchema(t *testing.T, path string) {
 			t.Fatal(err)
 		}
 		st.Close()
-		for _, table := range []string{"transactions", "balances", "categories", "users", "user_identities"} {
+		for _, table := range []string{"transactions", "balances", "users", "user_identities", "user_categories", "meta"} {
 			if got, want := tableColumns(t, path, table, true), tableColumns(t, fresh, table, true); got != want {
 				t.Errorf("%s columns after migration:\n got %s\nwant %s", table, got, want)
 			}

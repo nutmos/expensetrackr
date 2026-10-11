@@ -38,7 +38,6 @@ const (
 
 // Category is a stored category record.
 type Category struct {
-	ID          int64   `json:"-"`   // internal row id; the API identifies categories by UID
 	UID         string  `json:"uid"` // server-assigned UUID v4; immutable
 	Name        string  `json:"name"`
 	Type        Type    `json:"type"`
