@@ -13,6 +13,8 @@ package transaction
 //	income    balance_uid      value += amount  (asset balance up)
 //	transfer  balance_uid      value -= amount  (source: asset down / liability debt up)
 //	          to_balance_uid   value += amount  (destination: asset up / liability debt down)
+//	asset_purchase balance_uid value -= amount  (source account down / card debt up, like an expense)
+//	          to_balance_uid   value += amount  (destination other_asset up)
 //	balance_adjustment         none             (records a manual edit that already set the value)
 type Effect struct {
 	BalanceUID string
@@ -28,7 +30,7 @@ func (e Transaction) Effects() []Effect {
 		return nil
 	case Income:
 		return []Effect{{BalanceUID: e.BalanceUID, Field: "balance_uid", Delta: amt}}
-	case Transfer:
+	case Transfer, AssetPurchase:
 		out := []Effect{{BalanceUID: e.BalanceUID, Field: "balance_uid", Delta: -amt}}
 		if e.ToBalanceUID != nil {
 			out = append(out, Effect{BalanceUID: *e.ToBalanceUID, Field: "to_balance_uid", Delta: amt})

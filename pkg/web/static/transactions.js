@@ -98,15 +98,28 @@
     expense: ["payment_account", "credit_card"],
     income: ["payment_account", "other_asset"],
     transfer: ["payment_account", "credit_card", "other_asset", "other_liability"],
+    asset_purchase: ["payment_account", "credit_card"],
   };
-  const SOURCE_LABEL = { expense: "Payment account", income: "Received into", transfer: "From (source)" };
+  // Which balance types may be the destination (to_balance_uid).
+  const DEST_TYPES = {
+    transfer: SOURCE_TYPES.transfer,
+    asset_purchase: ["other_asset"],
+  };
+  const DEST_HINT = {
+    transfer: "Any balance (e.g. pay a credit card, save to an asset, repay a loan).",
+    asset_purchase: "Other assets only (the asset you bought).",
+  };
+  // Category type used by each transaction type (asset purchases use expense categories).
+  const CATEGORY_TYPE = { expense: "expense", income: "income", asset_purchase: "expense" };
+  const SOURCE_LABEL = { expense: "Payment account", income: "Received into", transfer: "From (source)", asset_purchase: "Paid from" };
   const SOURCE_HINT = {
     expense: "Payment accounts and credit cards.",
     income: "Payment accounts and other assets.",
     transfer: "Any balance.",
+    asset_purchase: "Payment accounts and credit cards.",
   };
   // Display names of transaction types (the API uses the lowercase values).
-  const TYPE_LABEL = { expense: "Expense", income: "Income", transfer: "Transfer", balance_adjustment: "Balance Adjustment" };
+  const TYPE_LABEL = { expense: "Expense", income: "Income", transfer: "Transfer", asset_purchase: "Asset Purchase", balance_adjustment: "Balance Adjustment" };
   const LIABILITY = new Set(["credit_card", "other_liability"]);
   // Minor-unit digits per currency code, from GET /api/currencies (scale).
   let currencyScale = new Map();
@@ -144,9 +157,11 @@
     $("#balance-label").textContent = SOURCE_LABEL[t];
     $("#balance-hint").textContent = SOURCE_HINT[t];
     fillSelect($("#balance_uid"), SOURCE_TYPES[t], keepFrom ?? $("#balance_uid").value);
-    $("#to-field").hidden = t !== "transfer";
+    const dest = DEST_TYPES[t];
+    $("#to-field").hidden = !dest;
+    if (dest) $("#to-hint").textContent = DEST_HINT[t];
     fillCategories(t);
-    fillSelect($("#to_balance_uid"), SOURCE_TYPES.transfer, keepTo ?? $("#to_balance_uid").value);
+    fillSelect($("#to_balance_uid"), dest || [], keepTo ?? $("#to_balance_uid").value);
   }
 
   // Category dropdown: only categories of the selected type; hidden for transfers.
@@ -156,7 +171,7 @@
     $("#category-field").hidden = t === "transfer";
     sel.replaceChildren(Object.assign(document.createElement("option"), { value: "", textContent: "No category" }));
     for (const c of allCategories) {
-      if (c.type !== t) continue;
+      if (c.type !== CATEGORY_TYPE[t]) continue;
       sel.append(Object.assign(document.createElement("option"), { value: c.uid, textContent: c.name }));
     }
     sel.value = want && [...sel.options].some((o) => o.value === want) ? want : "";
@@ -242,8 +257,8 @@
       spent_at: composedSpentAt() || "",
       note: $("#note").value.trim(),
     };
-    if (type === "transfer") payload.to_balance_uid = $("#to_balance_uid").value.trim();
-    else if ($("#category_uid").value) payload.category_uid = $("#category_uid").value;
+    if (DEST_TYPES[type]) payload.to_balance_uid = $("#to_balance_uid").value.trim();
+    if (type !== "transfer" && $("#category_uid").value) payload.category_uid = $("#category_uid").value;
 
     const isEdit = !!editing;
     const url = isEdit ? `/api/transactions/${editing.uid}` : "/api/transactions";
@@ -332,7 +347,7 @@
     for (const [code, { scale, expense, income }] of sums) {
       parts.push(`${code}: expenses ${formatMinor(expense, scale)}, income ${formatMinor(income, scale)}`);
     }
-    totalsEl.textContent = parts.length ? "Totals (shown rows, transfers and balance adjustments excluded): " + parts.join(" · ") : "";
+    totalsEl.textContent = parts.length ? "Totals (shown rows, transfers, asset purchases and balance adjustments excluded): " + parts.join(" · ") : "";
   }
 
   // Category name for a transaction, looked up client-side by category_uid
@@ -414,7 +429,7 @@
         const t = e.type || "expense";
         const isAdj = t === "balance_adjustment";
         const typeTd = cell(TYPE_LABEL[t] || t, "type type-" + t);
-        const acctTd = cell(t === "transfer" ? `${e.account || "?"} → ${e.to_account || "?"}` : (e.account || ""));
+        const acctTd = cell(DEST_TYPES[t] ? `${e.account || "?"} → ${e.to_account || "?"}` : (e.account || ""));
         // An adjustment shows its direction as a sign: + the edited balance
         // or debt went up, − it went down.
         const amountTd = cell(isAdj ? (e.adjustment_direction === "decrease" ? "−" : "+") + e.amount : e.amount, "num");
@@ -449,7 +464,7 @@
   }
 
   async function deleteTransaction(e) {
-    const acct = e.type === "transfer" ? `${e.account || "?"} → ${e.to_account || "?"}` : e.account || "unknown account";
+    const acct = DEST_TYPES[e.type] ? `${e.account || "?"} → ${e.to_account || "?"}` : e.account || "unknown account";
     if (!confirm(`Delete ${e.amount} ${e.currency} (${acct}) at ${shownTime(e.spent_at)}?`)) return;
     const res = await fetch(`/api/transactions/${e.uid}`, { method: "DELETE", headers: App.ifMatch(e.version) });
     if (res.status === 409) {

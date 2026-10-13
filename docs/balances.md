@@ -26,6 +26,8 @@ is always > 0.
 | `income` | `balance_uid` (payment_account / other_asset) | `balance += amount` | n/a (not allowed) | salary into a bank account |
 | `transfer` (source) | `balance_uid` (any type) | `balance −= amount` | `debt += amount` | moving savings out; drawing a loan; cash advance |
 | `transfer` (destination) | `to_balance_uid` (any type) | `balance += amount` | `debt −= amount` | topping up an account; paying a card; repaying a loan |
+| `asset_purchase` (source) | `balance_uid` (payment_account / credit_card) | `balance −= amount` | `debt += amount` | buying a laptop, gold or a car with a debit or credit card |
+| `asset_purchase` (destination) | `to_balance_uid` (other_asset only) | `balance += amount` | n/a (not allowed) | the asset bought gains its value |
 | `balance_adjustment` | `balance_uid` (any type) | none | none | recorded by a manual balance edit, which already set the value (§2) |
 
 The code is `transaction.Effects` (signs) and
@@ -35,7 +37,7 @@ The code is `transaction.Effects` (signs) and
 
 - **Update:** the old effect is reversed and the new one applied, in one
   database transaction. This covers changes of amount, type (expense ↔ income
-  ↔ transfer), source account and transfer destination.
+  ↔ transfer ↔ asset_purchase), source account and transfer destination.
   - Changes are summed per balance. A balance whose net change is zero (for
     example a note-only edit) is not written, and its version does not change.
 - **Delete:** the effect is reversed.
@@ -49,7 +51,7 @@ The code is `transaction.Effects` (signs) and
 ### Currency must match (no FX yet)
 
 A transaction's `currency` must equal the currency of every balance it moves
-(`balance_uid`, and `to_balance_uid` for transfers). Otherwise the request is
+(`balance_uid`, and `to_balance_uid` for transfers and asset purchases). Otherwise the request is
 rejected with **422** and nothing is written:
 
 ```json

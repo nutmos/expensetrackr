@@ -118,12 +118,12 @@ uses `/api/transactions` and the list key `transactions` (the old
 | amount        | `amount`       | `amount_minor INTEGER` + `amount_scale INTEGER` (see below)             |
 | amount (raw)  | `amount_minor` | the integer itself, e.g. `12050`                                       |
 | currency      | `currency`     | `TEXT`, ISO 4217 alphabetic code, upper-cased (`THB`, `SGD`, `USD`, …)  |
-| type          | `type`         | `TEXT NOT NULL DEFAULT 'expense'`: `expense`, `income`, `transfer`, or `balance_adjustment` (server-created only; see "Transaction types") |
+| type          | `type`         | `TEXT NOT NULL DEFAULT 'expense'`: `expense`, `income`, `transfer`, `asset_purchase`, or `balance_adjustment` (server-created only; see "Transaction types") |
 | adj. direction | `adjustment_direction` | `TEXT`, `increase` / `decrease` on `balance_adjustment` rows, `NULL` (JSON `null`) otherwise |
-| payment acct  | `balance_uid`  | `TEXT` UUID of the balance paid from (expense), received into (income) or moved from (transfer); no FK |
-| destination   | `to_balance_uid` | `TEXT`, transfers only (else `null`); UUID of the destination balance; no FK |
-| dest. name    | `to_account`   | denormalized destination name snapshot (transfers only, else `null`)    |
-| category      | `category_uid` | `TEXT`, optional (`null` = none); UUID of a category of the same type; never set for transfers; no FK. **The only link to the category**: no name is stored on the transaction |
+| payment acct  | `balance_uid`  | `TEXT` UUID of the balance paid from (expense), received into (income) or moved from (transfer, asset_purchase); no FK |
+| destination   | `to_balance_uid` | `TEXT`, transfers and asset purchases only (else `null`); UUID of the destination balance; no FK |
+| dest. name    | `to_account`   | denormalized destination name snapshot (transfers and asset purchases only, else `null`)    |
+| category      | `category_uid` | `TEXT`, optional (`null` = none); UUID of a category of the same type (expense categories for asset purchases); never set for transfers; no FK. **The only link to the category**: no name is stored on the transaction |
 | account name  | `account`      | denormalized balance `name` snapshot at write time (read-only in API)   |
 | spend time    | `spent_at`     | `TEXT` RFC 3339 with offset as entered + `spent_at_unix INTEGER`        |
 | note          | `note`         | `TEXT`, optional, up to 1000 chars                                     |
@@ -251,6 +251,7 @@ adjusts its balances automatically:
 | `expense` | asset `balance −= amount`; card `debt += amount` | n/a |
 | `income` | asset `balance += amount` | n/a |
 | `transfer` | source: asset `balance −= amount`, liability `debt += amount` (drawing a loan / cash advance) | destination: asset `balance += amount`, liability `debt −= amount` (card payment / loan repayment) |
+| `asset_purchase` ("Asset Purchase") | like an expense: asset `balance −= amount`; card `debt += amount` | the `other_asset` bought: `balance += amount` |
 | `balance_adjustment` ("Balance Adjustment") | none: records a manual balance edit that already set the value | n/a |
 
 **Balance adjustments** are created only by the server, in the same database
@@ -275,6 +276,14 @@ types each transaction type accepts:
 | `expense`  | `payment_account` or `credit_card` (spent from) | not allowed (422) |
 | `income`   | `payment_account` or `other_asset` (received into) | not allowed (422) |
 | `transfer` | any balance type (source)                     | **required**; any existing balance type, different from `balance_uid` |
+| `asset_purchase` | `payment_account` or `credit_card` (paid from) | **required**; an `other_asset` balance (422 for any other type), different from `balance_uid` |
+
+- **Asset Purchase** (`asset_purchase`) records buying something you track as
+  an `other_asset` (e.g. a laptop, gold): the source is affected like an
+  expense, the asset's balance rises by the same amount. It is a value move
+  like a transfer, so list totals count it as neither expense nor income. An
+  optional **expense** category may be set (e.g. Electronics); income
+  categories are rejected (422).
 
 - Omitting `type` on POST or PUT means `expense`, so older clients keep working.
   A PUT is a full replace, so a PUT of a transfer must send `"type":"transfer"`.
@@ -284,8 +293,8 @@ types each transaction type accepts:
   `other_asset` (savings) or draw from a credit card / loan.
 - The transaction's `currency` must equal the currency of its balance(s),
   including both sides of a transfer (422 otherwise; there is no conversion).
-- A PUT changing `type` away from `transfer` must omit `to_balance_uid` (or
-  send `""`), else 422; changing to `transfer` requires `to_balance_uid`
+- A PUT changing `type` away from `transfer` / `asset_purchase` must omit `to_balance_uid` (or
+  send `""`), else 422; changing to `transfer` / `asset_purchase` requires `to_balance_uid`
   (or a 422).
 
 ### Amounts: integer minor units (no floats)
@@ -353,6 +362,7 @@ The schema version is tracked in SQLite's `PRAGMA user_version`. The code is in
 | 13      | `transactions` rebuilt (create new → copy every row with the same ids/uids/values → drop → rename → recreate all indexes incl. unique uid → restore the AUTOINCREMENT counter) so `type` may be `balance_adjustment`; adds `adjustment_direction` (`increase`/`decrease`, NULL for existing rows) and table CHECKs tying it to that type (no destination/category, `balance_applied = 0`). One SQL transaction, idempotent. See [docs/balances.md](docs/balances.md). |
 | 14      | table `sessions` (login sessions: SHA-256 of the cookie token, `user_uid` → `users.uid` ON DELETE CASCADE, created/expires/last-seen, optional user agent) + indexes on `user_uid`, `expires_at`. Additive, one SQL transaction, idempotent. See [docs/auth.md](docs/auth.md). |
 | 15      | Per-user categories (issue #34): `CREATE TABLE IF NOT EXISTS user_categories (user_uid PK → users.uid ON DELETE CASCADE, categories JSON array, version, timestamps)` and `meta (key, value JSON)`; every row of `categories` (uids, names, types, descriptions, timestamps unchanged) moves to the oldest user with a password, else the oldest user, or — with no users — into `meta['unclaimed_categories']` for the first user to register; then `DROP TABLE categories`. Transactions are untouched (`category_uid` links stay valid). Merges by uid, so it is idempotent; one SQL transaction. **Back up the database first** (operator step). See [docs/categories.md](docs/categories.md). |
+| 16      | `transactions` rebuilt exactly like v13 (every row, id, uid, version, `balance_applied`, `adjustment_direction` copied unchanged; indexes and AUTOINCREMENT counter restored) so the `type` CHECK also allows `asset_purchase`. Skipped if already allowed. One SQL transaction, idempotent. |
 
 Notes on version 2:
 
@@ -420,7 +430,7 @@ only on validation, conflict and duplicate-name errors.
 | Method | Path                 | Success | Notes |
 |--------|----------------------|---------|-------|
 | POST   | `/api/transactions`      | 201 + transaction, `Location` + `ETag` headers | Moves the balance(s) in the same DB transaction. 422 on validation errors (incl. currency ≠ balance currency, `type` `balance_adjustment`), 400 on malformed JSON or unknown fields |
-| GET    | `/api/transactions`      | 200 `{"transactions":[...],"count":n}` | Newest first by spend time. Optional `from`, `to` (RFC 3339 with offset, both inclusive), `limit` (1–5000, default 500), `type` (`expense`/`income`/`transfer`/`balance_adjustment`; 400 if invalid), `category_uid` (UUID; 400 if malformed) |
+| GET    | `/api/transactions`      | 200 `{"transactions":[...],"count":n}` | Newest first by spend time. Optional `from`, `to` (RFC 3339 with offset, both inclusive), `limit` (1–5000, default 500), `type` (`expense`/`income`/`transfer`/`asset_purchase`/`balance_adjustment`; 400 if invalid), `category_uid` (UUID; 400 if malformed) |
 | GET    | `/api/transactions/:uid`  | 200 + transaction | `:uid` is the transaction UUID (case-insensitive). **400** if it is not UUID-shaped (including numeric ids such as `/api/transactions/1`), **404** if no such uid. Same for PUT/DELETE |
 | PUT    | `/api/transactions/:uid`  | 200 + updated transaction | Full replace with the same body and rules as POST. An omitted `note` clears it. Requires `If-Match` or `"version"` (428 / 409). Reverses the old balance effect and applies the new one. 409 `balance_adjustment_readonly` on a balance adjustment (also DELETE). 404 if missing, 422 for invalid values, 400 for malformed JSON or unknown fields |
 | DELETE | `/api/transactions/:uid`  | 204 | Reverses the balance effect. Optional `If-Match` (409 if stale). 404 if missing |
@@ -695,22 +705,23 @@ confirmations use human labels instead. For example, an edit page is titled
 
 - The list is newest first, with a date filter (whole days in the device's time
   zone), a Type filter and per-currency totals. Expenses and income are summed
-  separately; transfers and balance adjustments are excluded from both.
+  separately; transfers, asset purchases and balance adjustments are excluded from both.
 - **Balance Adjustment** rows (recorded by manual balance edits) have their
   own style and label, a signed amount (+/−), and "Automatic" instead of
   Edit/Delete; their edit URL shows a read-only message.
 - Columns: time (shown in the device's time zone, with the stored value on
   hover, and an "edited" marker), Type, Amount,
-  Currency, Account ("from → to" for transfers), Category, Note.
+  Currency, Account ("from → to" for transfers and asset purchases), Category, Note.
 - The category name is looked up client-side from `/api/categories` by
   `category_uid`.
-- The form has a **Type** selector (Expense / Income / Transfer; balance
+- The form has a **Type** selector (Expense / Income / Transfer / Asset Purchase; balance
   adjustments cannot be entered). The source
   dropdown lists only the balance types allowed for that type. Its label
-  changes to "Payment account", "Received into" or "From (source)". A **To
-  (destination)** dropdown appears only for transfers.
-- **Category** lists only categories of the selected type and is hidden for
-  transfers.
+  changes to "Payment account", "Received into", "From (source)" or "Paid from". A **To
+  (destination)** dropdown appears only for transfers (any balance) and asset
+  purchases (other assets only).
+- **Category** lists only categories of the selected type (expense categories for
+  asset purchases) and is hidden for transfers.
 - Time is entered in the device's local time zone. A preview shows the exact
   RFC 3339 value that will be saved, with the device's offset for that date.
 - The add page remembers the last expense currency and account. Picking a
