@@ -12,14 +12,25 @@ package transaction
 //	expense   balance_uid      value -= amount  (asset balance down / card debt up)
 //	income    balance_uid      value += amount  (asset balance up)
 //	transfer  balance_uid      value -= amount  (source: asset down / liability debt up)
-//	          to_balance_uid   value += amount  (destination: asset up / liability debt down)
+//	          to_balance_uid   value += amount  (destination: asset up / liability debt down;
+//	                           to_amount in to_currency for a cross-currency transfer)
 //	asset_purchase balance_uid value -= amount  (source account down / card debt up, like an expense)
 //	          to_balance_uid   value += amount  (destination other_asset up)
 //	balance_adjustment         none             (records a manual edit that already set the value)
 type Effect struct {
 	BalanceUID string
 	Field      string // "balance_uid" or "to_balance_uid" (for error messages)
-	Delta      int64  // signed value change in minor units of the transaction currency
+	Delta      int64  // signed value change in minor units of Currency
+	Currency   string // currency of Delta ("" = the transaction currency)
+}
+
+// DestinationCurrency is the currency the destination balance moves in:
+// to_currency for a cross-currency transfer, else the transaction currency.
+func (e Transaction) DestinationCurrency() string {
+	if e.ToCurrency != nil {
+		return *e.ToCurrency
+	}
+	return e.Currency
 }
 
 // Effects returns the balance changes of e, in order (source first).
@@ -33,7 +44,11 @@ func (e Transaction) Effects() []Effect {
 	case Transfer, AssetPurchase:
 		out := []Effect{{BalanceUID: e.BalanceUID, Field: "balance_uid", Delta: -amt}}
 		if e.ToBalanceUID != nil {
-			out = append(out, Effect{BalanceUID: *e.ToBalanceUID, Field: "to_balance_uid", Delta: amt})
+			to := amt
+			if e.ToAmountMinor != nil {
+				to = *e.ToAmountMinor // cross-currency transfer: in to_currency
+			}
+			out = append(out, Effect{BalanceUID: *e.ToBalanceUID, Field: "to_balance_uid", Delta: to, Currency: e.DestinationCurrency()})
 		}
 		return out
 	default: // expense ("" is treated as expense, as elsewhere)

@@ -47,7 +47,16 @@ type Transaction struct {
 	// manual edit increased or decreased the edited amount (balance for an
 	// asset, debt for a liability). Amount is always the positive difference.
 	AdjustmentDirection *Direction `json:"adjustment_direction"`
-	SpentTime           time.Time  `json:"-"`
+	// Cross-currency transfers only (null otherwise): the amount credited to
+	// the destination in its own currency, the rate used (destination units
+	// per 1 source unit) and where the rate came from. See docs/exchange-rates.md.
+	ToAmount      *string   `json:"to_amount"`       // decimal string in to_currency
+	ToAmountMinor *int64    `json:"to_amount_minor"` // to_amount in minor units of to_currency
+	ToCurrency    *string   `json:"to_currency"`     // destination balance currency
+	ExchangeRate  *string   `json:"exchange_rate"`   // decimal string, to_currency per 1 currency
+	RateSource    *string   `json:"rate_source"`     // "frankfurter" | "manual"
+	RateDate      *string   `json:"rate_date"`       // YYYY-MM-DD of the Frankfurter rate; null for manual
+	SpentTime     time.Time `json:"-"`
 }
 
 // Direction is the sign of a balance adjustment.
@@ -80,6 +89,13 @@ type CreateInput struct {
 	CategoryUID  string       `json:"category_uid"`   // optional; expense/income only
 	SpentAt      string       `json:"spent_at"`
 	Note         string       `json:"note"`
+	// ToAmount (transfer only) is the amount received by the destination, in
+	// its currency. Required to match amount for a same-currency transfer;
+	// for a cross-currency transfer it sets a manual rate, and when omitted the
+	// server converts with the Frankfurter rate of the spent_at date.
+	ToAmount DecimalInput `json:"to_amount"`
+	// ToCurrency is optional; if sent it must equal the destination balance currency.
+	ToCurrency string `json:"to_currency"`
 
 	// IgnoredUID accepts a "uid" in PUT bodies so a previous response can be
 	// round-tripped; it is never used (the uid is server-assigned, immutable).
@@ -286,6 +302,15 @@ func (in CreateInput) Validate() (Transaction, error) {
 	} else {
 		exp.SpentTime = t
 		exp.SpentAt = t.Truncate(time.Second).Format(time.RFC3339)
+	}
+
+	if okType && tt != Transfer {
+		if strings.TrimSpace(string(in.ToAmount)) != "" {
+			fields["to_amount"] = "is only allowed when type is transfer"
+		}
+		if strings.TrimSpace(in.ToCurrency) != "" {
+			fields["to_currency"] = "is only allowed when type is transfer"
+		}
 	}
 
 	note := strings.TrimSpace(in.Note)

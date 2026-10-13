@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nutmos/expensetrackr/pkg/balance"
 	"github.com/nutmos/expensetrackr/pkg/store"
 	"github.com/nutmos/expensetrackr/pkg/transaction"
 	"github.com/nutmos/expensetrackr/pkg/validate"
@@ -49,7 +50,10 @@ func (s *Server) registerTransactionRoutes(api *gin.RouterGroup) {
 // allowed for e.Type, and sets e.Account to the balance's current name. For a
 // transfer it also resolves to_balance_uid and sets ToAccount. Returns a *validate.ValidationError on balance_uid
 // when the balance is missing or not payable.
-func (s *Server) attachPaymentBalance(c *gin.Context, e *transaction.Transaction) error {
+//
+// For a transfer it then fills the cross-currency fields (convertTransfer),
+// which may fetch an exchange rate; prev is the stored transaction on PUT.
+func (s *Server) attachPaymentBalance(c *gin.Context, e *transaction.Transaction, in transaction.CreateInput, prev *transaction.Transaction) error {
 	b, err := s.Store.GetBalanceByUID(c.Request.Context(), e.BalanceUID)
 	if errors.Is(err, store.ErrNotFound) {
 		return &validate.ValidationError{Fields: map[string]string{
@@ -67,7 +71,7 @@ func (s *Server) attachPaymentBalance(c *gin.Context, e *transaction.Transaction
 	}
 	if !e.Type.HasDestination() || e.ToBalanceUID == nil {
 		e.ToBalanceUID, e.ToAccount = nil, nil
-		return nil
+		return s.convertTransfer(c, e, in, b, balance.Balance{}, prev)
 	}
 	to, err := s.Store.GetBalanceByUID(c.Request.Context(), *e.ToBalanceUID)
 	if errors.Is(err, store.ErrNotFound) {
@@ -78,7 +82,10 @@ func (s *Server) attachPaymentBalance(c *gin.Context, e *transaction.Transaction
 	if err != nil {
 		return err
 	}
-	return e.AttachDestinationBalance(to)
+	if err := e.AttachDestinationBalance(to); err != nil {
+		return err
+	}
+	return s.convertTransfer(c, e, in, b, to, prev)
 }
 
 func (s *Server) createTransaction(c *gin.Context) {
@@ -91,7 +98,7 @@ func (s *Server) createTransaction(c *gin.Context) {
 		writeInputError(c, err)
 		return
 	}
-	if err := s.attachPaymentBalance(c, &e); err != nil {
+	if err := s.attachPaymentBalance(c, &e, in, nil); err != nil {
 		writeInputError(c, err)
 		return
 	}
@@ -166,7 +173,7 @@ func (s *Server) replaceTransaction(c *gin.Context) {
 		writeInputError(c, err)
 		return
 	}
-	if err := s.attachPaymentBalance(c, &next); err != nil {
+	if err := s.attachPaymentBalance(c, &next, in, &cur); err != nil {
 		writeInputError(c, err)
 		return
 	}

@@ -57,6 +57,10 @@ import (
 //	    (issue #34, see docs/categories.md)
 //	v16 transactions rebuilt: type may also be 'asset_purchase' (payment
 //	    account / credit card -> other_asset); all rows copied unchanged
+//	v17 cross-currency transfers: transactions.to_amount_minor,
+//	    to_amount_scale, to_currency, exchange_rate, rate_source, rate_date
+//	    (all nullable, null on existing rows); tables fx_rates and
+//	    fx_rate_lookups (Frankfurter rate cache, docs/exchange-rates.md)
 //
 // A brand-new database is created directly at the latest version from
 // currentSchema. An existing database is upgraded by running the pending
@@ -71,7 +75,7 @@ import (
 // transactions.balance_applied: 1 if the row moved its balances (all rows
 // written by v11+); 0 for rows recorded before v11, whose edits/deletes
 // therefore never touch balances, and for balance_adjustment rows.
-var currentSchema = transactionsTable("transactions") + transactionsIndexes + balancesSchemaCurrent + usersSchema + sessionsSchema + userCategoriesSchema
+var currentSchema = transactionsTable("transactions") + transactionsIndexes + balancesSchemaCurrent + usersSchema + sessionsSchema + userCategoriesSchema + fxRatesSchema
 
 // transactionsTable returns the CREATE TABLE statement of the current (v13+)
 // transactions table under the given name (also used by the v13 rebuild).
@@ -102,6 +106,12 @@ CREATE TABLE ` + name + ` (
     version       INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
     balance_applied INTEGER NOT NULL DEFAULT 0 CHECK (balance_applied IN (0, 1)),
     adjustment_direction TEXT CHECK (adjustment_direction IS NULL OR adjustment_direction IN ('increase', 'decrease')),
+    to_amount_minor INTEGER CHECK (to_amount_minor IS NULL OR to_amount_minor > 0),
+    to_amount_scale INTEGER CHECK (to_amount_scale IS NULL OR to_amount_scale BETWEEN 0 AND 4),
+    to_currency   TEXT    CHECK (to_currency IS NULL OR length(to_currency) = 3),
+    exchange_rate TEXT,
+    rate_source   TEXT    CHECK (rate_source IS NULL OR rate_source IN ('frankfurter', 'manual')),
+    rate_date     TEXT    CHECK (rate_date IS NULL OR length(rate_date) = 10),
     CHECK ((type = 'balance_adjustment') = (adjustment_direction IS NOT NULL)),
     CHECK (type <> 'balance_adjustment' OR (to_balance_uid IS NULL AND category_uid IS NULL AND balance_applied = 0))
 );
@@ -310,6 +320,8 @@ var migrations = []migration{
 	migrateUserCategories,
 	// v15 -> v16: allow type 'asset_purchase' (rebuild of transactions).
 	rebuildTransactionsV16,
+	// v16 -> v17: cross-currency transfer columns + fx_rates cache.
+	addCrossCurrency,
 }
 
 // SchemaVersion is the user_version a fully migrated database has.
@@ -874,6 +886,17 @@ func rebuildTransactions(tx *sql.Tx, tmp, dir string) error {
 	if err := tx.QueryRow(`SELECT seq FROM sqlite_sequence WHERE name = 'transactions'`).Scan(&seq); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("read transactions sequence: %w", err)
 	}
+	// Keep the v17 cross-currency columns if a later rebuild runs on a
+	// table that already has them.
+	for _, c := range fxCols {
+		ok, err := columnExists(tx, "transactions", c[0])
+		if err != nil {
+			return err
+		}
+		if ok {
+			cols = append(cols, c[0])
+		}
+	}
 	list := strings.Join(cols, ", ")
 	stmts := []string{
 		`DROP TABLE IF EXISTS ` + tmp,
@@ -1095,6 +1118,60 @@ func mergeUnclaimed(tx *sql.Tx, add []category.Category) error {
 		unclaimedCategoriesKey, string(b), ts(time.Now()))
 	if err != nil {
 		return fmt.Errorf("stash unclaimed categories: %w", err)
+	}
+	return nil
+}
+
+// fxCols are the v17 cross-currency columns of transactions, in table order
+// (same declarations as transactionsTable).
+var fxCols = [][2]string{
+	{"to_amount_minor", "INTEGER CHECK (to_amount_minor IS NULL OR to_amount_minor > 0)"},
+	{"to_amount_scale", "INTEGER CHECK (to_amount_scale IS NULL OR to_amount_scale BETWEEN 0 AND 4)"},
+	{"to_currency", "TEXT CHECK (to_currency IS NULL OR length(to_currency) = 3)"},
+	{"exchange_rate", "TEXT"},
+	{"rate_source", "TEXT CHECK (rate_source IS NULL OR rate_source IN ('frankfurter', 'manual'))"},
+	{"rate_date", "TEXT CHECK (rate_date IS NULL OR length(rate_date) = 10)"},
+}
+
+// fxRatesSchema (v17+) caches Frankfurter (ECB) rates.
+//
+//   - fx_rates: one rate per (base, quote, rate_date), the date Frankfurter
+//     reported. Historical ECB rates never change, so rows are kept forever.
+//     rate is the decimal text as received.
+//   - fx_rate_lookups: requested date ('latest' or YYYY-MM-DD) -> rate_date
+//     actually returned (weekends/holidays map to the previous working day).
+//     fetched_at lets the client expire 'latest' and recent dates after a few
+//     hours (ECB may not have published that day's rate yet).
+const fxRatesSchema = `
+CREATE TABLE IF NOT EXISTS fx_rates (
+    base       TEXT NOT NULL CHECK (length(base) = 3),
+    quote      TEXT NOT NULL CHECK (length(quote) = 3),
+    rate_date  TEXT NOT NULL CHECK (length(rate_date) = 10),
+    rate       TEXT NOT NULL,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (base, quote, rate_date)
+);
+CREATE TABLE IF NOT EXISTS fx_rate_lookups (
+    base           TEXT NOT NULL,
+    quote          TEXT NOT NULL,
+    requested_date TEXT NOT NULL,
+    rate_date      TEXT NOT NULL,
+    fetched_at     TEXT NOT NULL,
+    PRIMARY KEY (base, quote, requested_date)
+);
+`
+
+// addCrossCurrency is migration v16 -> v17. Purely additive (ALTER TABLE ADD
+// COLUMN; every existing row keeps its values and gets NULLs in the new
+// columns) plus the fx cache tables. Idempotent.
+func addCrossCurrency(tx *sql.Tx) error {
+	for _, c := range fxCols {
+		if err := addColumnIfMissing(tx, "transactions", c[0], c[1]); err != nil {
+			return fmt.Errorf("add transactions.%s: %w", c[0], err)
+		}
+	}
+	if _, err := tx.Exec(fxRatesSchema); err != nil {
+		return fmt.Errorf("create fx_rates: %w", err)
 	}
 	return nil
 }

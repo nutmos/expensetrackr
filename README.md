@@ -60,6 +60,7 @@ run from the repo root.
 |---------|----------------|--------------------|---------------------------------------------|
 | `-addr` | `EXPENSE_ADDR` | `127.0.0.1:8080`   | Keep on 127.0.0.1: there is no auth (`:8080` would expose it on all interfaces) |
 | `-db`   | `EXPENSE_DB`   | `data/expenses.db` | Created automatically (directory included)  |
+| `-fx-url` | `EXPENSE_FX_URL` | `https://api.frankfurter.dev/v1` | Frankfurter exchange-rate API for cross-currency transfers ([docs/exchange-rates.md](docs/exchange-rates.md)) |
 
 Set `GIN_MODE=release` to silence Gin's debug output.
 
@@ -128,6 +129,9 @@ uses `/api/transactions` and the list key `transactions` (the old
 | spend time    | `spent_at`     | `TEXT` RFC 3339 with offset as entered + `spent_at_unix INTEGER`        |
 | note          | `note`         | `TEXT`, optional, up to 1000 chars                                     |
 | created       | `created_at`   | `TEXT` RFC 3339 in UTC (server clock)                                  |
+| received amt  | `to_amount`, `to_amount_minor` | `to_amount_minor INTEGER` + `to_amount_scale INTEGER`; cross-currency transfers only (else `NULL`/`null`) |
+| dest. currency | `to_currency` | `TEXT`, the destination balance's currency; cross-currency transfers only |
+| rate          | `exchange_rate`, `rate_source`, `rate_date` | `TEXT`: destination units per 1 source unit (≤ 10 significant digits), `frankfurter`/`manual`, `YYYY-MM-DD` of the ECB rate (Frankfurter only). Immutable history |
 | last edited   | `updated_at`   | `TEXT` RFC 3339 in UTC, `NULL` (JSON `null`) until the transaction is edited |
 
 ### Balances (table `balances`)
@@ -171,8 +175,11 @@ a transaction moves its balances in the same database transaction:
 - income raises a balance;
 - a transfer moves value from source to destination.
 
-The transaction currency must match the balance currency (422 otherwise; no
-FX yet). Manual PUT still sets amounts directly and overrides those
+The transaction currency must match the (source) balance currency (422
+otherwise). A transfer between balances in different currencies is converted:
+the destination moves by `to_amount` in its own currency, either sent by the
+client (manual rate) or computed from the ECB rate via Frankfurter (see
+[docs/exchange-rates.md](docs/exchange-rates.md)). Manual PUT still sets amounts directly and overrides those
 changes (no separate adjustments API); a change of the balance/debt amount
 is recorded as a read-only `balance_adjustment` transaction. Every balance and
 transaction has a `version`; PUT must send it (`If-Match` or
@@ -291,8 +298,15 @@ types each transaction type accepts:
   a credit card or loan receiving money is modelled as a transfer (card
   payment, loan repayment). Transfers may also move money into an
   `other_asset` (savings) or draw from a credit card / loan.
-- The transaction's `currency` must equal the currency of its balance(s),
-  including both sides of a transfer (422 otherwise; there is no conversion).
+- The transaction's `currency` must equal the currency of its source balance
+  (and, for an asset purchase, of its destination too); 422 otherwise.
+- A **transfer** may go between balances in different currencies: `amount` /
+  `currency` are the source side; `to_amount` / `to_currency` (destination
+  currency), `exchange_rate`, `rate_source` (`frankfurter` | `manual`) and
+  `rate_date` record the conversion. Send `to_amount` for a manual rate, or
+  omit it and the server converts with the Frankfurter (ECB) rate of the
+  `spent_at` date. Same-currency transfers: `to_amount` must be omitted or
+  equal `amount`. See [docs/exchange-rates.md](docs/exchange-rates.md).
 - A PUT changing `type` away from `transfer` / `asset_purchase` must omit `to_balance_uid` (or
   send `""`), else 422; changing to `transfer` / `asset_purchase` requires `to_balance_uid`
   (or a 422).
@@ -363,6 +377,7 @@ The schema version is tracked in SQLite's `PRAGMA user_version`. The code is in
 | 14      | table `sessions` (login sessions: SHA-256 of the cookie token, `user_uid` → `users.uid` ON DELETE CASCADE, created/expires/last-seen, optional user agent) + indexes on `user_uid`, `expires_at`. Additive, one SQL transaction, idempotent. See [docs/auth.md](docs/auth.md). |
 | 15      | Per-user categories (issue #34): `CREATE TABLE IF NOT EXISTS user_categories (user_uid PK → users.uid ON DELETE CASCADE, categories JSON array, version, timestamps)` and `meta (key, value JSON)`; every row of `categories` (uids, names, types, descriptions, timestamps unchanged) moves to the oldest user with a password, else the oldest user, or — with no users — into `meta['unclaimed_categories']` for the first user to register; then `DROP TABLE categories`. Transactions are untouched (`category_uid` links stay valid). Merges by uid, so it is idempotent; one SQL transaction. **Back up the database first** (operator step). See [docs/categories.md](docs/categories.md). |
 | 16      | `transactions` rebuilt exactly like v13 (every row, id, uid, version, `balance_applied`, `adjustment_direction` copied unchanged; indexes and AUTOINCREMENT counter restored) so the `type` CHECK also allows `asset_purchase`. Skipped if already allowed. One SQL transaction, idempotent. |
+| 17      | Cross-currency transfers: `ALTER TABLE transactions ADD COLUMN` `to_amount_minor`, `to_amount_scale`, `to_currency`, `exchange_rate` (TEXT), `rate_source` (`frankfurter`/`manual`), `rate_date` (each only if missing; all NULL for existing rows, which are otherwise untouched) + tables `fx_rates (base, quote, rate_date, rate, fetched_at, PK(base, quote, rate_date))` and `fx_rate_lookups` (requested date → rate date). Additive, one SQL transaction, idempotent. See [docs/exchange-rates.md](docs/exchange-rates.md). |
 
 Notes on version 2:
 
@@ -457,6 +472,7 @@ only on validation, conflict and duplicate-name errors.
 | DELETE | `/api/users/:uid`      | 204 | Also deletes linked identities |
 | GET    | `/api/users/:uid/identities` | 200 `{"identities":[...],"count":n}` | Read-only SSO links (empty until SSO exists) |
 | GET    | `/api/currencies`    | 200 `{"currencies":[{"code":"THB","name":"Baht","scale":2},...],"count":n}` | Supported ISO 4217 codes (from `pkg/money`), sorted by code; the web page's currency dropdowns use it |
+| GET    | `/api/exchange-rates?from=USD&to=THB&date=YYYY-MM-DD` | 200 `{"from":"USD","to":"THB","rate":"33.615","date":"2026-10-12","source":"frankfurter"}` | Rate preview (cached Frankfurter / ECB rate; `date` optional = latest). 400 bad query, 422 unsupported pair, 503/502 Frankfurter down. See [docs/exchange-rates.md](docs/exchange-rates.md) |
 | GET    | `/api/healthz`       | 200 `{"status":"ok"}` | |
 | GET    | `/api/openapi.yaml`  | 200 the OpenAPI 3.0 document | Hand-written spec, embedded in the binary |
 | GET    | `/api/openapi.json`  | 200 the same document as JSON | |
