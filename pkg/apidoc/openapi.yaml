@@ -133,6 +133,8 @@ paths:
                 transfer: { $ref: '#/components/examples/TransactionTransfer' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '422': { $ref: '#/components/responses/TransactionValidationFailed' }
+        '502': { $ref: '#/components/responses/FXBadGateway' }
+        '503': { $ref: '#/components/responses/FXUnavailable' }
         '500': { $ref: '#/components/responses/InternalError' }
     get:
       tags: [transactions]
@@ -249,6 +251,8 @@ paths:
         '409': { $ref: '#/components/responses/TransactionConflict' }
         '422': { $ref: '#/components/responses/TransactionValidationFailed' }
         '428': { $ref: '#/components/responses/VersionRequired' }
+        '502': { $ref: '#/components/responses/FXBadGateway' }
+        '503': { $ref: '#/components/responses/FXUnavailable' }
         '500': { $ref: '#/components/responses/InternalError' }
     delete:
       tags: [transactions]
@@ -723,6 +727,44 @@ paths:
                         name: { type: string, example: Baht }
                         scale: { type: integer, example: 2 }
                   count: { type: integer }
+  /api/exchange-rates:
+    get:
+      tags: [meta]
+      operationId: getExchangeRate
+      summary: Look up an exchange rate (Frankfurter / ECB)
+      description: |
+        Rate preview for cross-currency transfers (the web form uses it). Rates come from
+        [Frankfurter](https://frankfurter.dev) (European Central Bank reference rates, working days
+        only; a weekend/holiday returns the previous working day — see `date`). Cached in the
+        database. `from` = `to` answers rate `1` with source `same_currency`.
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string, example: USD } }
+        - { name: to, in: query, required: true, schema: { type: string, example: THB } }
+        - name: date
+          in: query
+          required: false
+          description: YYYY-MM-DD. Omitted, today or later means the latest rate.
+          schema: { type: string, format: date }
+      responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '200':
+          description: The rate.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExchangeRate' }
+        '400':
+          description: Missing/invalid `from`, `to` or `date`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422':
+          description: Frankfurter has no rate for this pair (`code` exchange_rate_unsupported).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '502': { $ref: '#/components/responses/FXBadGateway' }
+        '503': { $ref: '#/components/responses/FXUnavailable' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /api/healthz:
     get:
       tags: [meta]
@@ -1142,6 +1184,16 @@ components:
               value: { error: a user with this username already exists, fields: { username: is already taken (usernames are case-insensitive) } }
             email:
               value: { error: a user with this email already exists, fields: { email: is already used by another user } }
+    FXUnavailable:
+      description: The exchange-rate service (Frankfurter) is unreachable or timed out (`code` exchange_rate_unavailable). Retry later or send `to_amount`.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    FXBadGateway:
+      description: Frankfurter answered with an unexpected response (`code` exchange_rate_unavailable). Retry later or send `to_amount`.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
     InternalError:
       description: Unexpected server error (details are only logged).
       content:
@@ -1198,7 +1250,7 @@ components:
         code:
           type: string
           description: Stable machine-readable reason, present for some errors only.
-          enum: [version_required, version_conflict, balance_in_use, balance_adjustment_readonly]
+          enum: [version_required, version_conflict, balance_in_use, balance_adjustment_readonly, exchange_rate_unsupported, exchange_rate_unavailable]
         current:
           type: object
           description: With `version_conflict` only, the record (Transaction or Balance) as it is now.
@@ -1251,12 +1303,12 @@ components:
       description: Whether a manual edit raised or lowered the edited amount (balance of an asset, debt of a liability).
     Transaction:
       type: object
-      required: [uid, amount, amount_minor, currency, type, balance_uid, account, to_balance_uid, to_account, category_uid, spent_at, note, created_at, updated_at, version, adjusts_balances, adjustment_direction]
+      required: [uid, amount, amount_minor, currency, type, balance_uid, account, to_balance_uid, to_account, category_uid, spent_at, note, created_at, updated_at, version, adjusts_balances, adjustment_direction, to_amount, to_amount_minor, to_currency, exchange_rate, rate_source, rate_date]
       properties:
         uid: { $ref: '#/components/schemas/Uid' }
         amount:
           type: string
-          description: Positive decimal string in the currency's scale.
+          description: Positive decimal string in the currency's scale. For a transfer this is the amount leaving the source balance (source currency).
           example: '120.50'
         amount_minor:
           type: integer
@@ -1325,6 +1377,59 @@ components:
           nullable: true
           description: Set only for `balance_adjustment` (whether the manual edit raised or lowered the balance/debt); `null` otherwise.
           example: null
+        to_amount:
+          type: string
+          nullable: true
+          description: Cross-currency transfers only — the amount credited to the destination, in `to_currency`. `null` otherwise (a same-currency transfer moves `amount`).
+          example: null
+        to_amount_minor:
+          type: integer
+          format: int64
+          nullable: true
+          description: '`to_amount` in minor units of `to_currency`; `null` unless cross-currency.'
+          example: null
+        to_currency:
+          type: string
+          nullable: true
+          pattern: '^[A-Z]{3}$'
+          description: The destination balance's currency, for cross-currency transfers only; `null` otherwise.
+          example: null
+        exchange_rate:
+          type: string
+          nullable: true
+          description: Units of `to_currency` per 1 `currency` (decimal string, up to 10 significant digits). For a manual rate it is `to_amount / amount`. Stored history; never refetched.
+          example: null
+        rate_source:
+          type: string
+          nullable: true
+          enum: [frankfurter, manual, null]
+          description: '`frankfurter` (ECB reference rate fetched by the server) or `manual` (client sent `to_amount`); `null` unless cross-currency.'
+          example: null
+        rate_date:
+          type: string
+          format: date
+          nullable: true
+          description: Date of the Frankfurter rate used (the previous working day for weekends/holidays); `null` for manual rates and non-cross-currency rows.
+          example: null
+    ExchangeRate:
+      type: object
+      required: [from, to, rate, date, source]
+      properties:
+        from: { type: string, example: USD }
+        to: { type: string, example: THB }
+        rate:
+          type: string
+          description: Units of `to` per 1 `from` (decimal string).
+          example: '33.615'
+        date:
+          type: string
+          format: date
+          description: Date the rate applies to (ECB working day; may be earlier than the requested date).
+          example: '2026-10-12'
+        source:
+          type: string
+          enum: [frankfurter, same_currency]
+          example: frankfurter
     TransactionInput:
       type: object
       description: Body of POST and PUT. Unknown fields are a 400.
@@ -1345,7 +1450,23 @@ components:
           type: string
           format: uuid
           nullable: true
-          description: Required for `transfer` (any balance) and `asset_purchase` (must be an `other_asset`); ≠ `balance_uid`, same currency. Not allowed otherwise.
+          description: Required for `transfer` (any balance, any currency — see `to_amount`) and `asset_purchase` (must be an `other_asset` in the same currency); ≠ `balance_uid`. Not allowed otherwise.
+        to_amount:
+          allOf:
+            - $ref: '#/components/schemas/DecimalInput'
+          nullable: true
+          description: |
+            Transfer only. Amount received by the destination, in its currency.
+            Cross-currency transfer: sent → manual rate (`exchange_rate = to_amount / amount`);
+            omitted → the server converts with the Frankfurter (ECB) rate for the `spent_at` date,
+            rounded half-up to the destination currency's scale (422 if the pair is unsupported,
+            503/502 if Frankfurter is unreachable — then send `to_amount`). On PUT, omitting it keeps
+            the stored conversion if amount, currency, date and balances are unchanged, else refetches.
+            Same-currency transfer: must be omitted or equal `amount`.
+        to_currency:
+          type: string
+          nullable: true
+          description: Transfer only, optional. If sent it must equal the destination balance's currency.
         category_uid:
           type: string
           format: uuid

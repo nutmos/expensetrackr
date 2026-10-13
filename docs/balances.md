@@ -48,14 +48,23 @@ The code is `transaction.Effects` (signs) and
   deleting them leaves balances alone. Correct those by hand if needed (see
   §2). Every transaction created from v11 on has `"adjusts_balances": true`.
 
-### Currency must match (no FX yet)
+Cross-currency transfers: the source changes by `amount` (source currency)
+and the destination by the stored `to_amount` (destination currency). An
+edit or delete reverses exactly those stored values — rates are never
+refetched for a reversal.
+
+### Currency must match (except cross-currency transfers)
 
 A transaction's `currency` must equal the currency of every balance it moves
-(`balance_uid`, and `to_balance_uid` for transfers and asset purchases). Otherwise the request is
+(`balance_uid`, and `to_balance_uid` for asset purchases). A **transfer** is
+the exception for its destination: if `to_balance_uid` is in another
+currency, the destination moves by `to_amount` in its own currency (schema
+v17, see [exchange-rates.md](exchange-rates.md)); the source still moves by
+`amount` and must be in `currency`. Otherwise the request is
 rejected with **422** and nothing is written:
 
 ```json
-{"error":"validation failed","fields":{"balance_uid":"balance \"Wallet\" is in THB but the transaction is in USD; the currencies must match (no exchange-rate conversion yet)"}}
+{"error":"validation failed","fields":{"balance_uid":"balance \"Wallet\" is in THB but the transaction is in USD; the currencies must match"}}
 ```
 
 - The error is on `to_balance_uid` when the destination is the mismatch.
@@ -249,6 +258,7 @@ amounts stay exactly as entered.
 
 ## Follow-ups
 
-- FX: allow cross-currency transactions and transfers with a rate.
+- FX for other types (e.g. a foreign-currency expense on a card); transfers
+  are done (v17, [exchange-rates.md](exchange-rates.md)).
 - Optional "recompute from transactions" tool, or a reconciliation report.
 - Versioning for categories and users.

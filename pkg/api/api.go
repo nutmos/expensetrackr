@@ -14,6 +14,7 @@ import (
 
 	"github.com/nutmos/expensetrackr/pkg/apidoc"
 	"github.com/nutmos/expensetrackr/pkg/auth"
+	"github.com/nutmos/expensetrackr/pkg/fx"
 	"github.com/nutmos/expensetrackr/pkg/money"
 	"github.com/nutmos/expensetrackr/pkg/store"
 	"github.com/nutmos/expensetrackr/pkg/validate"
@@ -28,6 +29,9 @@ type Server struct {
 	Store *store.Store
 	// Static is the web assets filesystem; it must contain index.html.
 	Static fs.FS
+	// FX looks up exchange rates for cross-currency transfers and
+	// GET /api/exchange-rates; nil means no rate service (503, use to_amount).
+	FX *fx.Client
 	// Throttle overrides the failed-login throttle (tests); nil = default.
 	Throttle *auth.Throttle
 	// Now overrides the clock for session expiry (tests); nil = time.Now.
@@ -61,6 +65,7 @@ func (s *Server) Router() *gin.Engine {
 	s.registerBalanceRoutes(api)
 	s.registerCategoryRoutes(api)
 	s.registerUserRoutes(api)
+	api.GET("/exchange-rates", s.getExchangeRate)
 	api.GET("/currencies", func(c *gin.Context) {
 		cs := money.Currencies()
 		c.JSON(http.StatusOK, gin.H{"currencies": cs, "count": len(cs)})
@@ -124,6 +129,13 @@ func writeInputError(c *gin.Context, err error) {
 		c.JSON(http.StatusBadRequest, errorBody{Error: re.Msg})
 	case errors.Is(err, store.ErrNotFound):
 		c.JSON(http.StatusNotFound, errorBody{Error: "transaction not found"})
+	case errors.Is(err, fx.ErrUnsupported):
+		c.JSON(http.StatusUnprocessableEntity, errorBody{Error: fxMessage(err), Code: "exchange_rate_unsupported",
+			Fields: map[string]string{"to_amount": "no exchange rate is available for this currency pair; provide to_amount manually"}})
+	case errors.Is(err, fx.ErrUnavailable):
+		c.JSON(http.StatusServiceUnavailable, errorBody{Error: fxMessage(err), Code: "exchange_rate_unavailable"})
+	case errors.Is(err, fx.ErrBadUpstream):
+		c.JSON(http.StatusBadGateway, errorBody{Error: fxMessage(err), Code: "exchange_rate_unavailable"})
 	case errors.Is(err, store.ErrReadOnly):
 		c.JSON(http.StatusConflict, errorBody{Error: err.Error(), Code: "balance_adjustment_readonly"})
 	default:

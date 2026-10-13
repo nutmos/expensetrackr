@@ -145,6 +145,12 @@
             <small class="muted" id="to-hint">Any balance (e.g. pay a credit card, save to an asset, repay a loan).</small>
             <small class="err" data-for="to_balance_uid"></small>
           </label>
+          <label id="fx-field" hidden><span>Received amount (<span id="fx-currency"></span>)</span>
+            <input id="to_amount" name="to_amount" type="text" inputmode="decimal" autocomplete="off" placeholder="Amount received">
+            <small class="muted"><span id="fx-rate"></span> <button type="button" class="linklike" id="fx-reset" hidden>Use market rate</button></small>
+            <small class="err" data-for="to_amount"></small>
+            <small class="err" data-for="to_currency"></small>
+          </label>
           <div class="field">
             <span class="field-label">Time</span>
             <div class="datetime-row">
@@ -158,7 +164,7 @@
           <input id="note" name="note" type="text" maxlength="1000" placeholder="Lunch with team">
           <small class="err" data-for="note"></small>
         </label>
-        <p class="muted small" id="auto-adjust-note">Saving updates the selected balance(s) automatically: an expense lowers an account’s balance or raises a card’s debt, income raises a balance, a transfer moves the amount from source to destination, an asset purchase pays like an expense and raises the asset’s value. The currency must match the balance’s currency.</p>
+        <p class="muted small" id="auto-adjust-note">Saving updates the selected balance(s) automatically: an expense lowers an account’s balance or raises a card’s debt, income raises a balance, a transfer moves the amount from source to destination, an asset purchase pays like an expense and raises the asset’s value. The currency must match the (source) balance’s currency; a transfer between balances in different currencies credits the received amount, converted at the ECB reference rate from <a href="https://frankfurter.dev" target="_blank" rel="noopener">Frankfurter</a> unless you type it yourself.</p>
         <div class="conflict" id="conflict" role="alert" hidden>
           <p class="conflict-msg"></p>
           <button type="button" class="conflict-reload">Reload latest transaction</button>

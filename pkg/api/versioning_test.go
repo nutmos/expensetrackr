@@ -217,7 +217,7 @@ func TestTransactionsMoveBalancesAPI(t *testing.T) {
 	if c, b := post(`{"amount":"5","currency":"USD","balance_uid":"` + cash + `"` + at); *c != 422 || fieldsOf(b)["balance_uid"] == nil {
 		t.Errorf("USD on THB: %d %v", *c, b)
 	}
-	if c, b := post(`{"type":"transfer","amount":"5","currency":"THB","balance_uid":"` + cash + `","to_balance_uid":"` + usd + `"` + at); *c != 422 || fieldsOf(b)["to_balance_uid"] == nil {
+	if c, b := post(`{"type":"transfer","amount":"5","currency":"THB","balance_uid":"` + cash + `","to_balance_uid":"` + usd + `","to_currency":"EUR"` + at); *c != 422 || fieldsOf(b)["to_currency"] == nil {
 		t.Errorf("THB -> USD transfer: %d %v", *c, b)
 	}
 	if after := get(cash); after["balance"] != before["balance"] || after["version"] != before["version"] {

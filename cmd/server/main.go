@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/nutmos/expensetrackr/pkg/api"
+	"github.com/nutmos/expensetrackr/pkg/fx"
 	"github.com/nutmos/expensetrackr/pkg/store"
 	"github.com/nutmos/expensetrackr/pkg/web"
 )
@@ -27,6 +28,7 @@ func envOr(key, def string) string {
 func main() {
 	addr := flag.String("addr", envOr("EXPENSE_ADDR", "127.0.0.1:8080"), "listen address (env EXPENSE_ADDR); use :8080 to listen on all interfaces")
 	dbPath := flag.String("db", envOr("EXPENSE_DB", "data/expenses.db"), "SQLite database file (env EXPENSE_DB)")
+	fxURL := flag.String("fx-url", envOr("EXPENSE_FX_URL", fx.DefaultBaseURL), "Frankfurter exchange-rate API base URL (env EXPENSE_FX_URL)")
 	flag.Parse()
 
 	st, err := store.Open(*dbPath)
@@ -37,7 +39,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              *addr,
-		Handler:           (&api.Server{Store: st, Static: web.Static()}).Router(),
+		Handler:           (&api.Server{Store: st, Static: web.Static(), FX: &fx.Client{BaseURL: *fxURL, Cache: st}}).Router(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

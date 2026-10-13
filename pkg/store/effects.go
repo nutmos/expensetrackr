@@ -19,7 +19,9 @@ import (
 //   - next (create/update): its effect is applied (if next.AdjustsBalances).
 //     Every balance it references must exist and use the transaction's
 //     currency, else a *validate.ValidationError on balance_uid /
-//     to_balance_uid is returned (no exchange-rate conversion yet).
+//     to_balance_uid is returned. A cross-currency transfer moves the
+//     destination by to_amount in to_currency (see docs/exchange-rates.md);
+//     reversal always uses the stored values, never a fresh rate.
 //
 // Deltas are summed per balance, so each touched balance is written once
 // (version +1, updated_at = now); a balance whose net change is zero (e.g. an
@@ -39,7 +41,7 @@ func applyBalanceEffects(ctx context.Context, tx *sql.Tx, old, next *transaction
 	if old != nil && old.AdjustsBalances {
 		for _, ef := range old.Effects() {
 			add(ef.BalanceUID, -ef.Delta)
-			reversedCurrency[ef.BalanceUID] = old.Currency
+			reversedCurrency[ef.BalanceUID] = effectCurrency(*old, ef)
 		}
 	}
 	if next != nil && next.AdjustsBalances {
@@ -51,10 +53,12 @@ func applyBalanceEffects(ctx context.Context, tx *sql.Tx, old, next *transaction
 			if err != nil {
 				return err
 			}
-			if b.Currency != next.Currency {
-				return &validate.ValidationError{Fields: map[string]string{ef.Field: fmt.Sprintf(
-					"balance %q is in %s but the transaction is in %s; the currencies must match (no exchange-rate conversion yet)",
-					b.Name, b.Currency, next.Currency)}}
+			if want := effectCurrency(*next, ef); b.Currency != want {
+				msg := fmt.Sprintf("balance %q is in %s but the transaction is in %s; the currencies must match", b.Name, b.Currency, want)
+				if ef.Field == "to_balance_uid" && next.Type == transaction.Transfer {
+					msg = fmt.Sprintf("balance %q is in %s but to_currency is %s", b.Name, b.Currency, want)
+				}
+				return &validate.ValidationError{Fields: map[string]string{ef.Field: msg}}
 			}
 			add(ef.BalanceUID, ef.Delta)
 		}
@@ -89,6 +93,13 @@ func applyBalanceEffects(ctx context.Context, tx *sql.Tx, old, next *transaction
 		}
 	}
 	return nil
+}
+
+func effectCurrency(e transaction.Transaction, ef transaction.Effect) string {
+	if ef.Currency != "" {
+		return ef.Currency
+	}
+	return e.Currency
 }
 
 func balanceByUIDTx(ctx context.Context, tx *sql.Tx, uid string) (balance.Balance, error) {

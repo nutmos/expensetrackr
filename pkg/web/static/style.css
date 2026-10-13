@@ -98,3 +98,7 @@ tr.just-saved td { background: #ecfdf5; transition: background 2s; }
 .error { margin: 8px 0; padding: 8px 12px; border-radius: 6px; background: #fef2f2; color: var(--err); border: 1px solid #fecaca; }
 .auth-switch { margin-top: 16px; padding-top: 12px; border-top: 1px solid #e5e7eb; }
 .auth-switch p { margin: 0 0 8px; }
+
+/* Cross-currency transfers */
+button.linklike { background: none; border: 0; padding: 0; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; }
+td.num.fx { white-space: nowrap; }

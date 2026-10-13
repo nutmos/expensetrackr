@@ -31,6 +31,8 @@ match the Go JSON shapes.
   row per user (schema v15, issue #34), migration and concurrency.
 - [Authentication](auth.md): username/password login, sessions (schema
   v14), first-run setup, public vs protected routes, CSRF and throttling.
+- [Exchange rates](exchange-rates.md): cross-currency transfers (schema
+  v17), Frankfurter / ECB rates, caching, failure behaviour.
 - [Balances](balances.md): automatic adjustment from transactions (sign
   rules), manual overrides via PUT recorded as Balance Adjustment
   transactions, optimistic locking (`version`, `ETag`, `If-Match`, 428/409),

@@ -19,6 +19,12 @@
   let allBalances = [];
   // All categories (dropdown + list names), from GET /api/categories.
   let allCategories = [];
+  // Cross-currency transfer state: fxManual is true once the user typed the
+  // received amount (then it is sent as to_amount); otherwise the server
+  // converts with the Frankfurter rate and the field shows a preview.
+  let fxManual = false;
+  let fxGen = 0;
+  let fxTimer = null;
   // Bumped on every page entry so a slow response for a page we already
   // left is ignored.
   let gen = 0;
@@ -151,6 +157,89 @@
 
   function currentType() { return $("#type").value || "expense"; }
 
+  // ---- Cross-currency transfers (docs/exchange-rates.md) --------------------
+
+  const balanceByUID = (uid) => allBalances.find((x) => x.uid === uid);
+  // Decimal string -> BigInt minor units at scale (null if not a plain decimal).
+  function toMinor(str, scale) {
+    const m = /^(\d+)(?:\.(\d+))?$/.exec(String(str).trim());
+    if (!m) return null;
+    const frac = (m[2] || "");
+    if (frac.length > scale) return null;
+    return BigInt(m[1] + frac.padEnd(scale, "0"));
+  }
+  function minorToString(v, scale) {
+    let s = v.toString().padStart(scale + 1, "0");
+    return scale ? s.slice(0, -scale) + "." + s.slice(-scale) : s;
+  }
+  // amount (source scale) * rate, rounded half up to the destination scale.
+  function convert(amount, fromScale, rate, toScale) {
+    const a = toMinor(amount, fromScale);
+    const rm = /^(\d+)(?:\.(\d+))?$/.exec(rate);
+    if (a === null || !rm) return null;
+    const k = (rm[2] || "").length;
+    const r = BigInt(rm[1] + (rm[2] || ""));
+    const shift = fromScale + k - toScale; // product has fromScale+k decimals
+    let num = a * r;
+    if (shift <= 0) return minorToString(num * 10n ** BigInt(-shift), toScale);
+    const div = 10n ** BigInt(shift);
+    return minorToString((num * 2n + div) / (div * 2n), toScale);
+  }
+  // to/amount with up to 6 significant digits, for the rate line.
+  function ratio(toAmount, amount) {
+    const a = Number(amount), t = Number(toAmount);
+    if (!(a > 0) || !(t > 0)) return "";
+    return String(Number((t / a).toPrecision(6)));
+  }
+  function fxPair() {
+    if (currentType() !== "transfer") return null;
+    const src = balanceByUID($("#balance_uid").value);
+    const dst = balanceByUID($("#to_balance_uid").value);
+    if (!src || !dst) return null;
+    const from = ($("#currency").value || src.currency).toUpperCase();
+    if (from === dst.currency) return null;
+    return { from, to: dst.currency };
+  }
+  function setRateLine(text) { $("#fx-rate").textContent = text; }
+  function showManualRate(p) {
+    const r = ratio($("#to_amount").value, $("#amount").value);
+    setRateLine(r ? `1 ${p.from} = ${r} ${p.to} (your amount)` : `Enter the amount received in ${p.to}.`);
+    $("#fx-reset").hidden = false;
+  }
+  // Show/hide the received-amount field and refresh the preview.
+  function updateFx(immediate) {
+    const p = fxPair();
+    $("#fx-field").hidden = !p;
+    clearTimeout(fxTimer);
+    if (!p) { fxGen++; return; }
+    $("#fx-currency").textContent = p.to;
+    if (fxManual) { showManualRate(p); return; }
+    $("#fx-reset").hidden = true;
+    fxTimer = setTimeout(() => fetchRate(p), immediate ? 0 : 300);
+  }
+  async function fetchRate(p) {
+    const my = ++fxGen;
+    const local = spentAtInput.value ? spentAtInput.value.slice(0, 10) : "";
+    const q = new URLSearchParams({ from: p.from, to: p.to });
+    if (local) q.set("date", local);
+    setRateLine("Looking up the exchange rate…");
+    try {
+      const res = await fetch("/api/exchange-rates?" + q);
+      const body = await res.json().catch(() => ({}));
+      if (my !== fxGen || fxManual) return;
+      if (!res.ok) {
+        $("#to_amount").value = "";
+        setRateLine((res.status === 422 ? `No market rate for ${p.from} → ${p.to}.` : "The exchange-rate service is unavailable.") + " Enter the amount received.");
+        return;
+      }
+      const conv = convert($("#amount").value, currencyScale.get(p.from) ?? 2, body.rate, currencyScale.get(p.to) ?? 2);
+      $("#to_amount").value = conv && !/^0*\.?0*$/.test(conv) ? conv : "";
+      setRateLine(`1 ${p.from} = ${body.rate} ${p.to} (rate of ${body.date})`);
+    } catch (err) {
+      if (my === fxGen) setRateLine("Could not load the exchange rate: " + err.message);
+    }
+  }
+
   // Re-render dropdowns for the selected type, keeping selections when valid.
   function applyType(keepFrom, keepTo) {
     const t = currentType();
@@ -162,6 +251,7 @@
     if (dest) $("#to-hint").textContent = DEST_HINT[t];
     fillCategories(t);
     fillSelect($("#to_balance_uid"), dest || [], keepTo ?? $("#to_balance_uid").value);
+    updateFx();
   }
 
   // Category dropdown: only categories of the selected type; hidden for transfers.
@@ -192,6 +282,8 @@
     $("#note").value = "";
     $("#amount").value = "";
     $("#currency").value = "";
+    $("#to_amount").value = "";
+    fxManual = false;
     if (!params.uid) {
       $("#form-title").textContent = "Add a transaction";
       $("#submit-btn").textContent = "Save transaction";
@@ -232,6 +324,10 @@
     $("#amount").value = e.amount;
     App.setCurrency($("#currency"), e.currency);
     $("#type").value = e.type || "expense";
+    // Stored conversion: shown as saved; it is kept unless the amount, date
+    // or balances change (then the market rate is looked up again) or the
+    // received amount is edited (manual).
+    fxManual = e.rate_source === "manual";
     applyType(e.balance_uid, e.to_balance_uid || "");
     fillCategories(currentType(), e.category_uid || "");
     $("#note").value = e.note || "";
@@ -240,6 +336,16 @@
     const d = new Date(e.spent_at);
     spentAtInput.value = isNaN(d) ? "" : toLocalInputValue(d);
     updatePreview();
+    if (e.to_amount && e.to_currency) {
+      clearTimeout(fxTimer);
+      fxGen++;
+      $("#fx-field").hidden = false;
+      $("#fx-currency").textContent = e.to_currency;
+      $("#to_amount").value = e.to_amount;
+      $("#fx-reset").hidden = !fxManual;
+      setRateLine(fxManual ? `1 ${e.currency} = ${ratio(e.to_amount, e.amount)} ${e.to_currency} (your amount)`
+        : `1 ${e.currency} = ${e.exchange_rate} ${e.to_currency} (rate of ${e.rate_date})`);
+    }
     $("#amount").focus();
   }
 
@@ -259,6 +365,10 @@
     };
     if (DEST_TYPES[type]) payload.to_balance_uid = $("#to_balance_uid").value.trim();
     if (type !== "transfer" && $("#category_uid").value) payload.category_uid = $("#category_uid").value;
+    // Received amount: sent only when typed by the user; otherwise the server
+    // converts with the market rate (and keeps a saved conversion on edit if
+    // nothing it depends on changed).
+    if (fxPair() && fxManual) payload.to_amount = $("#to_amount").value.trim();
 
     const isEdit = !!editing;
     const url = isEdit ? `/api/transactions/${editing.uid}` : "/api/transactions";
@@ -432,12 +542,19 @@
         const acctTd = cell(DEST_TYPES[t] ? `${e.account || "?"} → ${e.to_account || "?"}` : (e.account || ""));
         // An adjustment shows its direction as a sign: + the edited balance
         // or debt went up, − it went down.
-        const amountTd = cell(isAdj ? (e.adjustment_direction === "decrease" ? "−" : "+") + e.amount : e.amount, "num");
+        const fxRow = e.to_amount && e.to_currency;
+        const amountTd = cell(isAdj ? (e.adjustment_direction === "decrease" ? "−" : "+") + e.amount
+          : fxRow ? `${fmtAmount(e.amount, e.currency)} ${e.currency} → ${fmtAmount(e.to_amount, e.to_currency)} ${e.to_currency}` : e.amount, "num");
+        if (fxRow) {
+          amountTd.classList.add("fx");
+          amountTd.title = e.rate_source === "manual" ? `Amount received entered by hand (1 ${e.currency} = ${e.exchange_rate} ${e.to_currency})`
+            : `1 ${e.currency} = ${e.exchange_rate} ${e.to_currency}, ECB rate of ${e.rate_date} via Frankfurter`;
+        }
         if (isAdj) {
           tr.classList.add("row-adjustment");
           amountTd.title = `Manual balance edit: ${e.adjustment_direction === "decrease" ? "decreased" : "increased"} by ${e.amount} ${e.currency}`;
         }
-        tr.append(timeTd, typeTd, amountTd, cell(e.currency), acctTd, cell(categoryName(e.category_uid)), cell(e.note || "", "note"));
+        tr.append(timeTd, typeTd, amountTd, cell(fxRow ? `${e.currency} → ${e.to_currency}` : e.currency), acctTd, cell(categoryName(e.category_uid)), cell(e.note || "", "note"));
         const actions = document.createElement("td");
         actions.className = "actions-cell";
         if (isAdj) {
@@ -463,9 +580,18 @@
     }
   }
 
+  // "3361.50" -> "3,361.50" (display only; digits as stored).
+  function fmtAmount(v) {
+    // The API already formats amounts in the currency's scale; keep its digits.
+    const scale = (String(v).split(".")[1] || "").length;
+    const opts = { minimumFractionDigits: scale, maximumFractionDigits: scale };
+    try { return new Intl.NumberFormat(undefined, opts).format(v); } catch (_) { return v; }
+  }
+
   async function deleteTransaction(e) {
     const acct = DEST_TYPES[e.type] ? `${e.account || "?"} → ${e.to_account || "?"}` : e.account || "unknown account";
-    if (!confirm(`Delete ${e.amount} ${e.currency} (${acct}) at ${shownTime(e.spent_at)}?`)) return;
+    const fxText = e.to_amount && e.to_currency ? ` → ${e.to_amount} ${e.to_currency}` : "";
+    if (!confirm(`Delete ${e.amount} ${e.currency}${fxText} (${acct}) at ${shownTime(e.spent_at)}?`)) return;
     const res = await fetch(`/api/transactions/${e.uid}`, { method: "DELETE", headers: App.ifMatch(e.version) });
     if (res.status === 409) {
       alert("This transaction changed after the list was loaded, so it was not deleted. The list has been refreshed; check it and delete again if you still want to.");
@@ -486,14 +612,23 @@
 
   spentAtInput.addEventListener("input", updatePreview);
   $("#type").addEventListener("change", () => applyType());
-  // A transaction's currency must match its balance (no FX yet): picking a
+  // A transaction's currency must match its (source) balance: picking a
   // balance fills in its currency (still selectable; the server reports a
   // mismatch under the currency field).
   function currencyFromBalance() {
     const b = allBalances.find((x) => x.uid === $("#balance_uid").value);
     if (b) App.setCurrency($("#currency"), b.currency);
   }
-  $("#balance_uid").addEventListener("change", currencyFromBalance);
+  $("#balance_uid").addEventListener("change", () => { currencyFromBalance(); fxAuto(); });
+  // Changing what the conversion depends on goes back to the market rate
+  // (like the API: a PUT without to_amount refetches).
+  function fxAuto() { fxManual = false; updateFx(); }
+  $("#to_balance_uid").addEventListener("change", fxAuto);
+  $("#currency").addEventListener("change", fxAuto);
+  $("#amount").addEventListener("input", () => { if (fxManual) { const p = fxPair(); if (p) showManualRate(p); } else updateFx(); });
+  spentAtInput.addEventListener("change", () => { if (!fxManual) updateFx(); });
+  $("#to_amount").addEventListener("input", () => { fxManual = true; fxGen++; const p = fxPair(); if (p) showManualRate(p); });
+  $("#fx-reset").addEventListener("click", () => { fxAuto(); updateFx(true); });
   $("#now-btn").addEventListener("click", setNow);
   $("#cancel-btn").addEventListener("click", cancelForm);
   form.addEventListener("submit", submitTransaction);
