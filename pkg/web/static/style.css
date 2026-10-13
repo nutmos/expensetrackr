@@ -56,7 +56,7 @@ td.neg { color: var(--err); }
 #b-totals td, #b-totals th { white-space: nowrap; }
 [hidden] { display: none !important; }
 .type-income { color: #1a7f37; }
-.type-transfer { color: #555; font-style: italic; }
+.type-transfer, .type-asset_purchase { color: #555; font-style: italic; }
 .type-balance_adjustment { color: #6d28d9; font-weight: 600; }
 tr.row-adjustment td { background: #f5f3ff; }
 .auto-label { font-size: 0.8rem; color: var(--muted); font-style: italic; }

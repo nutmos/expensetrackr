@@ -68,6 +68,7 @@
               <option value="expense">Expense</option>
               <option value="income">Income</option>
               <option value="transfer">Transfer</option>
+              <option value="asset_purchase">Asset Purchase</option>
               <option value="balance_adjustment">Balance Adjustment</option>
             </select>
           </label>
@@ -119,6 +120,7 @@
               <option value="expense">Expense</option>
               <option value="income">Income</option>
               <option value="transfer">Transfer</option>
+              <option value="asset_purchase">Asset Purchase</option>
             </select>
             <small class="err" data-for="type"></small>
           </label>
@@ -140,7 +142,7 @@
             <select id="to_balance_uid" name="to_balance_uid">
               <option value="">Select a balance…</option>
             </select>
-            <small class="muted">Any balance (e.g. pay a credit card, save to an asset, repay a loan).</small>
+            <small class="muted" id="to-hint">Any balance (e.g. pay a credit card, save to an asset, repay a loan).</small>
             <small class="err" data-for="to_balance_uid"></small>
           </label>
           <div class="field">
@@ -156,7 +158,7 @@
           <input id="note" name="note" type="text" maxlength="1000" placeholder="Lunch with team">
           <small class="err" data-for="note"></small>
         </label>
-        <p class="muted small" id="auto-adjust-note">Saving updates the selected balance(s) automatically: an expense lowers an account’s balance or raises a card’s debt, income raises a balance, a transfer moves the amount from source to destination. The currency must match the balance’s currency.</p>
+        <p class="muted small" id="auto-adjust-note">Saving updates the selected balance(s) automatically: an expense lowers an account’s balance or raises a card’s debt, income raises a balance, a transfer moves the amount from source to destination, an asset purchase pays like an expense and raises the asset’s value. The currency must match the balance’s currency.</p>
         <div class="conflict" id="conflict" role="alert" hidden>
           <p class="conflict-msg"></p>
           <button type="button" class="conflict-reload">Reload latest transaction</button>

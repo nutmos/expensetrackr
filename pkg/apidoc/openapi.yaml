@@ -69,6 +69,7 @@ info:
     | `expense` (default) | `payment_account` or `credit_card` | not allowed | asset balance −amount / card debt +amount |
     | `income` | `payment_account` or `other_asset` | not allowed | asset balance +amount |
     | `transfer` | any balance | **required**, any balance ≠ source | source −amount, destination +amount (debt moves the other way) |
+    | `asset_purchase` | `payment_account` or `credit_card` | **required**, an `other_asset` ≠ source | source like an expense (balance −amount / card debt +amount), destination asset balance +amount |
     | `balance_adjustment` | the edited balance | — | none (**read-only**, server-created) |
 
     The transaction `currency` must equal the currency of its balance(s) (422 otherwise).
@@ -82,7 +83,7 @@ servers:
     description: This server
 tags:
   - name: transactions
-    description: Expenses, income, transfers and (read-only) balance adjustments. Writes move the linked balances in the same database transaction.
+    description: Expenses, income, transfers, asset purchases and (read-only) balance adjustments. Writes move the linked balances in the same database transaction.
   - name: balances
     description: Payment accounts, credit cards, other assets and liabilities. Type is fixed after creation. Manual amount edits record a balance_adjustment transaction.
   - name: categories
@@ -104,7 +105,7 @@ paths:
       operationId: createTransaction
       summary: Create a transaction
       description: |
-        Creates an expense, income or transfer and moves the linked balance(s) in the same
+        Creates an expense, income, transfer or asset purchase and moves the linked balance(s) in the same
         database transaction. `type` defaults to `expense`. `type: balance_adjustment` is rejected
         (422). The transaction currency must match the balance currency (422 on `balance_uid` /
         `to_balance_uid`). A `version` in the body is ignored.
@@ -179,7 +180,7 @@ paths:
               example:
                 error: invalid query parameters
                 fields:
-                  type: 'must be one of: expense, income, transfer, balance_adjustment'
+                  type: 'must be one of: expense, income, transfer, asset_purchase, balance_adjustment'
                   limit: must be an integer between 1 and 5000
         '500': { $ref: '#/components/responses/InternalError' }
 
@@ -1236,12 +1237,13 @@ components:
     TransactionType:
       type: string
       description: |
-        `expense`, `income`, `transfer`, or the read-only, server-created `balance_adjustment`.
-      enum: [expense, income, transfer, balance_adjustment]
+        `expense`, `income`, `transfer`, `asset_purchase` (payment account / credit card → other asset;
+        a value move, not counted as expense or income), or the read-only, server-created `balance_adjustment`.
+      enum: [expense, income, transfer, asset_purchase, balance_adjustment]
     TransactionWriteType:
       type: string
       description: Types a client may write. Empty or omitted means `expense`. `balance_adjustment` is a 422.
-      enum: [expense, income, transfer]
+      enum: [expense, income, transfer, asset_purchase]
       default: expense
     AdjustmentDirection:
       type: string
@@ -1270,7 +1272,7 @@ components:
         balance_uid:
           type: string
           format: uuid
-          description: Paying (expense), receiving (income), source (transfer) or adjusted (balance_adjustment) balance. May point to a deleted balance.
+          description: Paying (expense), receiving (income), source (transfer, asset_purchase) or adjusted (balance_adjustment) balance. May point to a deleted balance.
           example: 4dc73a4a-a60b-414e-98bc-3c71298a0af5
         account:
           type: string
@@ -1285,7 +1287,7 @@ components:
         to_account:
           type: string
           nullable: true
-          description: Snapshot of the destination balance's name; `null` unless transfer.
+          description: Snapshot of the destination balance's name; `null` unless transfer or asset_purchase.
           example: null
         category_uid:
           type: string
@@ -1343,12 +1345,12 @@ components:
           type: string
           format: uuid
           nullable: true
-          description: Required for `transfer` (≠ `balance_uid`, same currency). Not allowed otherwise.
+          description: Required for `transfer` (any balance) and `asset_purchase` (must be an `other_asset`); ≠ `balance_uid`, same currency. Not allowed otherwise.
         category_uid:
           type: string
           format: uuid
           nullable: true
-          description: Optional. Must be an expense category for an expense and an income category for income. Not allowed for transfers.
+          description: Optional. Must be an expense category for an expense or asset_purchase and an income category for income. Not allowed for transfers.
         spent_at:
           type: string
           format: date-time

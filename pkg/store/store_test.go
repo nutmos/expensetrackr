@@ -122,8 +122,8 @@ func assertCurrentSchema(t *testing.T, path string) {
 			t.Errorf("missing %s %q; have %v", typ, name, got)
 		}
 	}
-	if v := userVersion(t, path); v != 15 || SchemaVersion != 15 {
-		t.Errorf("user_version = %d (SchemaVersion %d), want 15", v, SchemaVersion)
+	if v := userVersion(t, path); v != 16 || SchemaVersion != 16 {
+		t.Errorf("user_version = %d (SchemaVersion %d), want 16", v, SchemaVersion)
 	}
 	// Every table has the same columns as a brand-new database (name, type,
 	// NOT NULL, default; transactions too, since v13 rebuilds it from the

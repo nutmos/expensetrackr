@@ -55,6 +55,8 @@ import (
 //	v15 categories become per-user: table "user_categories" (one row per user,
 //	    categories as a JSON array) + "meta"; table "categories" dropped
 //	    (issue #34, see docs/categories.md)
+//	v16 transactions rebuilt: type may also be 'asset_purchase' (payment
+//	    account / credit card -> other_asset); all rows copied unchanged
 //
 // A brand-new database is created directly at the latest version from
 // currentSchema. An existing database is upgraded by running the pending
@@ -88,7 +90,7 @@ CREATE TABLE ` + name + ` (
     currency      TEXT    NOT NULL CHECK (length(currency) = 3),
     balance_uid   TEXT    NOT NULL CHECK (length(balance_uid) = 36),
     account       TEXT    NOT NULL CHECK (length(account) > 0),
-    type          TEXT    NOT NULL DEFAULT 'expense' CHECK (type IN ('expense', 'income', 'transfer', 'balance_adjustment')),
+    type          TEXT    NOT NULL DEFAULT 'expense' CHECK (type IN ('expense', 'income', 'transfer', 'asset_purchase', 'balance_adjustment')),
     to_balance_uid TEXT   CHECK (to_balance_uid IS NULL OR length(to_balance_uid) = 36),
     to_account    TEXT,
     category_uid  TEXT    CHECK (category_uid IS NULL OR length(category_uid) = 36),
@@ -306,6 +308,8 @@ var migrations = []migration{
 	addSessions,
 	// v14 -> v15: per-user categories stored as JSON (issue #34).
 	migrateUserCategories,
+	// v15 -> v16: allow type 'asset_purchase' (rebuild of transactions).
+	rebuildTransactionsV16,
 }
 
 // SchemaVersion is the user_version a fully migrated database has.
@@ -829,6 +833,37 @@ func rebuildTransactionsV13(tx *sql.Tx) error {
 	if hasDir && strings.Contains(ddl, "'balance_adjustment'") {
 		return nil // already rebuilt
 	}
+	dir := "NULL"
+	if hasDir {
+		dir = "adjustment_direction"
+	}
+	return rebuildTransactions(tx, "transactions_v13_rebuild", dir)
+}
+
+// rebuildTransactionsV16 is migration v15 -> v16: the type CHECK gains
+// 'asset_purchase'. Same rebuild as v13 (every row, id, uid, version,
+// balance_applied and adjustment_direction copied unchanged; indexes and the
+// AUTOINCREMENT counter restored), all inside the migration's SQL
+// transaction. Skipped if the table already allows 'asset_purchase'
+// (idempotent).
+func rebuildTransactionsV16(tx *sql.Tx) error {
+	var ddl string
+	if err := tx.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'transactions'`).Scan(&ddl); err != nil {
+		return fmt.Errorf("read transactions schema: %w", err)
+	}
+	if strings.Contains(ddl, "'asset_purchase'") {
+		return nil // already rebuilt
+	}
+	if err := requireColumns(tx, "transactions", "adjustment_direction"); err != nil {
+		return err
+	}
+	return rebuildTransactions(tx, "transactions_v16_rebuild", "adjustment_direction")
+}
+
+// rebuildTransactions recreates transactions from the current definition
+// (transactionsTable) via table tmp, copying every row; dir is the SQL
+// expression for adjustment_direction.
+func rebuildTransactions(tx *sql.Tx, tmp, dir string) error {
 	cols := []string{"id", "uid", "amount_minor", "amount_scale", "currency", "balance_uid", "account", "type",
 		"to_balance_uid", "to_account", "category_uid", "spent_at", "spent_at_unix", "note", "created_at",
 		"updated_at", "version", "balance_applied"}
@@ -840,11 +875,6 @@ func rebuildTransactionsV13(tx *sql.Tx) error {
 		return fmt.Errorf("read transactions sequence: %w", err)
 	}
 	list := strings.Join(cols, ", ")
-	dir := "NULL"
-	if hasDir {
-		dir = "adjustment_direction"
-	}
-	const tmp = "transactions_v13_rebuild"
 	stmts := []string{
 		`DROP TABLE IF EXISTS ` + tmp,
 		transactionsTable(tmp),

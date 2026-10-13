@@ -65,7 +65,7 @@ func (s *Server) attachPaymentBalance(c *gin.Context, e *transaction.Transaction
 	if err := s.attachCategory(c, e); err != nil {
 		return err
 	}
-	if e.Type != transaction.Transfer || e.ToBalanceUID == nil {
+	if !e.Type.HasDestination() || e.ToBalanceUID == nil {
 		e.ToBalanceUID, e.ToAccount = nil, nil
 		return nil
 	}
@@ -202,7 +202,7 @@ func (s *Server) listTransactions(c *gin.Context) {
 		if t, ok := transaction.ParseFilterType(raw); ok {
 			f.Type = t
 		} else {
-			fields["type"] = "must be one of: expense, income, transfer, balance_adjustment"
+			fields["type"] = "must be one of: expense, income, transfer, asset_purchase, balance_adjustment"
 		}
 	}
 
