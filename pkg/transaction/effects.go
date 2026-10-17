@@ -1,5 +1,7 @@
 package transaction
 
+import "github.com/nutmos/expensetrackr/pkg/common_type"
+
 // Effect is the change one transaction makes to one balance, as a signed
 // change in the balance's *value*: for an asset (payment_account,
 // other_asset) value is its balance; for a liability (credit_card,
@@ -18,7 +20,7 @@ package transaction
 //	          to_balance_uid   value += amount  (destination other_asset up)
 //	balance_adjustment         none             (records a manual edit that already set the value)
 type Effect struct {
-	BalanceUID string
+	BalanceUID common_type.UID
 	Field      string // "balance_uid" or "to_balance_uid" (for error messages)
 	Delta      int64  // signed value change in minor units of Currency
 	Currency   string // currency of Delta ("" = the transaction currency)
