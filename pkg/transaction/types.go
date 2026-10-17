@@ -1,4 +1,3 @@
-// Package transaction holds the domain model and input validation.
 package transaction
 
 import (
@@ -11,7 +10,7 @@ import (
 const (
 	MaxNoteLen      = 1000
 	MaxImportRefLen = 200 // characters
-	uidLen          = 36  // UUID v4 canonical form
+	uidLen          = 36  // canonical UUID form
 )
 
 // Transaction is a stored transaction record.
@@ -21,10 +20,10 @@ type Transaction struct {
 	Amount       string  `json:"amount"`         // decimal string, e.g. "120.50"
 	AmountMinor  int64   `json:"amount_minor"`   // integer minor units, e.g. 12050
 	Currency     string  `json:"currency"`       // ISO 4217, e.g. "THB"
-	Type         Type    `json:"type"`           // expense | income | transfer | balance_adjustment
-	BalanceUID   string  `json:"balance_uid"`    // paying (expense), receiving (income) or source (transfer) balance
+	Type         Type    `json:"type"`           // expense | income | transfer | asset_purchase | balance_adjustment
+	BalanceUID   string  `json:"balance_uid"`    // paying (expense, asset_purchase), receiving (income) or source (transfer) balance
 	Account      string  `json:"account"`        // denormalized balance name at write time
-	ToBalanceUID *string `json:"to_balance_uid"` // transfer destination; null otherwise
+	ToBalanceUID *string `json:"to_balance_uid"` // transfer / asset_purchase destination; null otherwise
 	ToAccount    *string `json:"to_account"`     // denormalized destination name; null otherwise
 	CategoryUID  *string `json:"category_uid"`   // optional link to categories.uid; null for none / transfers
 	SpentAt      string  `json:"spent_at"`       // RFC 3339 with the offset as entered
@@ -73,8 +72,8 @@ type CreateInput struct {
 	Currency     string       `json:"currency"`
 	Type         string       `json:"type"` // optional on create/PUT; defaults to "expense"
 	BalanceUID   string       `json:"balance_uid"`
-	ToBalanceUID string       `json:"to_balance_uid"` // transfer only
-	CategoryUID  string       `json:"category_uid"`   // optional; expense/income only
+	ToBalanceUID string       `json:"to_balance_uid"` // transfer / asset_purchase only
+	CategoryUID  string       `json:"category_uid"`   // optional; not allowed for a transfer
 	SpentAt      string       `json:"spent_at"`
 	Note         string       `json:"note"`
 	// ToAmount (transfer only) is the amount received by the destination, in
@@ -132,6 +131,10 @@ const (
 	// never moves a balance itself (the manual edit already set the value).
 	BalanceAdjustment Type = "balance_adjustment"
 )
+
+// HasDestination reports whether the type uses to_balance_uid (transfer and
+// asset_purchase).
+func (t Type) HasDestination() bool { return t == Transfer || t == AssetPurchase }
 
 // ErrAdjustmentType is the field message for an attempt to use type
 // balance_adjustment in POST/PUT/PATCH /api/transactions.

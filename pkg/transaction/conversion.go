@@ -22,7 +22,7 @@ func (e Transaction) ComputeConversionRates() []ConversionRate {
 		return nil
 	}
 	from, to := e.Currency, *e.ToCurrency
-	if from == "" || to == "" || from == to || e.AmountMinor <= 0 || *e.ToAmountMinor <= 0 {
+	if from == to || e.AmountMinor <= 0 || *e.ToAmountMinor <= 0 {
 		return nil
 	}
 	fromScale, ok1 := money.MinorUnits(from)
