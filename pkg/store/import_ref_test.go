@@ -107,7 +107,7 @@ func TestMigrationV17ToV18(t *testing.T) {
 	dup := f.tx("expense", "6", "THB", f.pay, nil)
 	dup.ImportRef = &ref
 	var de *DuplicateImportRefError
-	if err := st.Create(ctx, &dup); !errors.As(err, &de) || de.ExistingUID != e.UID {
+	if err := st.Create(ctx, &dup); !errors.As(err, &de) || de.ExistingUID != string(e.UID) {
 		t.Errorf("duplicate: %v", err)
 	}
 	other := f.tx("expense", "6", "THB", f.card, nil)
@@ -148,7 +148,7 @@ func TestCreateBulkStore(t *testing.T) {
 	if strings.Join(got, ",") != "created,failed,skipped,failed" || !out.Committed {
 		t.Fatalf("statuses %v committed %v", got, out.Committed)
 	}
-	if out.Results[2].ExistingUID != out.Results[0].Tx.UID {
+	if out.Results[2].ExistingUID != string(out.Results[0].Tx.UID) {
 		t.Errorf("existing uid")
 	}
 	payAfter, _ := f.amount(f.pay)

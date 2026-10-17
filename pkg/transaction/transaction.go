@@ -10,6 +10,7 @@ import (
 
 	"github.com/nutmos/expensetrackr/pkg/balance"
 	"github.com/nutmos/expensetrackr/pkg/category"
+	"github.com/nutmos/expensetrackr/pkg/common_type"
 	"github.com/nutmos/expensetrackr/pkg/money"
 )
 
@@ -27,31 +28,18 @@ func ParseTimestamp(s string) (time.Time, error) {
 	return t, nil
 }
 
-// looksLikeUID reports whether s has the canonical UUID shape (version digit
-// not checked here; the balances table is the source of truth).
-func looksLikeUID(s string) bool {
-	if len(s) != uidLen {
-		return false
-	}
-	for i, c := range s {
-		switch i {
-		case 8, 13, 18, 23:
-			if c != '-' {
-				return false
-			}
-		default:
-			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
-				return false
-			}
-		}
-	}
-	return true
+// normalizeType trims and lower-cases a type as sent by a client.
+func normalizeType(s string) Type { return Type(strings.ToLower(strings.TrimSpace(s))) }
+
+// fieldError is a ValidationError for a single field.
+func fieldError(field, msg string) error {
+	return &ValidationError{Fields: map[string]string{field: msg}}
 }
 
 // ParseType normalizes a type a client may write; empty means Expense
 // (backward compat). balance_adjustment is not accepted (see ParseFilterType).
 func ParseType(s string) (Type, bool) {
-	switch t := Type(strings.ToLower(strings.TrimSpace(s))); t {
+	switch t := normalizeType(s); t {
 	case "":
 		return Expense, true
 	case Expense, Income, Transfer, AssetPurchase:
@@ -63,11 +51,17 @@ func ParseType(s string) (Type, bool) {
 // ParseFilterType parses a list filter type: any stored type, including
 // balance_adjustment. Empty is not valid here (the caller skips the filter).
 func ParseFilterType(s string) (Type, bool) {
-	switch t := Type(strings.ToLower(strings.TrimSpace(s))); t {
+	switch t := normalizeType(s); t {
 	case Expense, Income, Transfer, AssetPurchase, BalanceAdjustment:
 		return t, true
 	}
 	return "", false
+}
+
+// IsPayableType reports whether a balance of this type can be used as a payment
+// account on a transaction (payment accounts and credit cards only).
+func IsPayableType(t balance.Type) bool {
+	return t == balance.PaymentAccount || t == balance.CreditCard
 }
 
 // SourceAllowed reports whether a balance type may be used as balance_uid for
@@ -79,7 +73,7 @@ func ParseFilterType(s string) (Type, bool) {
 func SourceAllowed(tt Type, bt balance.Type) bool {
 	switch tt {
 	case Expense, AssetPurchase:
-		return bt == balance.PaymentAccount || bt == balance.CreditCard
+		return IsPayableType(bt)
 	case Income:
 		return bt == balance.PaymentAccount || bt == balance.OtherAsset
 	case Transfer:
@@ -100,10 +94,18 @@ func sourceRule(tt Type) string {
 	return "must refer to an existing balance"
 }
 
-// IsPayableType reports whether a balance of this type can be used as a payment
-// account on a transaction (payment accounts and credit cards only).
-func IsPayableType(t balance.Type) bool {
-	return t == balance.PaymentAccount || t == balance.CreditCard
+// DestinationAllowed reports whether a balance type may be used as
+// to_balance_uid: any type for a transfer (e.g. paying a credit card, saving
+// into an other asset, repaying a loan), only other_asset for an asset
+// purchase.
+func DestinationAllowed(tt Type, bt balance.Type) bool {
+	switch tt {
+	case Transfer:
+		return bt.Valid()
+	case AssetPurchase:
+		return bt == balance.OtherAsset
+	}
+	return false
 }
 
 // Validate checks the input and returns a normalized Transaction (without ID,
@@ -138,45 +140,46 @@ func (in CreateInput) Validate() (Transaction, error) {
 	tt, okType := ParseType(in.Type)
 	switch {
 	case okType:
-	case Type(strings.ToLower(strings.TrimSpace(in.Type))) == BalanceAdjustment:
+	case normalizeType(in.Type) == BalanceAdjustment:
 		fields["type"] = ErrAdjustmentType
 	default:
 		fields["type"] = "must be one of: expense, income, transfer, asset_purchase"
 	}
 	exp.Type = tt
 
-	uid := strings.ToLower(strings.TrimSpace(in.BalanceUID))
+	uid := common_type.NormalizeUID(in.BalanceUID)
 	switch {
 	case uid == "":
 		fields["balance_uid"] = "is required"
-	case !looksLikeUID(uid):
+	case !uid.Valid():
 		fields["balance_uid"] = "must be a UUID (the uid of a balance)"
 	}
 	exp.BalanceUID = uid
 
-	to := strings.ToLower(strings.TrimSpace(in.ToBalanceUID))
-	if okType {
-		switch {
-		case !tt.HasDestination() && to != "":
+	// to_balance_uid is only checked once the type is known.
+	to := common_type.NormalizeUID(in.ToBalanceUID)
+	switch {
+	case !okType:
+	case !tt.HasDestination():
+		if to != "" {
 			fields["to_balance_uid"] = "is only allowed when type is transfer or asset_purchase"
-		case tt.HasDestination() && to == "":
-			fields["to_balance_uid"] = "is required for a " + strings.ReplaceAll(string(tt), "_", " ")
-		case tt.HasDestination() && !looksLikeUID(to):
-			fields["to_balance_uid"] = "must be a UUID (the uid of a balance)"
-		case tt.HasDestination() && to == uid:
-			fields["to_balance_uid"] = "must differ from balance_uid"
 		}
-	}
-	if tt.HasDestination() && to != "" {
+	case to == "":
+		fields["to_balance_uid"] = "is required for a " + strings.ReplaceAll(string(tt), "_", " ")
+	case !to.Valid():
+		fields["to_balance_uid"] = "must be a UUID (the uid of a balance)"
+	case to == uid:
+		fields["to_balance_uid"] = "must differ from balance_uid"
+	default:
 		exp.ToBalanceUID = &to
 	}
 
-	cat := strings.ToLower(strings.TrimSpace(in.CategoryUID))
+	cat := common_type.NormalizeUID(in.CategoryUID)
 	switch {
 	case cat == "":
 	case okType && tt == Transfer:
 		fields["category_uid"] = "is not allowed for a transfer"
-	case !looksLikeUID(cat):
+	case !cat.Valid():
 		fields["category_uid"] = "must be a UUID (the uid of a category)"
 	default:
 		exp.CategoryUID = &cat
@@ -204,16 +207,17 @@ func (in CreateInput) Validate() (Transaction, error) {
 	}
 	exp.Note = note
 
-	if in.ImportRef == nil {
-		// none (create) / keep the stored ref (PUT)
-	} else if ref := strings.TrimSpace(*in.ImportRef); ref != "" {
-		switch {
-		case utf8.RuneCountInString(ref) > MaxImportRefLen:
-			fields["import_ref"] = fmt.Sprintf("must be at most %d characters", MaxImportRefLen)
-		case strings.ContainsFunc(ref, func(r rune) bool { return r < 0x20 || r == 0x7f }):
-			fields["import_ref"] = "must not contain control characters"
-		default:
-			exp.ImportRef = &ref
+	// A nil ImportRef means none (create) / keep the stored ref (PUT).
+	if in.ImportRef != nil {
+		if ref := strings.TrimSpace(*in.ImportRef); ref != "" {
+			switch {
+			case utf8.RuneCountInString(ref) > MaxImportRefLen:
+				fields["import_ref"] = fmt.Sprintf("must be at most %d characters", MaxImportRefLen)
+			case strings.ContainsFunc(ref, func(r rune) bool { return r < 0x20 || r == 0x7f }):
+				fields["import_ref"] = "must not contain control characters"
+			default:
+				exp.ImportRef = &ref
+			}
 		}
 	}
 
@@ -232,73 +236,50 @@ func (e *Transaction) AttachPaymentBalance(b balance.Balance) error {
 		tt = Expense
 	}
 	if b.UID == "" || !SourceAllowed(tt, b.Type) {
-		return &ValidationError{Fields: map[string]string{
-			"balance_uid": sourceRule(tt),
-		}}
+		return fieldError("balance_uid", sourceRule(tt))
 	}
-	if e.BalanceUID != "" && !strings.EqualFold(e.BalanceUID, b.UID) {
-		return &ValidationError{Fields: map[string]string{
-			"balance_uid": "does not match the resolved balance",
-		}}
+	if e.BalanceUID != "" && !e.BalanceUID.Matches(b.UID) {
+		return fieldError("balance_uid", "does not match the resolved balance")
 	}
-	e.BalanceUID = b.UID
+	e.BalanceUID = UID(b.UID)
 	e.Account = b.Name
 	return nil
-}
-
-// HasDestination reports whether the type uses to_balance_uid (transfer and
-// asset_purchase).
-func (t Type) HasDestination() bool { return t == Transfer || t == AssetPurchase }
-
-// DestinationAllowed reports whether a balance type may be used as
-// to_balance_uid: any type for a transfer (e.g. paying a credit card, saving
-// into an other asset, repaying a loan), only other_asset for an asset
-// purchase.
-func DestinationAllowed(tt Type, bt balance.Type) bool {
-	switch tt {
-	case Transfer:
-		return bt.Valid()
-	case AssetPurchase:
-		return bt == balance.OtherAsset
-	}
-	return false
 }
 
 // AttachDestinationBalance checks that b is allowed as to_balance_uid for
 // e.Type (see DestinationAllowed) and sets the destination snapshot.
 func (e *Transaction) AttachDestinationBalance(b balance.Balance) error {
 	if !e.Type.HasDestination() || e.ToBalanceUID == nil {
-		return &ValidationError{Fields: map[string]string{"to_balance_uid": "is only allowed when type is transfer or asset_purchase"}}
+		return fieldError("to_balance_uid", "is only allowed when type is transfer or asset_purchase")
 	}
-	if b.UID == "" || !strings.EqualFold(*e.ToBalanceUID, b.UID) {
-		return &ValidationError{Fields: map[string]string{"to_balance_uid": "does not match any balance"}}
+	if b.UID == "" || !e.ToBalanceUID.Matches(b.UID) {
+		return fieldError("to_balance_uid", "does not match any balance")
 	}
 	if !DestinationAllowed(e.Type, b.Type) {
-		return &ValidationError{Fields: map[string]string{"to_balance_uid": "must refer to an other_asset balance (asset purchase destination)"}}
+		return fieldError("to_balance_uid", "must refer to an other_asset balance (asset purchase destination)")
 	}
-	uid, name := b.UID, b.Name
+	uid, name := UID(b.UID), b.Name
 	e.ToBalanceUID, e.ToAccount = &uid, &name
 	return nil
 }
 
 // AttachCategory checks that c is the referenced category and matches the
 // transaction type (expense categories for expenses and asset purchases,
-// income categories for income). Only the uid is stored on the transaction; the name is looked up
-// from the categories table (or GET /api/categories) when needed.
+// income categories for income). Only the uid is stored on the transaction;
+// the name is looked up from the categories table (or GET /api/categories)
+// when needed.
 func (e *Transaction) AttachCategory(c category.Category) error {
-	if e.CategoryUID == nil || c.UID == "" || !strings.EqualFold(*e.CategoryUID, c.UID) {
-		return &ValidationError{Fields: map[string]string{"category_uid": "does not match any category"}}
+	if e.CategoryUID == nil || c.UID == "" || !e.CategoryUID.Matches(c.UID) {
+		return fieldError("category_uid", "does not match any category")
 	}
 	want := string(e.Type)
 	if e.Type == AssetPurchase {
 		want = string(Expense)
 	}
 	if string(c.Type) != want {
-		return &ValidationError{Fields: map[string]string{
-			"category_uid": fmt.Sprintf("must be an %s category (this one is %s)", want, c.Type),
-		}}
+		return fieldError("category_uid", fmt.Sprintf("must be an %s category (this one is %s)", want, c.Type))
 	}
-	uid := c.UID
+	uid := UID(c.UID)
 	e.CategoryUID = &uid
 	return nil
 }

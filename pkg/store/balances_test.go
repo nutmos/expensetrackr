@@ -74,7 +74,7 @@ func TestMigrationV2ToV3AddsBalances(t *testing.T) {
 		t.Fatalf("create transaction: id=%d err=%v", e.ID, err)
 	}
 	gotTxn, err := st.Get(ctx, 1)
-	if err != nil || gotTxn.BalanceUID != b.UID || gotTxn.Account != "KBank debit" {
+	if err != nil || gotTxn.BalanceUID != transaction.UID(b.UID) || gotTxn.Account != "KBank debit" {
 		t.Errorf("transaction: %+v %v", gotTxn, err)
 	}
 	st.Close()
@@ -433,7 +433,7 @@ func TestMigrationV4ToV5LinksAccountToBalanceUID(t *testing.T) {
 	if err != nil || len(items) != 2 {
 		t.Fatalf("list: %d %v", len(items), err)
 	}
-	uids := map[string]string{}
+	uids := map[string]transaction.UID{}
 	for _, e := range items {
 		uids[e.Account] = e.BalanceUID
 	}

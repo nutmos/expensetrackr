@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/nutmos/expensetrackr/pkg/balance"
-	"github.com/nutmos/expensetrackr/pkg/money"
 )
 
 func TestParseTimestamp(t *testing.T) {
@@ -104,7 +103,6 @@ func TestAttachPaymentBalance(t *testing.T) {
 	if err := e.AttachPaymentBalance(asset); !errors.As(err, &ve) || ve.Fields["balance_uid"] == "" {
 		t.Errorf("other_asset should fail: %v", err)
 	}
-	_ = money.FormatAmount // silence if unused in future
 }
 
 func TestIsPayableType(t *testing.T) {

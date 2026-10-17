@@ -119,7 +119,7 @@ func insertTx(ctx context.Context, tx *sql.Tx, e transaction.Transaction, now st
 		return e, err
 	}
 	next := e
-	next.UID, next.CreatedAt, next.UpdatedAt, next.Version, next.AdjustsBalances = uid, now, nil, 1, true
+	next.UID, next.CreatedAt, next.UpdatedAt, next.Version, next.AdjustsBalances = transaction.UID(uid), now, nil, 1, true
 	res, err := tx.ExecContext(ctx,
 		`INSERT INTO transactions (uid, type, amount_minor, amount_scale, currency, balance_uid, account, to_balance_uid, to_account, category_uid, spent_at, spent_at_unix, note, created_at, version, balance_applied,
 		                           to_amount_minor, to_amount_scale, to_currency, exchange_rate, rate_source, rate_date, import_ref)
@@ -382,13 +382,15 @@ func scan(r scanner) (transaction.Transaction, error) {
 	}
 	e.Type = transaction.Type(typ)
 	if toUID.Valid {
-		e.ToBalanceUID = &toUID.String
+		to := transaction.UID(toUID.String)
+		e.ToBalanceUID = &to
 	}
 	if toName.Valid {
 		e.ToAccount = &toName.String
 	}
 	if catUID.Valid {
-		e.CategoryUID = &catUID.String
+		cat := transaction.UID(catUID.String)
+		e.CategoryUID = &cat
 	}
 	if dir.Valid {
 		d := transaction.Direction(dir.String)
