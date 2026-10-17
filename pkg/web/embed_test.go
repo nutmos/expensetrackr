@@ -47,6 +47,20 @@ func TestEmbeddedAssets(t *testing.T) {
 			}
 		}
 	}
+	// Cross-currency transfers: both conversion rates are shown on the form
+	// (display-only) and conversion_rates is never put in a request body.
+	if !strings.Contains(html, `id="fx-conv"`) {
+		t.Error("index.html has no #fx-conv (conversion rates on the transaction form)")
+	}
+	tx, err := fs.ReadFile(st, "transactions.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{"payload.conversion_rates", "conversion_rates:"} {
+		if strings.Contains(string(tx), bad) {
+			t.Errorf("transactions.js sends conversion_rates (%q); it is response-only", bad)
+		}
+	}
 	// Absolute asset paths, so nested page URLs (/x/<uid>/edit) load them.
 	if strings.Contains(html, `src="static/`) || strings.Contains(html, `href="static/`) {
 		t.Error("relative static path in index.html")

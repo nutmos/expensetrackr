@@ -101,5 +101,35 @@ tr.just-saved td { background: #ecfdf5; transition: background 2s; }
 
 /* Cross-currency transfers */
 button.linklike { background: none; border: 0; padding: 0; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; }
-td.num.fx { white-space: nowrap; }
-td.num.fx .fx-rates { font-size: 0.75rem; color: var(--muted); }
+td.num.fx { min-width: 9em; }
+td.num.fx .fx-amounts { display: flex; flex-wrap: wrap; justify-content: flex-end; column-gap: 0.35em; }
+td.num.fx .fx-amounts > span, td.num.fx .fx-rates > span { white-space: nowrap; }
+td.num.fx .fx-rates { display: flex; flex-direction: column; align-items: flex-end; margin-top: 2px; font-size: 0.75rem; line-height: 1.3; color: var(--muted); }
+.fx-conv { display: flex; flex-wrap: wrap; gap: 4px 6px; font-weight: 400; }
+.fx-conv-line { font-size: 0.85rem; padding: 2px 8px; border-radius: 999px; background: #eef2ff; color: #3730a3; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Narrow screens: each transaction becomes a compact two-column card
+   (details left, amount and rates right) instead of a wide scrolling table. */
+@media (max-width: 640px) {
+  #transaction-table thead { display: none; }
+  #transaction-table, #transaction-table tbody { display: block; }
+  #transaction-table tr {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px;
+    grid-template-areas: "time amount" "type amount" "acct cur" "cat cat" "note note" "actions actions";
+    padding: 10px 0; border-bottom: 1px solid var(--border);
+  }
+  #transaction-table td { border: 0; padding: 1px 0; }
+  #transaction-table td:empty { display: none; }
+  #transaction-table td.time { grid-area: time; font-size: 0.85rem; color: var(--muted); }
+  #transaction-table td.type { grid-area: type; }
+  #transaction-table td.num { grid-area: amount; font-weight: 600; }
+  #transaction-table td.cur { grid-area: cur; text-align: right; color: var(--muted); font-size: 0.85rem; }
+  #transaction-table tr.fx-row td.cur { display: none; } /* currencies are in the amount */
+  #transaction-table td.acct { grid-area: acct; }
+  #transaction-table td.cat { grid-area: cat; font-size: 0.85rem; }
+  #transaction-table td.note { grid-area: note; max-width: none; overflow-wrap: break-word; font-size: 0.85rem; }
+  #transaction-table td.actions-cell { grid-area: actions; margin-top: 6px; }
+  #transaction-table td[colspan] { grid-column: 1 / -1; }
+  td.num.fx { min-width: 0; }
+  td.num.fx .fx-amounts { flex-direction: column; align-items: flex-end; }
+  td.num.fx .fx-rates { font-weight: 400; }
+}

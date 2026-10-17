@@ -25,6 +25,9 @@
   let fxManual = false;
   let fxGen = 0;
   let fxTimer = null;
+  // Last market rate loaded for the form ({from, to, date, rate, day}); lets
+  // an amount change re-convert at once instead of waiting for a lookup.
+  let fxQuote = null;
   // Bumped on every page entry so a slow response for a page we already
   // left is ignored.
   let gen = 0;
@@ -185,12 +188,78 @@
     const div = 10n ** BigInt(shift);
     return minorToString((num * 2n + div) / (div * 2n), toScale);
   }
-  // to/amount with up to 6 significant digits, for the rate line.
-  function ratio(toAmount, amount) {
-    const a = Number(amount), t = Number(toAmount);
-    if (!(a > 0) || !(t > 0)) return "";
-    return String(Number((t / a).toPrecision(6)));
+  // ---- Conversion rates (both directions; display only, never sent) --------
+  // The API returns conversion_rates ([{from,to,rate}], rate = to_amount /
+  // amount and its inverse, 10 significant digits). For the live form preview
+  // the same values are computed here exactly with BigInt.
+  const RATE_SIG = 10;   // like the server's exchange_rate / conversion_rates
+  const SHOW_SIG = 6;    // display rounding; the full value is in the tooltip
+  // num/den (positive BigInts) as a decimal string with sig significant
+  // digits, rounded half up, trailing zeros trimmed. "" if not positive.
+  function roundSig(num, den, sig) {
+    if (num <= 0n || den <= 0n) return "";
+    const lo = 10n ** BigInt(sig - 1), hi = 10n ** BigInt(sig);
+    let n = num, d = den, k = 0; // value = (n/d) / 10^k
+    while (n / d >= hi) { d *= 10n; k--; }
+    while (n / d < lo) { n *= 10n; k++; }
+    let q = (n * 2n + d) / (d * 2n);
+    if (q >= hi) { q /= 10n; k--; }
+    let str = q.toString();
+    if (k <= 0) return str + "0".repeat(-k);
+    if (str.length <= k) str = "0".repeat(k - str.length + 1) + str;
+    return (str.slice(0, -k) + "." + str.slice(-k)).replace(/\.?0+$/, "");
   }
+  // "0.0397" -> [397n, 10000n]; null if not a plain positive decimal.
+  function decimalFrac(str) {
+    const m = /^(\d+)(?:\.(\d+))?$/.exec(String(str ?? "").trim());
+    if (!m) return null;
+    const num = BigInt(m[1] + (m[2] || "")), den = 10n ** BigInt((m[2] || "").length);
+    return num > 0n ? [num, den] : null;
+  }
+  // Display form of a rate string: SHOW_SIG significant digits (but never
+  // fewer than its whole-number digits, e.g. 1 BTC = 4123456 USD).
+  function showRate(rate) {
+    const f = decimalFrac(rate);
+    if (!f) return "";
+    return roundSig(f[0], f[1], Math.max(SHOW_SIG, (f[0] / f[1]).toString().length));
+  }
+  // Both directions from the form values, with the server's formula:
+  // to_amount / amount and amount / to_amount (exact, from minor units).
+  function formConversionRates(p, amount, toAmount) {
+    const fs = currencyScale.get(p.from) ?? 2, ts = currencyScale.get(p.to) ?? 2;
+    const a = toMinor(amount, fs), t = toMinor(toAmount, ts);
+    if (a === null || t === null || a <= 0n || t <= 0n) return null;
+    const fwdNum = t * 10n ** BigInt(fs), fwdDen = a * 10n ** BigInt(ts);
+    return [
+      { from: p.from, to: p.to, rate: roundSig(fwdNum, fwdDen, RATE_SIG) },
+      { from: p.to, to: p.from, rate: roundSig(fwdDen, fwdNum, RATE_SIG) },
+    ];
+  }
+  // [{from,to,rate}] -> ["1 THB = 0.0397 SGD", "1 SGD = 25.1889 THB"] ([] when absent).
+  function conversionLines(rates) {
+    if (!Array.isArray(rates)) return [];
+    return rates.filter((r) => r && r.from && r.to && showRate(r.rate))
+      .map((r) => ({ text: `1 ${r.from} = ${showRate(r.rate)} ${r.to}`, full: `1 ${r.from} = ${r.rate} ${r.to}` }));
+  }
+  // Render both directions under the Received amount field (hidden if none).
+  function renderConversion(rates) {
+    const box = $("#fx-conv");
+    const lines = $("#fx-field").hidden ? [] : conversionLines(rates);
+    box.replaceChildren(...lines.map((l) => {
+      const span = document.createElement("span");
+      span.className = "fx-conv-line";
+      span.textContent = l.text;
+      span.title = l.full;
+      return span;
+    }));
+    box.hidden = lines.length === 0;
+  }
+  // Live preview from the current Amount and Received amount.
+  function updateConversion() {
+    const p = fxPair();
+    renderConversion(p ? formConversionRates(p, $("#amount").value, $("#to_amount").value) : null);
+  }
+
   function fxPair() {
     if (currentType() !== "transfer") return null;
     const src = balanceByUID($("#balance_uid").value);
@@ -202,24 +271,41 @@
   }
   function setRateLine(text) { $("#fx-rate").textContent = text; }
   function showManualRate(p) {
-    const r = ratio($("#to_amount").value, $("#amount").value);
-    setRateLine(r ? `1 ${p.from} = ${r} ${p.to} (your amount)` : `Enter the amount received in ${p.to}.`);
+    const r = formConversionRates(p, $("#amount").value, $("#to_amount").value);
+    setRateLine(r ? "Rates from your amounts:" : `Enter the amount received in ${p.to}.`);
     $("#fx-reset").hidden = false;
+    updateConversion();
   }
   // Show/hide the received-amount field and refresh the preview.
   function updateFx(immediate) {
     const p = fxPair();
     $("#fx-field").hidden = !p;
     clearTimeout(fxTimer);
-    if (!p) { fxGen++; return; }
+    if (!p) { fxGen++; renderConversion(null); return; }
     $("#fx-currency").textContent = p.to;
     if (fxManual) { showManualRate(p); return; }
     $("#fx-reset").hidden = true;
+    const q = fxQuote;
+    if (q && q.from === p.from && q.to === p.to && q.day === fxDay()) {
+      // Same pair and date as the rate already loaded: convert right away.
+      fxGen++;
+      applyQuote(p, q);
+      return;
+    }
+    renderConversion(null);
     fxTimer = setTimeout(() => fetchRate(p), immediate ? 0 : 300);
+  }
+  function fxDay() { return spentAtInput.value ? spentAtInput.value.slice(0, 10) : ""; }
+  // Fill Received amount from a market quote and refresh both rate lines.
+  function applyQuote(p, q) {
+    const conv = convert($("#amount").value, currencyScale.get(p.from) ?? 2, q.rate, currencyScale.get(p.to) ?? 2);
+    $("#to_amount").value = conv && !/^0*\.?0*$/.test(conv) ? conv : "";
+    setRateLine(`ECB market rate of ${q.date} (1 ${p.from} = ${q.rate} ${p.to}):`);
+    updateConversion();
   }
   async function fetchRate(p) {
     const my = ++fxGen;
-    const local = spentAtInput.value ? spentAtInput.value.slice(0, 10) : "";
+    const local = fxDay();
     const q = new URLSearchParams({ from: p.from, to: p.to });
     if (local) q.set("date", local);
     setRateLine("Looking up the exchange rate…");
@@ -229,12 +315,12 @@
       if (my !== fxGen || fxManual) return;
       if (!res.ok) {
         $("#to_amount").value = "";
+        renderConversion(null);
         setRateLine((res.status === 422 ? `No market rate for ${p.from} → ${p.to}.` : "The exchange-rate service is unavailable.") + " Enter the amount received.");
         return;
       }
-      const conv = convert($("#amount").value, currencyScale.get(p.from) ?? 2, body.rate, currencyScale.get(p.to) ?? 2);
-      $("#to_amount").value = conv && !/^0*\.?0*$/.test(conv) ? conv : "";
-      setRateLine(`1 ${p.from} = ${body.rate} ${p.to} (rate of ${body.date})`);
+      fxQuote = { from: p.from, to: p.to, rate: body.rate, date: body.date, day: local };
+      applyQuote(p, fxQuote);
     } catch (err) {
       if (my === fxGen) setRateLine("Could not load the exchange rate: " + err.message);
     }
@@ -284,6 +370,8 @@
     $("#currency").value = "";
     $("#to_amount").value = "";
     fxManual = false;
+    fxQuote = null;
+    renderConversion(null);
     if (!params.uid) {
       $("#form-title").textContent = "Add a transaction";
       $("#submit-btn").textContent = "Save transaction";
@@ -343,8 +431,10 @@
       $("#fx-currency").textContent = e.to_currency;
       $("#to_amount").value = e.to_amount;
       $("#fx-reset").hidden = !fxManual;
-      setRateLine(fxManual ? `1 ${e.currency} = ${ratio(e.to_amount, e.amount)} ${e.to_currency} (your amount)`
-        : `1 ${e.currency} = ${e.exchange_rate} ${e.to_currency} (rate of ${e.rate_date})`);
+      setRateLine(fxManual ? "Rates from your amounts:"
+        : `ECB market rate of ${e.rate_date} (1 ${e.currency} = ${e.exchange_rate} ${e.to_currency}); effective rates:`);
+      // Saved transaction: show the API's conversion_rates as returned.
+      renderConversion(e.conversion_rates);
     }
     $("#amount").focus();
   }
@@ -543,28 +633,42 @@
         // An adjustment shows its direction as a sign: + the edited balance
         // or debt went up, − it went down.
         const fxRow = e.to_amount && e.to_currency;
-        const amountTd = cell(isAdj ? (e.adjustment_direction === "decrease" ? "−" : "+") + e.amount
-          : fxRow ? `${fmtAmount(e.amount, e.currency)} ${e.currency} → ${fmtAmount(e.to_amount, e.to_currency)} ${e.to_currency}` : e.amount, "num");
+        const amountTd = cell(isAdj ? (e.adjustment_direction === "decrease" ? "−" : "+") + e.amount : fxRow ? "" : e.amount, "num");
         if (fxRow) {
+          // "1,000.00 THB" / "→ 39.70 SGD" (each kept on one line, may wrap
+          // between them), then both rates from the API's conversion_rates.
           amountTd.classList.add("fx");
-          amountTd.title = e.rate_source === "manual" ? `Amount received entered by hand (1 ${e.currency} = ${e.exchange_rate} ${e.to_currency})`
-            : `1 ${e.currency} = ${e.exchange_rate} ${e.to_currency}, ECB rate of ${e.rate_date} via Frankfurter`;
-          // Both directions of the effective rate (computed by the API from
-          // amount and to_amount; never stored).
-          const rates = conversionText(e.conversion_rates);
-          if (rates) {
-            const line = document.createElement("div");
-            line.className = "fx-rates";
-            line.textContent = rates;
-            amountTd.append(line);
-            amountTd.title += `\nEffective: ${rates}`;
+          const amounts = document.createElement("div");
+          amounts.className = "fx-amounts";
+          for (const text of [`${fmtAmount(e.amount)} ${e.currency}`, `→ ${fmtAmount(e.to_amount)} ${e.to_currency}`]) {
+            const part = document.createElement("span");
+            part.textContent = text;
+            amounts.append(part);
           }
+          amountTd.append(amounts);
+          const lines = conversionLines(e.conversion_rates);
+          if (lines.length) {
+            const box = document.createElement("div");
+            box.className = "fx-rates";
+            for (const l of lines) {
+              const line = document.createElement("span");
+              line.textContent = l.text;
+              box.append(line);
+            }
+            amountTd.append(box);
+          }
+          amountTd.title = [
+            e.rate_source === "manual" ? "Amount received entered by hand" : `ECB rate of ${e.rate_date} via Frankfurter: 1 ${e.currency} = ${e.exchange_rate} ${e.to_currency}`,
+            ...lines.map((l) => l.full),
+          ].join("\n");
         }
         if (isAdj) {
           tr.classList.add("row-adjustment");
           amountTd.title = `Manual balance edit: ${e.adjustment_direction === "decrease" ? "decreased" : "increased"} by ${e.amount} ${e.currency}`;
         }
-        tr.append(timeTd, typeTd, amountTd, cell(fxRow ? `${e.currency} → ${e.to_currency}` : e.currency), acctTd, cell(categoryName(e.category_uid)), cell(e.note || "", "note"));
+        if (fxRow) tr.classList.add("fx-row");
+        acctTd.classList.add("acct");
+        tr.append(timeTd, typeTd, amountTd, cell(fxRow ? `${e.currency} → ${e.to_currency}` : e.currency, "cur"), acctTd, cell(categoryName(e.category_uid), "cat"), cell(e.note || "", "note"));
         const actions = document.createElement("td");
         actions.className = "actions-cell";
         if (isAdj) {
@@ -588,14 +692,6 @@
     } catch (err) {
       if (my === gen) listStatus.textContent = "Failed to load transactions: " + err.message;
     }
-  }
-
-  // [{from:"THB",to:"SGD",rate:"0.0397"}, {from:"SGD",to:"THB",rate:"25.19"}]
-  // -> "1 THB = 0.0397 SGD · 1 SGD = 25.19 THB" ("" when absent).
-  function conversionText(rates) {
-    if (!Array.isArray(rates) || rates.length === 0) return "";
-    return rates.filter((r) => r && r.from && r.to && r.rate)
-      .map((r) => `1 ${r.from} = ${r.rate} ${r.to}`).join(" · ");
   }
 
   // "3361.50" -> "3,361.50" (display only; digits as stored).
