@@ -8,8 +8,11 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"k8s.io/utils/ptr"
+
 	"github.com/nutmos/expensetrackr/pkg/balance"
 	"github.com/nutmos/expensetrackr/pkg/category"
+	"github.com/nutmos/expensetrackr/pkg/common_type"
 	"github.com/nutmos/expensetrackr/pkg/money"
 	"github.com/nutmos/expensetrackr/pkg/validate"
 )
@@ -22,21 +25,21 @@ const (
 
 // Transaction is a stored transaction record.
 type Transaction struct {
-	ID           int64   `json:"-"`              // internal row id; the API identifies transactions by UID
-	UID          string  `json:"uid"`            // server-assigned UUID v4, immutable
-	Amount       string  `json:"amount"`         // decimal string, e.g. "120.50"
-	AmountMinor  int64   `json:"amount_minor"`   // integer minor units, e.g. 12050
-	Currency     string  `json:"currency"`       // ISO 4217, e.g. "THB"
-	Type         Type    `json:"type"`           // expense | income | transfer | balance_adjustment
-	BalanceUID   string  `json:"balance_uid"`    // paying (expense), receiving (income) or source (transfer) balance
-	Account      string  `json:"account"`        // denormalized balance name at write time
-	ToBalanceUID *string `json:"to_balance_uid"` // transfer destination; null otherwise
-	ToAccount    *string `json:"to_account"`     // denormalized destination name; null otherwise
-	CategoryUID  *string `json:"category_uid"`   // optional link to categories.uid; null for none / transfers
-	SpentAt      string  `json:"spent_at"`       // RFC 3339 with the offset as entered
-	Note         string  `json:"note"`
-	CreatedAt    string  `json:"created_at"` // RFC 3339, UTC
-	UpdatedAt    *string `json:"updated_at"` // RFC 3339, UTC; null until edited
+	ID           int64            `json:"-"`              // internal row id; the API identifies transactions by UID
+	UID          string           `json:"uid"`            // server-assigned UUID v4, immutable
+	Amount       string           `json:"amount"`         // decimal string, e.g. "120.50"
+	AmountMinor  int64            `json:"amount_minor"`   // integer minor units, e.g. 12050
+	Currency     string           `json:"currency"`       // ISO 4217, e.g. "THB"
+	Type         Type             `json:"type"`           // expense | income | transfer | balance_adjustment
+	BalanceUID   common_type.UID  `json:"balance_uid"`    // paying (expense), receiving (income) or source (transfer) balance
+	Account      string           `json:"account"`        // denormalized balance name at write time
+	ToBalanceUID *common_type.UID `json:"to_balance_uid"` // transfer destination; null otherwise
+	ToAccount    *string          `json:"to_account"`     // denormalized destination name; null otherwise
+	CategoryUID  *common_type.UID `json:"category_uid"`   // optional link to categories.uid; null for none / transfers
+	SpentAt      string           `json:"spent_at"`       // RFC 3339 with the offset as entered
+	Note         string           `json:"note"`
+	CreatedAt    string           `json:"created_at"` // RFC 3339, UTC
+	UpdatedAt    *string          `json:"updated_at"` // RFC 3339, UTC; null until edited
 	// Version starts at 1 and is incremented on every change. PUT/PATCH must
 	// send the version they last read (If-Match or "version"); see docs/balances.md.
 	Version int64 `json:"version"`
@@ -92,14 +95,14 @@ type (
 // balance_uid (not free text). The read-only "account" name is filled in by
 // the API from the balance after validation.
 type CreateInput struct {
-	Amount       DecimalInput `json:"amount"`
-	Currency     string       `json:"currency"`
-	Type         string       `json:"type"` // optional on create/PUT; defaults to "expense"
-	BalanceUID   string       `json:"balance_uid"`
-	ToBalanceUID string       `json:"to_balance_uid"` // transfer only
-	CategoryUID  string       `json:"category_uid"`   // optional; expense/income only
-	SpentAt      string       `json:"spent_at"`
-	Note         string       `json:"note"`
+	Amount       DecimalInput    `json:"amount"`
+	Currency     string          `json:"currency"`
+	Type         string          `json:"type"` // optional on create/PUT; defaults to "expense"
+	BalanceUID   common_type.UID `json:"balance_uid"`
+	ToBalanceUID common_type.UID `json:"to_balance_uid"` // transfer only
+	CategoryUID  common_type.UID `json:"category_uid"`   // optional; expense/income only
+	SpentAt      string          `json:"spent_at"`
+	Note         string          `json:"note"`
 	// ToAmount (transfer only) is the amount received by the destination, in
 	// its currency. Required to match amount for a same-currency transfer;
 	// for a cross-currency transfer it sets a manual rate, and when omitted the
@@ -275,16 +278,16 @@ func (in CreateInput) Validate() (Transaction, error) {
 	}
 	exp.Type = tt
 
-	uid := strings.ToLower(strings.TrimSpace(in.BalanceUID))
+	uid := strings.ToLower(strings.TrimSpace(in.BalanceUID.String()))
 	switch {
 	case uid == "":
 		fields["balance_uid"] = "is required"
 	case !looksLikeUID(uid):
 		fields["balance_uid"] = "must be a UUID (the uid of a balance)"
 	}
-	exp.BalanceUID = uid
+	exp.BalanceUID = common_type.UID(uid)
 
-	to := strings.ToLower(strings.TrimSpace(in.ToBalanceUID))
+	to := strings.ToLower(strings.TrimSpace(in.ToBalanceUID.String()))
 	if okType {
 		switch {
 		case !tt.HasDestination() && to != "":
@@ -298,10 +301,10 @@ func (in CreateInput) Validate() (Transaction, error) {
 		}
 	}
 	if tt.HasDestination() && to != "" {
-		exp.ToBalanceUID = &to
+		exp.ToBalanceUID = common_type.UIDPtr(to)
 	}
 
-	cat := strings.ToLower(strings.TrimSpace(in.CategoryUID))
+	cat := strings.ToLower(strings.TrimSpace(in.CategoryUID.String()))
 	switch {
 	case cat == "":
 	case okType && tt == Transfer:
@@ -309,7 +312,7 @@ func (in CreateInput) Validate() (Transaction, error) {
 	case !looksLikeUID(cat):
 		fields["category_uid"] = "must be a UUID (the uid of a category)"
 	default:
-		exp.CategoryUID = &cat
+		exp.CategoryUID = common_type.UIDPtr(cat)
 	}
 
 	if t, err := ParseTimestamp(in.SpentAt); err != nil {
@@ -357,16 +360,15 @@ func (in CreateInput) Validate() (Transaction, error) {
 // copies its name into Account as a denormalized snapshot. Call after
 // Validate, once the uid has been loaded from the store.
 func (e *Transaction) AttachPaymentBalance(b balance.Balance) error {
-	tt := e.Type
-	if tt == "" {
-		tt = Expense
+	if e.Type == "" {
+		e.Type = Expense
 	}
-	if b.UID == "" || !SourceAllowed(tt, b.Type) {
+	if b.UID == "" || !SourceAllowed(e.Type, b.Type) {
 		return &ValidationError{Fields: map[string]string{
-			"balance_uid": sourceRule(tt),
+			"balance_uid": sourceRule(e.Type),
 		}}
 	}
-	if e.BalanceUID != "" && !strings.EqualFold(e.BalanceUID, b.UID) {
+	if e.BalanceUID != "" && !strings.EqualFold(e.BalanceUID.String(), b.UID.String()) {
 		return &ValidationError{Fields: map[string]string{
 			"balance_uid": "does not match the resolved balance",
 		}}
@@ -400,14 +402,13 @@ func (e *Transaction) AttachDestinationBalance(b balance.Balance) error {
 	if !e.Type.HasDestination() || e.ToBalanceUID == nil {
 		return &ValidationError{Fields: map[string]string{"to_balance_uid": "is only allowed when type is transfer or asset_purchase"}}
 	}
-	if b.UID == "" || !strings.EqualFold(*e.ToBalanceUID, b.UID) {
+	if b.UID == "" || !strings.EqualFold(e.ToBalanceUID.String(), b.UID.String()) {
 		return &ValidationError{Fields: map[string]string{"to_balance_uid": "does not match any balance"}}
 	}
 	if !DestinationAllowed(e.Type, b.Type) {
 		return &ValidationError{Fields: map[string]string{"to_balance_uid": "must refer to an other_asset balance (asset purchase destination)"}}
 	}
-	uid, name := b.UID, b.Name
-	e.ToBalanceUID, e.ToAccount = &uid, &name
+	e.ToBalanceUID, e.ToAccount = ptr.To(b.UID), ptr.To(b.Name)
 	return nil
 }
 
@@ -416,7 +417,7 @@ func (e *Transaction) AttachDestinationBalance(b balance.Balance) error {
 // income categories for income). Only the uid is stored on the transaction; the name is looked up
 // from the categories table (or GET /api/categories) when needed.
 func (e *Transaction) AttachCategory(c category.Category) error {
-	if e.CategoryUID == nil || c.UID == "" || !strings.EqualFold(*e.CategoryUID, c.UID) {
+	if e.CategoryUID == nil || c.UID == "" || !strings.EqualFold(e.CategoryUID.String(), c.UID.String()) {
 		return &ValidationError{Fields: map[string]string{"category_uid": "does not match any category"}}
 	}
 	want := string(e.Type)
@@ -428,7 +429,6 @@ func (e *Transaction) AttachCategory(c category.Category) error {
 			"category_uid": fmt.Sprintf("must be an %s category (this one is %s)", want, c.Type),
 		}}
 	}
-	uid := c.UID
-	e.CategoryUID = &uid
+	e.CategoryUID = ptr.To(c.UID)
 	return nil
 }
