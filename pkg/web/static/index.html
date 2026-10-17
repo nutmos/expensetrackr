@@ -148,6 +148,7 @@
           <label id="fx-field" hidden><span>Received amount (<span id="fx-currency"></span>)</span>
             <input id="to_amount" name="to_amount" type="text" inputmode="decimal" autocomplete="off" placeholder="Amount received">
             <small class="muted"><span id="fx-rate"></span> <button type="button" class="linklike" id="fx-reset" hidden>Use market rate</button></small>
+            <span id="fx-conv" class="fx-conv" hidden aria-live="polite"></span>
             <small class="err" data-for="to_amount"></small>
             <small class="err" data-for="to_currency"></small>
           </label>

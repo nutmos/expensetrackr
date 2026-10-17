@@ -149,14 +149,28 @@ used.
 On the transaction form with type **Transfer**, the destination dropdown
 lists balances of every currency; the currency dropdown still follows the
 source. When the destination's currency differs, a **Received amount (THB)**
-field appears with a rate line such as `1 USD = 33.615 THB (rate of
-2026-10-12)`, filled from `/api/exchange-rates` whenever the amount, date or
-balances change. Typing in it switches to a manual amount (rate line shows
-the implied rate, "Use market rate" switches back); only then is `to_amount`
-sent. The field is hidden for same-currency transfers. The list shows
-cross-currency transfers as `100.00 USD → 3,361.50 THB` with both effective
-rates from `conversion_rates` underneath (`1 USD = 33.615 THB · 1 THB =
-0.02974862413 USD`) and in the tooltip.
+field appears, filled from `/api/exchange-rates` whenever the amount, date or
+balances change (an amount change re-converts at once with the rate already
+loaded). Typing in it switches to a manual amount ("Use market rate" switches
+back); only then is `to_amount` sent.
+
+Under the field, both directions of the conversion are shown, e.g.
+`1 THB = 0.0397 SGD` and `1 SGD = 25.1889 THB`, updating live as Amount or
+Received amount change and when the market-rate prefill arrives. While
+typing they are computed in the browser with the server's formula
+(`to_amount / amount` and its inverse, exact on the minor units); when an
+existing transaction is opened for editing, the API's `conversion_rates` are
+shown as returned. Rates are displayed with 6 significant digits (never
+fewer than their whole-number digits); the full 10-digit value is in the
+tooltip. They are display-only: `conversion_rates` is never sent. The field
+and the rates are hidden for same-currency transfers and every other type.
+
+The list shows cross-currency transfers as `1,000.00 THB → 39.70 SGD` (the
+two amounts may wrap onto two lines), with both rates from
+`conversion_rates` underneath (`1 THB = 0.0397 SGD`, `1 SGD = 25.1889 THB`)
+and the full values plus the rate source in the tooltip. On narrow screens
+(≤ 640 px) each transaction is shown as a compact card: details on the left,
+the amounts and both rates on the right.
 
 ## Limitations
 
