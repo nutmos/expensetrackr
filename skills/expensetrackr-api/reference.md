@@ -150,7 +150,15 @@ Response fields: `uid, type, amount, amount_minor, currency, balance_uid,
 account (source name snapshot), to_balance_uid, to_account, category_uid,
 spent_at, note, created_at, updated_at, version, adjusts_balances,
 adjustment_direction, to_amount, to_amount_minor, to_currency,
-exchange_rate, rate_source, rate_date, import_ref`.
+exchange_rate, rate_source, rate_date, import_ref, conversion_rates`.
+
+`conversion_rates` is computed on every response and never stored. For a
+cross-currency transfer it is both directions of the effective rate, from
+the transaction's own amounts: `[{"from":"THB","to":"SGD","rate":"0.0397"},
+{"from":"SGD","to":"THB","rate":"25.18891688"}]` (item 0 = `currency` →
+`to_currency` = `to_amount / amount`; item 1 the inverse; decimal strings,
+≤ 10 significant digits). `null` for same-currency transfers and all other
+types. It is read-only: never send it back (400 unknown field).
 
 **Input fields** (POST and PUT): `type, amount, currency, balance_uid,
 to_balance_uid, category_uid, spent_at, note, to_amount, to_currency, import_ref`

@@ -65,7 +65,7 @@ that item (`code` `invalid_item` or `validation_failed`).
   - `valid`: would be created but nothing was written. This happens in a dry
     run, or in an atomic batch that was rolled back because another item
     failed. `transaction` shows the computed record (`to_amount`, rate,
-    account names), with an empty `uid` and `created_at` and `version` 0.
+    `conversion_rates`, account names), with an empty `uid` and `created_at` and `version` 0.
 - `written`: whether the database transaction was committed.
 - `balances`: every balance touched by created or valid items, as it is after
   the request. For a dry run or a rolled-back batch, this is how it *would*

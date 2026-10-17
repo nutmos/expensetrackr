@@ -60,8 +60,14 @@ type Transaction struct {
 	// ImportRef is an optional client-chosen idempotency key (e.g. a bank
 	// reference, or a hash of date+amount+description made by an importing
 	// agent). Unique per balance_uid; null when not set. See docs/bulk-import.md.
-	ImportRef *string   `json:"import_ref"`
-	SpentTime time.Time `json:"-"`
+	ImportRef *string `json:"import_ref"`
+	// ConversionRates is response-only and never stored: for a cross-currency
+	// transfer, both directions of the effective rate (to_amount / amount and
+	// amount / to_amount), computed by MarshalJSON on every encode; null
+	// otherwise. Clients must not send it (unknown field, 400). See
+	// ComputeConversionRates and docs/exchange-rates.md.
+	ConversionRates []ConversionRate `json:"conversion_rates"`
+	SpentTime       time.Time        `json:"-"`
 }
 
 // Direction is the sign of a balance adjustment.
