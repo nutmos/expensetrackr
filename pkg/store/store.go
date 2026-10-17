@@ -90,38 +90,13 @@ func (s *Store) Create(ctx context.Context, e *transaction.Transaction) error {
 	if err := checkFX(*e); err != nil {
 		return err
 	}
-	scale, ok := money.MinorUnits(e.Currency)
-	if !ok {
-		return fmt.Errorf("unknown currency %q", e.Currency)
-	}
-	uid, err := newUID()
-	if err != nil {
-		return err
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("insert transaction: %w", err)
 	}
 	defer tx.Rollback() // no-op after Commit
-
-	now := time.Now().UTC().Format(time.RFC3339)
-	next := *e
-	next.UID, next.CreatedAt, next.UpdatedAt, next.Version, next.AdjustsBalances = uid, now, nil, 1, true
-	res, err := tx.ExecContext(ctx,
-		`INSERT INTO transactions (uid, type, amount_minor, amount_scale, currency, balance_uid, account, to_balance_uid, to_account, category_uid, spent_at, spent_at_unix, note, created_at, version, balance_applied,
-		                           to_amount_minor, to_amount_scale, to_currency, exchange_rate, rate_source, rate_date)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?, ?)`,
-		append([]any{next.UID, string(next.Type), next.AmountMinor, scale, next.Currency, next.BalanceUID, next.Account, next.ToBalanceUID, next.ToAccount, next.CategoryUID, next.SpentAt, next.SpentTime.Unix(), next.Note, next.CreatedAt},
-			fxArgs(next)...)...)
+	next, err := insertTx(ctx, tx, *e, time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
-		return fmt.Errorf("insert transaction: %w", err)
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("insert transaction: %w", err)
-	}
-	next.ID = id
-	if err := applyBalanceEffects(ctx, tx, nil, &next, now); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -129,6 +104,40 @@ func (s *Store) Create(ctx context.Context, e *transaction.Transaction) error {
 	}
 	*e = next
 	return nil
+}
+
+// insertTx inserts e (already validated, not a balance adjustment) inside tx
+// and applies its balance effects. A duplicate (balance_uid, import_ref) is a
+// *DuplicateImportRefError.
+func insertTx(ctx context.Context, tx *sql.Tx, e transaction.Transaction, now string) (transaction.Transaction, error) {
+	scale, ok := money.MinorUnits(e.Currency)
+	if !ok {
+		return e, fmt.Errorf("unknown currency %q", e.Currency)
+	}
+	uid, err := newUID()
+	if err != nil {
+		return e, err
+	}
+	next := e
+	next.UID, next.CreatedAt, next.UpdatedAt, next.Version, next.AdjustsBalances = uid, now, nil, 1, true
+	res, err := tx.ExecContext(ctx,
+		`INSERT INTO transactions (uid, type, amount_minor, amount_scale, currency, balance_uid, account, to_balance_uid, to_account, category_uid, spent_at, spent_at_unix, note, created_at, version, balance_applied,
+		                           to_amount_minor, to_amount_scale, to_currency, exchange_rate, rate_source, rate_date, import_ref)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?)`,
+		append(append([]any{next.UID, string(next.Type), next.AmountMinor, scale, next.Currency, next.BalanceUID, next.Account, next.ToBalanceUID, next.ToAccount, next.CategoryUID, next.SpentAt, next.SpentTime.Unix(), next.Note, next.CreatedAt},
+			fxArgs(next)...), next.ImportRef)...)
+	if err != nil {
+		return e, mapImportRefErr(ctx, tx, next, fmt.Errorf("insert transaction: %w", err))
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return e, fmt.Errorf("insert transaction: %w", err)
+	}
+	next.ID = id
+	if err := applyBalanceEffects(ctx, tx, nil, &next, now); err != nil {
+		return e, err
+	}
+	return next, nil
 }
 
 // ListFilter restricts List results. Zero values mean "no restriction".
@@ -141,7 +150,7 @@ type ListFilter struct {
 }
 
 const selectCols = `id, uid, type, amount_minor, amount_scale, currency, balance_uid, account, to_balance_uid, to_account, category_uid, spent_at, note, created_at, updated_at, version, balance_applied, adjustment_direction,
-	to_amount_minor, to_amount_scale, to_currency, exchange_rate, rate_source, rate_date`
+	to_amount_minor, to_amount_scale, to_currency, exchange_rate, rate_source, rate_date, import_ref`
 
 // List returns rows from transactions newest first (by spend time, then ID).
 func (s *Store) List(ctx context.Context, f ListFilter) ([]transaction.Transaction, error) {
@@ -264,12 +273,12 @@ func (s *Store) UpdateWith(ctx context.Context, id int64, opts WriteOptions, fn 
 	res, err := tx.ExecContext(ctx,
 		`UPDATE transactions SET type = ?, amount_minor = ?, amount_scale = ?, currency = ?, balance_uid = ?, account = ?, to_balance_uid = ?, to_account = ?, category_uid = ?,
 		        spent_at = ?, spent_at_unix = ?, note = ?, updated_at = ?, version = ?,
-		        to_amount_minor = ?, to_amount_scale = ?, to_currency = ?, exchange_rate = ?, rate_source = ?, rate_date = ?
+		        to_amount_minor = ?, to_amount_scale = ?, to_currency = ?, exchange_rate = ?, rate_source = ?, rate_date = ?, import_ref = ?
 		 WHERE id = ? AND version = ?`,
 		append(append([]any{string(next.Type), next.AmountMinor, scale, next.Currency, next.BalanceUID, next.Account, next.ToBalanceUID, next.ToAccount, next.CategoryUID,
-			next.SpentAt, next.SpentTime.Unix(), next.Note, now, next.Version}, fxArgs(next)...), id, cur.Version)...)
+			next.SpentAt, next.SpentTime.Unix(), next.Note, now, next.Version}, fxArgs(next)...), next.ImportRef, id, cur.Version)...)
 	if err != nil {
-		return transaction.Transaction{}, fmt.Errorf("update transaction: %w", err)
+		return transaction.Transaction{}, mapImportRefErr(ctx, tx, next, fmt.Errorf("update transaction: %w", err))
 	}
 	if n, err := res.RowsAffected(); err != nil || n != 1 {
 		return transaction.Transaction{}, ErrVersionConflict
@@ -359,9 +368,9 @@ func scan(r scanner) (transaction.Transaction, error) {
 	var updated, toUID, toName, catUID, dir sql.NullString
 	var typ string
 	var toMinor, toScale sql.NullInt64
-	var toCur, rate, rateSrc, rateDate sql.NullString
+	var toCur, rate, rateSrc, rateDate, importRef sql.NullString
 	if err := r.Scan(&e.ID, &e.UID, &typ, &e.AmountMinor, &scale, &e.Currency, &e.BalanceUID, &e.Account, &toUID, &toName, &catUID, &e.SpentAt, &e.Note, &e.CreatedAt, &updated,
-		&e.Version, &e.AdjustsBalances, &dir, &toMinor, &toScale, &toCur, &rate, &rateSrc, &rateDate); err != nil {
+		&e.Version, &e.AdjustsBalances, &dir, &toMinor, &toScale, &toCur, &rate, &rateSrc, &rateDate, &importRef); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return e, err
 		}
@@ -397,6 +406,9 @@ func scan(r scanner) (transaction.Transaction, error) {
 		if rateDate.Valid {
 			e.RateDate = &rateDate.String
 		}
+	}
+	if importRef.Valid {
+		e.ImportRef = &importRef.String
 	}
 	if t, err := time.Parse(time.RFC3339, e.SpentAt); err == nil {
 		e.SpentTime = t

@@ -84,7 +84,7 @@ http://127.0.0.1:8080/api/openapi.json (JSON).
 skill (the `SKILL.md` convention used by Claude Agent Skills, Cursor and
 similar tools) that teaches an LLM agent to use this API: login and CSRF
 rules, looking up balance/category uids, logging expenses, income, transfers
-(incl. cross-currency) and asset purchases, editing with `If-Match`, error
+(incl. cross-currency) and asset purchases, bulk statement imports, editing with `If-Match`, error
 handling and safety rules. Details are in its
 [`reference.md`](skills/expensetrackr-api/reference.md); the helper
 [`scripts/etr.sh`](skills/expensetrackr-api/scripts/etr.sh) wraps curl with a
@@ -393,6 +393,7 @@ The schema version is tracked in SQLite's `PRAGMA user_version`. The code is in
 | 15      | Per-user categories (issue #34): `CREATE TABLE IF NOT EXISTS user_categories (user_uid PK → users.uid ON DELETE CASCADE, categories JSON array, version, timestamps)` and `meta (key, value JSON)`; every row of `categories` (uids, names, types, descriptions, timestamps unchanged) moves to the oldest user with a password, else the oldest user, or — with no users — into `meta['unclaimed_categories']` for the first user to register; then `DROP TABLE categories`. Transactions are untouched (`category_uid` links stay valid). Merges by uid, so it is idempotent; one SQL transaction. **Back up the database first** (operator step). See [docs/categories.md](docs/categories.md). |
 | 16      | `transactions` rebuilt exactly like v13 (every row, id, uid, version, `balance_applied`, `adjustment_direction` copied unchanged; indexes and AUTOINCREMENT counter restored) so the `type` CHECK also allows `asset_purchase`. Skipped if already allowed. One SQL transaction, idempotent. |
 | 17      | Cross-currency transfers: `ALTER TABLE transactions ADD COLUMN` `to_amount_minor`, `to_amount_scale`, `to_currency`, `exchange_rate` (TEXT), `rate_source` (`frankfurter`/`manual`), `rate_date` (each only if missing; all NULL for existing rows, which are otherwise untouched) + tables `fx_rates (base, quote, rate_date, rate, fetched_at, PK(base, quote, rate_date))` and `fx_rate_lookups` (requested date → rate date). Additive, one SQL transaction, idempotent. See [docs/exchange-rates.md](docs/exchange-rates.md). |
+| 18      | Bulk import idempotency: `ALTER TABLE transactions ADD COLUMN import_ref TEXT CHECK (import_ref IS NULL OR length(import_ref) BETWEEN 1 AND 200)` (only if missing; NULL for existing rows, which are otherwise untouched) + `CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_import_ref ON transactions (balance_uid, import_ref) WHERE import_ref IS NOT NULL`. Additive, one SQL transaction, idempotent. See [docs/bulk-import.md](docs/bulk-import.md). |
 
 Notes on version 2:
 
@@ -459,10 +460,11 @@ only on validation, conflict and duplicate-name errors.
 
 | Method | Path                 | Success | Notes |
 |--------|----------------------|---------|-------|
-| POST   | `/api/transactions`      | 201 + transaction, `Location` + `ETag` headers | Moves the balance(s) in the same DB transaction. 422 on validation errors (incl. currency ≠ balance currency, `type` `balance_adjustment`), 400 on malformed JSON or unknown fields |
+| POST   | `/api/transactions`      | 201 + transaction, `Location` + `ETag` headers | Moves the balance(s) in the same DB transaction. 422 on validation errors (incl. currency ≠ balance currency, `type` `balance_adjustment`), 400 on malformed JSON or unknown fields. Optional `import_ref` (≤ 200 chars, unique per balance; 409 `duplicate_import_ref`) |
+| POST   | `/api/transactions/bulk` | 201 / 200 `{"created","skipped","failed","valid","dry_run","atomic","written","results":[...],"balances":[...]}` | Up to 500 items with the POST body shape (+ `import_ref`); `atomic` (default true: 422 and nothing written if any item fails), `dry_run`. Duplicate `import_ref` per balance → `skipped`. 413 over 500 items, 2 MiB body. See [docs/bulk-import.md](docs/bulk-import.md) |
 | GET    | `/api/transactions`      | 200 `{"transactions":[...],"count":n}` | Newest first by spend time. Optional `from`, `to` (RFC 3339 with offset, both inclusive), `limit` (1–5000, default 500), `type` (`expense`/`income`/`transfer`/`asset_purchase`/`balance_adjustment`; 400 if invalid), `category_uid` (UUID; 400 if malformed) |
 | GET    | `/api/transactions/:uid`  | 200 + transaction | `:uid` is the transaction UUID (case-insensitive). **400** if it is not UUID-shaped (including numeric ids such as `/api/transactions/1`), **404** if no such uid. Same for PUT/DELETE |
-| PUT    | `/api/transactions/:uid`  | 200 + updated transaction | Full replace with the same body and rules as POST. An omitted `note` clears it. Requires `If-Match` or `"version"` (428 / 409). Reverses the old balance effect and applies the new one. 409 `balance_adjustment_readonly` on a balance adjustment (also DELETE). 404 if missing, 422 for invalid values, 400 for malformed JSON or unknown fields |
+| PUT    | `/api/transactions/:uid`  | 200 + updated transaction | Full replace with the same body and rules as POST. An omitted `note` clears it; an omitted `import_ref` is kept (`""` clears it). Requires `If-Match` or `"version"` (428 / 409). Reverses the old balance effect and applies the new one. 409 `balance_adjustment_readonly` on a balance adjustment (also DELETE). 404 if missing, 422 for invalid values, 400 for malformed JSON or unknown fields |
 | DELETE | `/api/transactions/:uid`  | 204 | Reverses the balance effect. Optional `If-Match` (409 if stale). 404 if missing |
 | POST   | `/api/balances`      | 201 + balance, `Location` header | 422 on validation errors (incl. per-type amount rules), 409 if the name is already used (case-insensitive), 400 on malformed JSON or unknown fields |
 | GET    | `/api/balances`      | 200 `{"balances":[...],"count":n,"totals":[...]}` | Grouped by type, then by name. Optional `type=` filter (400 if invalid). Optional `payable=1` / `payable=true` returns only `payment_account` and `credit_card` (cannot combine with `type=`). `totals` covers the returned rows, per currency |

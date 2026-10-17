@@ -102,7 +102,12 @@ func (s *Server) index(c *gin.Context) {
 // decodeBody decodes a single JSON value from the request body into dst,
 // writing a 400 response and returning false on failure.
 func decodeBody(c *gin.Context, dst any, disallowUnknown bool) bool {
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBodyBytes)
+	return decodeBodyLimit(c, dst, disallowUnknown, maxBodyBytes)
+}
+
+// decodeBodyLimit is decodeBody with a custom body size limit.
+func decodeBodyLimit(c *gin.Context, dst any, disallowUnknown bool, limit int64) bool {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
 	dec := json.NewDecoder(c.Request.Body)
 	if disallowUnknown {
 		dec.DisallowUnknownFields()
@@ -122,6 +127,7 @@ func decodeBody(c *gin.Context, dst any, disallowUnknown bool) bool {
 func writeInputError(c *gin.Context, err error) {
 	var ve *validate.ValidationError
 	var re *validate.RequestError
+	var dup *store.DuplicateImportRefError
 	switch {
 	case errors.As(err, &ve):
 		c.JSON(http.StatusUnprocessableEntity, errorBody{Error: "validation failed", Fields: ve.Fields})
@@ -138,6 +144,9 @@ func writeInputError(c *gin.Context, err error) {
 		c.JSON(http.StatusBadGateway, errorBody{Error: fxMessage(err), Code: "exchange_rate_unavailable"})
 	case errors.Is(err, store.ErrReadOnly):
 		c.JSON(http.StatusConflict, errorBody{Error: err.Error(), Code: "balance_adjustment_readonly"})
+	case errors.As(err, &dup):
+		c.JSON(http.StatusConflict, errorBody{Error: dup.Error(), Code: "duplicate_import_ref",
+			Fields: map[string]string{"import_ref": "is already used on this balance by transaction " + dup.ExistingUID}})
 	default:
 		internalError(c, err)
 	}

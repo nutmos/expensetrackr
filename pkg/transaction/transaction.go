@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	MaxNoteLen = 1000
-	uidLen     = 36 // UUID v4 canonical form
+	MaxNoteLen      = 1000
+	MaxImportRefLen = 200 // characters
+	uidLen          = 36  // UUID v4 canonical form
 )
 
 // Transaction is a stored transaction record.
@@ -50,13 +51,17 @@ type Transaction struct {
 	// Cross-currency transfers only (null otherwise): the amount credited to
 	// the destination in its own currency, the rate used (destination units
 	// per 1 source unit) and where the rate came from. See docs/exchange-rates.md.
-	ToAmount      *string   `json:"to_amount"`       // decimal string in to_currency
-	ToAmountMinor *int64    `json:"to_amount_minor"` // to_amount in minor units of to_currency
-	ToCurrency    *string   `json:"to_currency"`     // destination balance currency
-	ExchangeRate  *string   `json:"exchange_rate"`   // decimal string, to_currency per 1 currency
-	RateSource    *string   `json:"rate_source"`     // "frankfurter" | "manual"
-	RateDate      *string   `json:"rate_date"`       // YYYY-MM-DD of the Frankfurter rate; null for manual
-	SpentTime     time.Time `json:"-"`
+	ToAmount      *string `json:"to_amount"`       // decimal string in to_currency
+	ToAmountMinor *int64  `json:"to_amount_minor"` // to_amount in minor units of to_currency
+	ToCurrency    *string `json:"to_currency"`     // destination balance currency
+	ExchangeRate  *string `json:"exchange_rate"`   // decimal string, to_currency per 1 currency
+	RateSource    *string `json:"rate_source"`     // "frankfurter" | "manual"
+	RateDate      *string `json:"rate_date"`       // YYYY-MM-DD of the Frankfurter rate; null for manual
+	// ImportRef is an optional client-chosen idempotency key (e.g. a bank
+	// reference, or a hash of date+amount+description made by an importing
+	// agent). Unique per balance_uid; null when not set. See docs/bulk-import.md.
+	ImportRef *string   `json:"import_ref"`
+	SpentTime time.Time `json:"-"`
 }
 
 // Direction is the sign of a balance adjustment.
@@ -96,6 +101,10 @@ type CreateInput struct {
 	ToAmount DecimalInput `json:"to_amount"`
 	// ToCurrency is optional; if sent it must equal the destination balance currency.
 	ToCurrency string `json:"to_currency"`
+	// ImportRef is an optional idempotency key, at most MaxImportRefLen
+	// characters, unique per balance_uid. On create, nil or "" means none.
+	// On PUT, nil (omitted or null) keeps the stored ref and "" clears it.
+	ImportRef *string `json:"import_ref"`
 
 	// IgnoredUID accepts a "uid" in PUT bodies so a previous response can be
 	// round-tripped; it is never used (the uid is server-assigned, immutable).
@@ -318,6 +327,19 @@ func (in CreateInput) Validate() (Transaction, error) {
 		fields["note"] = fmt.Sprintf("must be at most %d characters", MaxNoteLen)
 	}
 	exp.Note = note
+
+	if in.ImportRef == nil {
+		// none (create) / keep the stored ref (PUT)
+	} else if ref := strings.TrimSpace(*in.ImportRef); ref != "" {
+		switch {
+		case utf8.RuneCountInString(ref) > MaxImportRefLen:
+			fields["import_ref"] = fmt.Sprintf("must be at most %d characters", MaxImportRefLen)
+		case strings.ContainsFunc(ref, func(r rune) bool { return r < 0x20 || r == 0x7f }):
+			fields["import_ref"] = "must not contain control characters"
+		default:
+			exp.ImportRef = &ref
+		}
+	}
 
 	if len(fields) > 0 {
 		return Transaction{}, &ValidationError{Fields: fields}

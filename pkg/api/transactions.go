@@ -40,6 +40,7 @@ func (s *Server) attachCategory(c *gin.Context, e *transaction.Transaction) erro
 // registerTransactionRoutes mounts /api/transactions under the given group.
 func (s *Server) registerTransactionRoutes(api *gin.RouterGroup) {
 	api.POST("/transactions", s.createTransaction)
+	api.POST("/transactions/bulk", s.bulkCreateTransactions)
 	api.GET("/transactions", s.listTransactions)
 	api.GET("/transactions/:uid", s.getTransaction)
 	api.PUT("/transactions/:uid", s.replaceTransaction)
@@ -172,6 +173,9 @@ func (s *Server) replaceTransaction(c *gin.Context) {
 	if err != nil {
 		writeInputError(c, err)
 		return
+	}
+	if in.ImportRef == nil { // omitted: keep the stored ref ("" clears it)
+		next.ImportRef = cur.ImportRef
 	}
 	if err := s.attachPaymentBalance(c, &next, in, &cur); err != nil {
 		writeInputError(c, err)
