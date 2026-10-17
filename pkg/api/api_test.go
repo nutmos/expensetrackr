@@ -199,7 +199,13 @@ func TestListCurrencies(t *testing.T) {
 	for _, x := range cs {
 		m := x.(map[string]any)
 		if m["code"] == "JPY" {
-			found = m["scale"].(float64) == 0 && m["name"] == "Yen"
+			found = m["scale"].(float64) == 0 && m["name"] == "Yen" && m["flag"] == "🇯🇵"
+		}
+		if m["code"] == "EUR" && m["flag"] != "🇪🇺" {
+			t.Errorf("EUR flag %v", m["flag"])
+		}
+		if f, _ := m["flag"].(string); f == "" {
+			t.Errorf("%v has no flag", m["code"])
 		}
 	}
 	if !found {

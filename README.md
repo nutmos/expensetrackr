@@ -489,7 +489,7 @@ only on validation, conflict and duplicate-name errors.
 | PATCH  | `/api/users/:uid`      | 200 + updated user | Partial; `preferences` **replaces** the whole object (`null` → `{}`); `username`/`email` `null` removes |
 | DELETE | `/api/users/:uid`      | 204 | Also deletes linked identities |
 | GET    | `/api/users/:uid/identities` | 200 `{"identities":[...],"count":n}` | Read-only SSO links (empty until SSO exists) |
-| GET    | `/api/currencies`    | 200 `{"currencies":[{"code":"THB","name":"Baht","scale":2},...],"count":n}` | Supported ISO 4217 codes (from `pkg/money`), sorted by code; the web page's currency dropdowns use it |
+| GET    | `/api/currencies`    | 200 `{"currencies":[{"code":"THB","name":"Baht","scale":2,"flag":"🇹🇭"},...],"count":n}` | Supported ISO 4217 codes (from `pkg/money`), sorted by code, with a display-only flag emoji (see below); the web page's currency dropdowns use it |
 | GET    | `/api/exchange-rates?from=USD&to=THB&date=YYYY-MM-DD` | 200 `{"from":"USD","to":"THB","rate":"33.615","date":"2026-10-12","source":"frankfurter"}` | Rate preview (cached Frankfurter / ECB rate; `date` optional = latest). 400 bad query, 422 unsupported pair, 503/502 Frankfurter down. See [docs/exchange-rates.md](docs/exchange-rates.md) |
 | GET    | `/api/healthz`       | 200 `{"status":"ok"}` | |
 | GET    | `/api/openapi.yaml`  | 200 the OpenAPI 3.0 document | Hand-written spec, embedded in the binary |
@@ -704,10 +704,23 @@ spec, or a spec operation has no route.
 **Currency dropdowns.** The transaction and balance forms pick the currency
 from a searchable dropdown (the shared `combobox.js`) filled from
 `GET /api/currencies`, so the page offers exactly the codes the server accepts
-(`pkg/money`). Options read "THB — Baht"; search matches code or name. On the
+(`pkg/money`). Options read "🇹🇭 THB · Baht"; search matches code or name, and
+the submitted value is always the plain code. On the
 transaction form, choosing (or changing) the account sets the currency to that
 balance's currency; it can still be changed, and the server's mismatch error is
 shown. A new balance defaults to the currency most existing balances use.
+
+**Currency flags.** Each currency in `GET /api/currencies` carries a `flag`
+emoji (`pkg/money/flags.go`), shown before the code in the currency dropdowns,
+the balance list and totals, the transaction list's Currency column and the
+transfer form's "Received amount (🇸🇬 SGD)" label. The flag is the issuing
+country's, built from the code's first two letters (ISO 4217 codes start with
+the ISO 3166-1 alpha-2 country code: THB → TH → 🇹🇭), with overrides where that
+is wrong: EUR → 🇪🇺; ANG and XCG (Netherlands Antillean / Caribbean guilder) →
+🇨🇼 Curaçao; XAF, XOF, XCD, XPF (shared by several countries, no common flag)
+and other supranational X… codes → 🌐. Flags are display only: requests and
+responses elsewhere use plain codes. Systems without flag emoji (e.g. Windows)
+show the two letters instead. Details: [docs/currencies.md](docs/currencies.md).
 
 **Uids are never shown on the page.** They identify records only behind the
 scenes: in row `data-uid` attributes, dropdown option values, edit URLs

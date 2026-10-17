@@ -40,6 +40,8 @@ match the Go JSON shapes.
   rules), manual overrides via PUT recorded as Balance Adjustment
   transactions, optimistic locking (`version`, `ETag`, `If-Match`, 428/409),
   schema v11–v13.
+- [Currencies](currencies.md): supported ISO 4217 codes, `GET
+  /api/currencies`, and how the display-only `flag` emoji is derived.
 - [Agent skill](../skills/expensetrackr-api/SKILL.md): `SKILL.md` for LLM
   agents using the HTTP API (auth, CSRF, workflows, errors, safety), with
   [reference.md](../skills/expensetrackr-api/reference.md) and the
