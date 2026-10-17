@@ -8,7 +8,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/nutmos/expensetrackr/pkg/common_type"
 	"github.com/nutmos/expensetrackr/pkg/validate"
 )
 
@@ -39,12 +38,12 @@ const (
 
 // Category is a stored category record.
 type Category struct {
-	UID         common_type.UID `json:"uid"` // server-assigned UUID v4; immutable
-	Name        string          `json:"name"`
-	Type        Type            `json:"type"`
-	Description string          `json:"description"`
-	CreatedAt   string          `json:"created_at"`
-	UpdatedAt   *string         `json:"updated_at"`
+	UID         string  `json:"uid"` // server-assigned UUID v4; immutable
+	Name        string  `json:"name"`
+	Type        Type    `json:"type"`
+	Description string  `json:"description"`
+	CreatedAt   string  `json:"created_at"`
+	UpdatedAt   *string `json:"updated_at"`
 }
 
 // Input is the payload for POST /api/categories and PUT /api/categories/:uid.
