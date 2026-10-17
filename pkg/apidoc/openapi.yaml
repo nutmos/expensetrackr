@@ -1395,7 +1395,7 @@ components:
       description: Whether a manual edit raised or lowered the edited amount (balance of an asset, debt of a liability).
     Transaction:
       type: object
-      required: [uid, amount, amount_minor, currency, type, balance_uid, account, to_balance_uid, to_account, category_uid, spent_at, note, created_at, updated_at, version, adjusts_balances, adjustment_direction, to_amount, to_amount_minor, to_currency, exchange_rate, rate_source, rate_date, import_ref]
+      required: [uid, amount, amount_minor, currency, type, balance_uid, account, to_balance_uid, to_account, category_uid, spent_at, note, created_at, updated_at, version, adjusts_balances, adjustment_direction, to_amount, to_amount_minor, to_currency, exchange_rate, rate_source, rate_date, import_ref, conversion_rates]
       properties:
         uid: { $ref: '#/components/schemas/Uid' }
         amount:
@@ -1509,6 +1509,36 @@ components:
           maxLength: 200
           description: Client-chosen idempotency key (e.g. a bank reference or a hash of date+amount+description), unique per `balance_uid`; `null` when not set. See docs/bulk-import.md.
           example: null
+        conversion_rates:
+          type: array
+          nullable: true
+          readOnly: true
+          minItems: 2
+          maxItems: 2
+          items: { $ref: '#/components/schemas/ConversionRate' }
+          description: |
+            Response-only, computed on the fly (never stored). Cross-currency transfers only: both
+            directions of the rate the transfer actually used, derived from its own amounts. Item 0
+            is `currency` → `to_currency` (`to_amount / amount`), item 1 is `to_currency` → `currency`
+            (`amount / to_amount`). Decimal strings, up to 10 significant digits, rounded half-up.
+            Item 0 equals `exchange_rate` for a manual rate; for a Frankfurter rate it can differ
+            slightly because `to_amount` was rounded to the destination's minor unit.
+            `null` for same-currency transfers (the rate is trivially 1), for every other type and
+            if an amount is zero. Not accepted in request bodies (400 unknown field, like every other
+            read-only field except `uid` and `version`).
+          example:
+            - { from: THB, to: SGD, rate: '0.0397' }
+            - { from: SGD, to: THB, rate: '25.18891688' }
+    ConversionRate:
+      type: object
+      required: [from, to, rate]
+      properties:
+        from: { type: string, pattern: '^[A-Z]{3}$', example: THB }
+        to: { type: string, pattern: '^[A-Z]{3}$', example: SGD }
+        rate:
+          type: string
+          description: Units of `to` per 1 `from` (decimal string, up to 10 significant digits).
+          example: '0.0397'
     ExchangeRate:
       type: object
       required: [from, to, rate, date, source]

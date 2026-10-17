@@ -549,6 +549,16 @@
           amountTd.classList.add("fx");
           amountTd.title = e.rate_source === "manual" ? `Amount received entered by hand (1 ${e.currency} = ${e.exchange_rate} ${e.to_currency})`
             : `1 ${e.currency} = ${e.exchange_rate} ${e.to_currency}, ECB rate of ${e.rate_date} via Frankfurter`;
+          // Both directions of the effective rate (computed by the API from
+          // amount and to_amount; never stored).
+          const rates = conversionText(e.conversion_rates);
+          if (rates) {
+            const line = document.createElement("div");
+            line.className = "fx-rates";
+            line.textContent = rates;
+            amountTd.append(line);
+            amountTd.title += `\nEffective: ${rates}`;
+          }
         }
         if (isAdj) {
           tr.classList.add("row-adjustment");
@@ -578,6 +588,14 @@
     } catch (err) {
       if (my === gen) listStatus.textContent = "Failed to load transactions: " + err.message;
     }
+  }
+
+  // [{from:"THB",to:"SGD",rate:"0.0397"}, {from:"SGD",to:"THB",rate:"25.19"}]
+  // -> "1 THB = 0.0397 SGD · 1 SGD = 25.19 THB" ("" when absent).
+  function conversionText(rates) {
+    if (!Array.isArray(rates) || rates.length === 0) return "";
+    return rates.filter((r) => r && r.from && r.to && r.rate)
+      .map((r) => `1 ${r.from} = ${r.rate} ${r.to}`).join(" · ");
   }
 
   // "3361.50" -> "3,361.50" (display only; digits as stored).

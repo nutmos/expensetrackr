@@ -169,6 +169,12 @@ curl -sS -b "$JAR" -c "$JAR" -X POST "$BASE/api/transactions" -H 'Content-Type: 
   | jq '{amount, currency, to_amount, to_currency, exchange_rate, rate_source, rate_date}'
 ```
 
+The response (and every later GET/list) also has `conversion_rates`, both
+directions computed from the stored amounts, e.g.
+`[{"from":"USD","to":"THB","rate":"33.615"},{"from":"THB","to":"USD","rate":"0.02974862413"}]`;
+use it to tell the user "1 USD = 33.615 THB (1 THB = 0.0297 USD)". It is
+read-only (`null` for same-currency transfers); never send it back.
+
 Errors: **422** `exchange_rate_unsupported` (pair not covered by ECB, e.g.
 VND) → ask the user for the received amount and resend with `to_amount`;
 **503** / **502** `exchange_rate_unavailable` → retry later or ask for

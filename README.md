@@ -147,6 +147,7 @@ uses `/api/transactions` and the list key `transactions` (the old
 | received amt  | `to_amount`, `to_amount_minor` | `to_amount_minor INTEGER` + `to_amount_scale INTEGER`; cross-currency transfers only (else `NULL`/`null`) |
 | dest. currency | `to_currency` | `TEXT`, the destination balance's currency; cross-currency transfers only |
 | rate          | `exchange_rate`, `rate_source`, `rate_date` | `TEXT`: destination units per 1 source unit (≤ 10 significant digits), `frankfurter`/`manual`, `YYYY-MM-DD` of the ECB rate (Frankfurter only). Immutable history |
+| conversion    | `conversion_rates` | **not stored**: computed on every response for cross-currency transfers (both directions, from `amount` and `to_amount`); `null` otherwise. Read-only. See [docs/exchange-rates.md](docs/exchange-rates.md) |
 | last edited   | `updated_at`   | `TEXT` RFC 3339 in UTC, `NULL` (JSON `null`) until the transaction is edited |
 
 ### Balances (table `balances`)

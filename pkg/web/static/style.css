@@ -102,3 +102,4 @@ tr.just-saved td { background: #ecfdf5; transition: background 2s; }
 /* Cross-currency transfers */
 button.linklike { background: none; border: 0; padding: 0; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; }
 td.num.fx { white-space: nowrap; }
+td.num.fx .fx-rates { font-size: 0.75rem; color: var(--muted); }

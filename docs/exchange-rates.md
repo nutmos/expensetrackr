@@ -21,6 +21,42 @@ database they are `to_amount_minor`, `to_amount_scale`, `to_currency`,
 `exchange_rate` (TEXT), `rate_source`, `rate_date` — all nullable (added by
 migration v17; existing rows keep NULLs).
 
+## `conversion_rates` (computed, response-only)
+
+Every transaction in a response (`GET` single and list, `POST`/`PUT`
+responses, `409` conflict `current`, bulk `results[].transaction`, dry runs
+included) also carries `conversion_rates`. For a cross-currency transfer it
+shows **both directions** of the rate the transfer actually used, derived on
+the fly from its own amounts; it is **not stored** (no column, no migration):
+
+```json
+"conversion_rates": [
+  {"from": "THB", "to": "SGD", "rate": "0.0397"},
+  {"from": "SGD", "to": "THB", "rate": "25.18891688"}
+]
+```
+
+(Example from the tests: 1000.00 THB → 39.70 SGD, i.e. 1 THB = 0.0397 SGD
+and 1 SGD = 25.18891688 THB.)
+
+- Item 0 is always `currency` → `to_currency` = `to_amount / amount`; item 1
+  is `to_currency` → `currency` = `amount / to_amount`. Each item has the same
+  `from` / `to` / `rate` shape as `GET /api/exchange-rates`.
+- `rate` is a decimal string computed exactly from the minor units and
+  rounded half-up to 10 significant digits, the same format as
+  `exchange_rate`.
+- Item 0 equals `exchange_rate` for a manual rate. For a Frankfurter rate it
+  can differ in the last digits, because `to_amount` was rounded to the
+  destination's minor unit (e.g. 1 USD → 150 JPY); `conversion_rates` is the
+  *effective* rate, `exchange_rate` the reference rate that was applied.
+- It is `null` for **same-currency transfers** (no conversion happens; the
+  rate would trivially be 1, and the other cross-currency fields are `null`
+  too), for every other type, and if an amount were ever zero (no division
+  by zero).
+- It is read-only: like `account`, `amount_minor` or `exchange_rate`, sending
+  it in a POST/PUT/bulk body is a 400 `unknown field "conversion_rates"`. Send
+  only input fields (the web form does).
+
 ## Writing (POST / PUT `/api/transactions`)
 
 Source and destination currencies **differ**:
@@ -118,7 +154,9 @@ field appears with a rate line such as `1 USD = 33.615 THB (rate of
 balances change. Typing in it switches to a manual amount (rate line shows
 the implied rate, "Use market rate" switches back); only then is `to_amount`
 sent. The field is hidden for same-currency transfers. The list shows
-cross-currency transfers as `100.00 USD → 3,361.50 THB`.
+cross-currency transfers as `100.00 USD → 3,361.50 THB` with both effective
+rates from `conversion_rates` underneath (`1 USD = 33.615 THB · 1 THB =
+0.02974862413 USD`) and in the tooltip.
 
 ## Limitations
 
