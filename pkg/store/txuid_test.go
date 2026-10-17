@@ -32,11 +32,11 @@ func TestMigrationV5ToV6BackfillsTransactionUID(t *testing.T) {
 	}
 	seen := map[string]bool{}
 	for _, e := range items {
-		if !uuidV4.MatchString(e.UID) || seen[e.UID] {
+		if !uuidV4.MatchString(string(e.UID)) || seen[string(e.UID)] {
 			t.Errorf("bad/duplicate uid %q", e.UID)
 		}
-		seen[e.UID] = true
-		got, err := st.GetByUID(ctx, e.UID)
+		seen[string(e.UID)] = true
+		got, err := st.GetByUID(ctx, string(e.UID))
 		if err != nil || got.ID != e.ID {
 			t.Errorf("GetByUID(%s) = %v, %v", e.UID, got.ID, err)
 		}
@@ -73,7 +73,7 @@ UPDATE transactions SET uid = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' WHERE id = 
 		t.Errorf("existing uid overwritten: %q %v", e1.UID, err)
 	}
 	e2, _ := st.Get(context.Background(), 2)
-	if !uuidV4.MatchString(e2.UID) {
+	if !uuidV4.MatchString(string(e2.UID)) {
 		t.Errorf("empty uid not backfilled: %q", e2.UID)
 	}
 }

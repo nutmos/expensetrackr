@@ -40,13 +40,15 @@ func applyBalanceEffects(ctx context.Context, tx *sql.Tx, old, next *transaction
 	}
 	if old != nil && old.AdjustsBalances {
 		for _, ef := range old.Effects() {
-			add(ef.BalanceUID, -ef.Delta)
-			reversedCurrency[ef.BalanceUID] = effectCurrency(*old, ef)
+			uid := string(ef.BalanceUID)
+			add(uid, -ef.Delta)
+			reversedCurrency[uid] = effectCurrency(*old, ef)
 		}
 	}
 	if next != nil && next.AdjustsBalances {
 		for _, ef := range next.Effects() {
-			b, err := balanceByUIDTx(ctx, tx, ef.BalanceUID)
+			uid := string(ef.BalanceUID)
+			b, err := balanceByUIDTx(ctx, tx, uid)
 			if errors.Is(err, ErrNotFound) {
 				return &validate.ValidationError{Fields: map[string]string{ef.Field: "does not match any balance"}}
 			}
@@ -60,7 +62,7 @@ func applyBalanceEffects(ctx context.Context, tx *sql.Tx, old, next *transaction
 				}
 				return &validate.ValidationError{Fields: map[string]string{ef.Field: msg}}
 			}
-			add(ef.BalanceUID, ef.Delta)
+			add(uid, ef.Delta)
 		}
 	}
 	for _, uid := range order {

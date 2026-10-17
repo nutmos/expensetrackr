@@ -67,7 +67,7 @@ func TestManualEditRecordsAdjustment(t *testing.T) {
 		f.want(c.b, c.after, 2)
 		var got []transaction.Transaction
 		for _, a := range f.adjustments() {
-			if a.BalanceUID == c.b.UID {
+			if a.BalanceUID.Matches(c.b.UID) {
 				got = append(got, a)
 			}
 		}
@@ -77,7 +77,7 @@ func TestManualEditRecordsAdjustment(t *testing.T) {
 		a := got[0]
 		if a.Type != transaction.BalanceAdjustment || a.Amount != c.amount || a.AdjustmentDirection == nil || *a.AdjustmentDirection != c.dir ||
 			a.Currency != "THB" || a.Account != c.b.Name || a.Note != c.note || a.SpentAt != "2026-10-08T21:30:00+08:00" ||
-			a.CategoryUID != nil || a.ToBalanceUID != nil || a.AdjustsBalances || a.Version != 1 || !looksLikeUUID(a.UID) {
+			a.CategoryUID != nil || a.ToBalanceUID != nil || a.AdjustsBalances || a.Version != 1 || !looksLikeUUID(string(a.UID)) {
 			t.Errorf("%s adjustment: %+v (dir %v)", c.b.Name, a, a.AdjustmentDirection)
 		}
 		if len(a.Effects()) != 0 {

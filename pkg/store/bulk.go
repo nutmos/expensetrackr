@@ -45,7 +45,7 @@ func mapImportRefErr(ctx context.Context, tx *sql.Tx, e transaction.Transaction,
 	if e.ImportRef == nil || !strings.Contains(err.Error(), "transactions.import_ref") {
 		return err
 	}
-	uid, lerr := existingImportRef(ctx, tx, e.BalanceUID, *e.ImportRef)
+	uid, lerr := existingImportRef(ctx, tx, string(e.BalanceUID), *e.ImportRef)
 	if lerr != nil || uid == "" {
 		return err
 	}
@@ -142,7 +142,7 @@ func (s *Store) CreateBulk(ctx context.Context, items []BulkItem, opts BulkOptio
 			continue
 		}
 		if e.ImportRef != nil {
-			uid, err := existingImportRef(ctx, tx, e.BalanceUID, *e.ImportRef)
+			uid, err := existingImportRef(ctx, tx, string(e.BalanceUID), *e.ImportRef)
 			if err != nil {
 				return out, err
 			}
@@ -178,7 +178,7 @@ func (s *Store) CreateBulk(ctx context.Context, items []BulkItem, opts BulkOptio
 			r.Status = BulkValid
 		}
 		for _, ef := range next.Effects() {
-			touch(ef.BalanceUID)
+			touch(string(ef.BalanceUID))
 		}
 	}
 	for _, uid := range touched {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/nutmos/expensetrackr/pkg/balance"
 	"github.com/nutmos/expensetrackr/pkg/category"
+	"github.com/nutmos/expensetrackr/pkg/common_type"
 	"github.com/nutmos/expensetrackr/pkg/money"
 )
 
@@ -26,30 +27,6 @@ func ParseTimestamp(s string) (time.Time, error) {
 	}
 	return t, nil
 }
-
-// looksLikeUID reports whether s has the canonical UUID shape (version digit
-// not checked here; the balances table is the source of truth).
-func looksLikeUID(s string) bool {
-	if len(s) != uidLen {
-		return false
-	}
-	for i, c := range s {
-		switch i {
-		case 8, 13, 18, 23:
-			if c != '-' {
-				return false
-			}
-		default:
-			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-// normalizeUID trims and lower-cases a uid as sent by a client.
-func normalizeUID(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
 
 // normalizeType trims and lower-cases a type as sent by a client.
 func normalizeType(s string) Type { return Type(strings.ToLower(strings.TrimSpace(s))) }
@@ -170,17 +147,17 @@ func (in CreateInput) Validate() (Transaction, error) {
 	}
 	exp.Type = tt
 
-	uid := normalizeUID(in.BalanceUID)
+	uid := common_type.NormalizeUID(in.BalanceUID)
 	switch {
 	case uid == "":
 		fields["balance_uid"] = "is required"
-	case !looksLikeUID(uid):
+	case !uid.Valid():
 		fields["balance_uid"] = "must be a UUID (the uid of a balance)"
 	}
 	exp.BalanceUID = uid
 
 	// to_balance_uid is only checked once the type is known.
-	to := normalizeUID(in.ToBalanceUID)
+	to := common_type.NormalizeUID(in.ToBalanceUID)
 	switch {
 	case !okType:
 	case !tt.HasDestination():
@@ -189,7 +166,7 @@ func (in CreateInput) Validate() (Transaction, error) {
 		}
 	case to == "":
 		fields["to_balance_uid"] = "is required for a " + strings.ReplaceAll(string(tt), "_", " ")
-	case !looksLikeUID(to):
+	case !to.Valid():
 		fields["to_balance_uid"] = "must be a UUID (the uid of a balance)"
 	case to == uid:
 		fields["to_balance_uid"] = "must differ from balance_uid"
@@ -197,12 +174,12 @@ func (in CreateInput) Validate() (Transaction, error) {
 		exp.ToBalanceUID = &to
 	}
 
-	cat := normalizeUID(in.CategoryUID)
+	cat := common_type.NormalizeUID(in.CategoryUID)
 	switch {
 	case cat == "":
 	case okType && tt == Transfer:
 		fields["category_uid"] = "is not allowed for a transfer"
-	case !looksLikeUID(cat):
+	case !cat.Valid():
 		fields["category_uid"] = "must be a UUID (the uid of a category)"
 	default:
 		exp.CategoryUID = &cat
@@ -261,10 +238,10 @@ func (e *Transaction) AttachPaymentBalance(b balance.Balance) error {
 	if b.UID == "" || !SourceAllowed(tt, b.Type) {
 		return fieldError("balance_uid", sourceRule(tt))
 	}
-	if e.BalanceUID != "" && !strings.EqualFold(e.BalanceUID, b.UID) {
+	if e.BalanceUID != "" && !e.BalanceUID.Matches(b.UID) {
 		return fieldError("balance_uid", "does not match the resolved balance")
 	}
-	e.BalanceUID = b.UID
+	e.BalanceUID = UID(b.UID)
 	e.Account = b.Name
 	return nil
 }
@@ -275,13 +252,13 @@ func (e *Transaction) AttachDestinationBalance(b balance.Balance) error {
 	if !e.Type.HasDestination() || e.ToBalanceUID == nil {
 		return fieldError("to_balance_uid", "is only allowed when type is transfer or asset_purchase")
 	}
-	if b.UID == "" || !strings.EqualFold(*e.ToBalanceUID, b.UID) {
+	if b.UID == "" || !e.ToBalanceUID.Matches(b.UID) {
 		return fieldError("to_balance_uid", "does not match any balance")
 	}
 	if !DestinationAllowed(e.Type, b.Type) {
 		return fieldError("to_balance_uid", "must refer to an other_asset balance (asset purchase destination)")
 	}
-	uid, name := b.UID, b.Name
+	uid, name := UID(b.UID), b.Name
 	e.ToBalanceUID, e.ToAccount = &uid, &name
 	return nil
 }
@@ -292,7 +269,7 @@ func (e *Transaction) AttachDestinationBalance(b balance.Balance) error {
 // the name is looked up from the categories table (or GET /api/categories)
 // when needed.
 func (e *Transaction) AttachCategory(c category.Category) error {
-	if e.CategoryUID == nil || c.UID == "" || !strings.EqualFold(*e.CategoryUID, c.UID) {
+	if e.CategoryUID == nil || c.UID == "" || !e.CategoryUID.Matches(c.UID) {
 		return fieldError("category_uid", "does not match any category")
 	}
 	want := string(e.Type)
@@ -302,7 +279,7 @@ func (e *Transaction) AttachCategory(c category.Category) error {
 	if string(c.Type) != want {
 		return fieldError("category_uid", fmt.Sprintf("must be an %s category (this one is %s)", want, c.Type))
 	}
-	uid := c.UID
+	uid := UID(c.UID)
 	e.CategoryUID = &uid
 	return nil
 }
