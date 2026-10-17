@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nutmos/expensetrackr/pkg/common_type"
 	"github.com/nutmos/expensetrackr/pkg/money"
 	"github.com/nutmos/expensetrackr/pkg/transaction"
 
@@ -114,12 +115,12 @@ func insertTx(ctx context.Context, tx *sql.Tx, e transaction.Transaction, now st
 	if !ok {
 		return e, fmt.Errorf("unknown currency %q", e.Currency)
 	}
-	uid, err := newUID()
+	uid, err := common_type.NewUID()
 	if err != nil {
 		return e, err
 	}
 	next := e
-	next.UID, next.CreatedAt, next.UpdatedAt, next.Version, next.AdjustsBalances = transaction.UID(uid), now, nil, 1, true
+	next.UID, next.CreatedAt, next.UpdatedAt, next.Version, next.AdjustsBalances = uid, now, nil, 1, true
 	res, err := tx.ExecContext(ctx,
 		`INSERT INTO transactions (uid, type, amount_minor, amount_scale, currency, balance_uid, account, to_balance_uid, to_account, category_uid, spent_at, spent_at_unix, note, created_at, version, balance_applied,
 		                           to_amount_minor, to_amount_scale, to_currency, exchange_rate, rate_source, rate_date, import_ref)

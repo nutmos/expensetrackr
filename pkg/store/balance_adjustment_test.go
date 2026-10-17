@@ -67,7 +67,7 @@ func TestManualEditRecordsAdjustment(t *testing.T) {
 		f.want(c.b, c.after, 2)
 		var got []transaction.Transaction
 		for _, a := range f.adjustments() {
-			if a.BalanceUID.Matches(c.b.UID) {
+			if a.BalanceUID.Matches(string(c.b.UID)) {
 				got = append(got, a)
 			}
 		}
@@ -195,15 +195,15 @@ func TestAdjustmentIsReadOnly(t *testing.T) {
 	// carry a destination/category, and a direction on other types.
 	for _, q := range []string{
 		`INSERT INTO transactions (uid, type, amount_minor, amount_scale, currency, balance_uid, account, spent_at, spent_at_unix, created_at, balance_applied, adjustment_direction)
-		 VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', 'balance_adjustment', 1, 2, 'THB', '` + f.pay.UID + `', 'pay', 'x', 0, 'x', 1, 'increase')`,
+		 VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', 'balance_adjustment', 1, 2, 'THB', '` + string(f.pay.UID) + `', 'pay', 'x', 0, 'x', 1, 'increase')`,
 		`INSERT INTO transactions (uid, type, amount_minor, amount_scale, currency, balance_uid, account, spent_at, spent_at_unix, created_at, adjustment_direction)
-		 VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2', 'balance_adjustment', 1, 2, 'THB', '` + f.pay.UID + `', 'pay', 'x', 0, 'x', NULL)`,
+		 VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2', 'balance_adjustment', 1, 2, 'THB', '` + string(f.pay.UID) + `', 'pay', 'x', 0, 'x', NULL)`,
 		`INSERT INTO transactions (uid, type, amount_minor, amount_scale, currency, balance_uid, account, spent_at, spent_at_unix, created_at, adjustment_direction)
-		 VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3', 'expense', 1, 2, 'THB', '` + f.pay.UID + `', 'pay', 'x', 0, 'x', 'increase')`,
+		 VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3', 'expense', 1, 2, 'THB', '` + string(f.pay.UID) + `', 'pay', 'x', 0, 'x', 'increase')`,
 		`INSERT INTO transactions (uid, type, amount_minor, amount_scale, currency, balance_uid, account, spent_at, spent_at_unix, created_at, adjustment_direction, to_balance_uid)
-		 VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4', 'balance_adjustment', 1, 2, 'THB', '` + f.pay.UID + `', 'pay', 'x', 0, 'x', 'increase', '` + f.card.UID + `')`,
+		 VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4', 'balance_adjustment', 1, 2, 'THB', '` + string(f.pay.UID) + `', 'pay', 'x', 0, 'x', 'increase', '` + string(f.card.UID) + `')`,
 		`INSERT INTO transactions (uid, type, amount_minor, amount_scale, currency, balance_uid, account, spent_at, spent_at_unix, created_at, adjustment_direction)
-		 VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5', 'balance_adjustment', 1, 2, 'THB', '` + f.pay.UID + `', 'pay', 'x', 0, 'x', 'sideways')`,
+		 VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5', 'balance_adjustment', 1, 2, 'THB', '` + string(f.pay.UID) + `', 'pay', 'x', 0, 'x', 'sideways')`,
 	} {
 		if _, err := f.st.db.Exec(q); err == nil || !strings.Contains(err.Error(), "CHECK") {
 			t.Errorf("CHECK did not reject: %v\n%s", err, q)

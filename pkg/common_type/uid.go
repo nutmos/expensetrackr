@@ -2,6 +2,7 @@
 package common_type
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
@@ -13,6 +14,15 @@ const uidLen = 36 // canonical UUID form
 // form, e.g. "a1b2c3d4-e5f6-4789-a012-3456789abcde". The zero value means
 // "none".
 type UID string
+
+// NewUID returns a random UUID v4 in canonical lowercase form.
+func NewUID() (UID, error) {
+	id, err := uuid.NewRandom()
+	if err != nil {
+		return "", fmt.Errorf("generate uid: %w", err)
+	}
+	return UID(id.String()), nil
+}
 
 // NormalizeUID trims and lower-cases a uid as sent by a client. It does not
 // check the shape; see Valid.

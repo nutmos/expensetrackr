@@ -9,6 +9,7 @@ import (
 	"math"
 	"sort"
 
+	"github.com/nutmos/expensetrackr/pkg/common_type"
 	"github.com/nutmos/expensetrackr/pkg/money"
 )
 
@@ -21,24 +22,24 @@ const (
 // null in JSON: assets have balance; liabilities have debt, limit, available
 // and over_limit.
 type Balance struct {
-	ID             int64   `json:"-"`   // internal row id; the API identifies balances by UID
-	UID            string  `json:"uid"` // server-assigned UUID v4; immutable
-	Name           string  `json:"name"`
-	Type           Type    `json:"type"`
-	Kind           string  `json:"kind"`     // "asset" or "liability" (derived from type)
-	Currency       string  `json:"currency"` // base currency, ISO 4217
-	Description    string  `json:"description"`
-	Balance        *string `json:"balance"` // decimal string; may be negative (overdraft)
-	BalanceMinor   *int64  `json:"balance_minor"`
-	Debt           *string `json:"debt"` // may be negative (overpaid / in credit)
-	DebtMinor      *int64  `json:"debt_minor"`
-	Limit          *string `json:"limit"` // >= 0
-	LimitMinor     *int64  `json:"limit_minor"`
-	Available      *string `json:"available"` // limit - debt; negative when over the limit
-	AvailableMinor *int64  `json:"available_minor"`
-	OverLimit      *bool   `json:"over_limit"` // debt > limit
-	CreatedAt      string  `json:"created_at"`
-	UpdatedAt      *string `json:"updated_at"`
+	ID             int64           `json:"-"`   // internal row id; the API identifies balances by UID
+	UID            common_type.UID `json:"uid"` // server-assigned UUID v4; immutable
+	Name           string          `json:"name"`
+	Type           Type            `json:"type"`
+	Kind           string          `json:"kind"`     // "asset" or "liability" (derived from type)
+	Currency       string          `json:"currency"` // base currency, ISO 4217
+	Description    string          `json:"description"`
+	Balance        *string         `json:"balance"` // decimal string; may be negative (overdraft)
+	BalanceMinor   *int64          `json:"balance_minor"`
+	Debt           *string         `json:"debt"` // may be negative (overpaid / in credit)
+	DebtMinor      *int64          `json:"debt_minor"`
+	Limit          *string         `json:"limit"` // >= 0
+	LimitMinor     *int64          `json:"limit_minor"`
+	Available      *string         `json:"available"` // limit - debt; negative when over the limit
+	AvailableMinor *int64          `json:"available_minor"`
+	OverLimit      *bool           `json:"over_limit"` // debt > limit
+	CreatedAt      string          `json:"created_at"`
+	UpdatedAt      *string         `json:"updated_at"`
 	// Version starts at 1 and is incremented on every change, manual (PUT /
 	// PATCH) or automatic (a transaction moving the balance). PUT/PATCH must
 	// send the version they last read (If-Match or "version").
@@ -71,21 +72,6 @@ func (b *Balance) SetAmounts(scale int, bal, debt, limit *int64) {
 		avail := *limit - *debt
 		over := *debt > *limit
 		b.AvailableMinor, b.Available, b.OverLimit = &avail, format(avail), &over
-	}
-}
-
-// Input returns the editable fields of a stored balance, e.g. to build a PUT body from a stored record.
-func (b Balance) Input() Input {
-	dec := func(s *string) *money.DecimalInput {
-		if s == nil {
-			return nil
-		}
-		d := money.DecimalInput(*s)
-		return &d
-	}
-	return Input{
-		Name: b.Name, Type: string(b.Type), Currency: b.Currency, Description: b.Description,
-		Balance: dec(b.Balance), Debt: dec(b.Debt), Limit: dec(b.Limit),
 	}
 }
 

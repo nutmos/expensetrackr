@@ -29,3 +29,13 @@ func TestUIDMatches(t *testing.T) {
 		t.Error("Matches(a, b)")
 	}
 }
+
+func TestNewUID(t *testing.T) {
+	a, err := NewUID()
+	if err != nil || !a.Valid() || a != NormalizeUID(string(a)) {
+		t.Fatalf("NewUID = %q, %v", a, err)
+	}
+	if b, _ := NewUID(); a == b {
+		t.Error("NewUID returned the same uid twice")
+	}
+}

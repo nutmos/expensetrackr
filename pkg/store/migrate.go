@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nutmos/expensetrackr/pkg/category"
+	"github.com/nutmos/expensetrackr/pkg/common_type"
 )
 
 // Schema notes, table "transactions" (one row per expense):
@@ -531,7 +532,7 @@ func addBalanceUID(tx *sql.Tx) error {
 		return err
 	}
 	for _, id := range ids {
-		uid, err := newBalanceUID()
+		uid, err := common_type.NewUID()
 		if err != nil {
 			return err
 		}
@@ -616,7 +617,7 @@ func addTransactionUID(tx *sql.Tx) error {
 		return err
 	}
 	for _, id := range ids {
-		uid, err := newUID()
+		uid, err := common_type.NewUID()
 		if err != nil {
 			return err
 		}
