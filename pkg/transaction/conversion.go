@@ -7,15 +7,6 @@ import (
 	"github.com/nutmos/expensetrackr/pkg/money"
 )
 
-// ConversionRate is one direction of the conversion a cross-currency
-// transfer actually made: Rate units of To per 1 From. It has the same
-// from/to/rate shape as GET /api/exchange-rates.
-type ConversionRate struct {
-	From string `json:"from"` // ISO 4217
-	To   string `json:"to"`   // ISO 4217
-	Rate string `json:"rate"` // decimal string, up to fx.RateSigDigits significant digits
-}
-
 // ComputeConversionRates returns both directions of the effective rate of a
 // cross-currency transfer, derived from its own amounts: first
 // currency -> to_currency (to_amount / amount), then to_currency -> currency
