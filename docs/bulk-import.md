@@ -108,7 +108,7 @@ requires under 3 s).
 ## Idempotency: `import_ref`
 
 `import_ref` is an optional string of at most 200 characters (trimmed, no
-control characters), stored on the transaction (schema v18) and returned in
+control characters), stored on the transaction (`transactions.import_ref`) and returned in
 every transaction JSON. It is **unique per `balance_uid`**: a partial unique
 index on `(balance_uid, import_ref) WHERE import_ref IS NOT NULL`.
 
