@@ -233,7 +233,7 @@
           badge.title = "Debt is higher than the limit";
           nameTd.append(badge);
         }
-        tr.append(nameTd, cell(b.currency));
+        tr.append(nameTd, cell(App.currencyText(b.currency)));
         if (t.kind === "asset") {
           tr.append(moneyCell(b.balance));
         } else {
@@ -269,7 +269,7 @@
     }
     for (const t of totals) {
       const tr = document.createElement("tr");
-      tr.append(cell(t.currency), moneyCell(t.assets), moneyCell(t.liabilities), moneyCell(t.net),
+      tr.append(cell(App.currencyText(t.currency)), moneyCell(t.assets), moneyCell(t.liabilities), moneyCell(t.net),
         moneyCell(t.credit_limit), moneyCell(t.available_credit));
       totalsBody.append(tr);
     }
@@ -279,7 +279,8 @@
     const my = ++gen;
     listStatus.textContent = "Loading…";
     try {
-      const res = await fetch("/api/balances");
+      // Currencies (cached) first, so the list can show flags.
+      const [res] = await Promise.all([fetch("/api/balances"), App.loadCurrencies()]);
       const body = await res.json();
       if (my !== gen) return;
       if (!res.ok) {

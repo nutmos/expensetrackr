@@ -256,8 +256,12 @@ curl -sS -b "$JAR" -c "$JAR" -X POST "$BASE/api/transactions" -H 'Content-Type: 
 curl -sS -b "$JAR" -c "$JAR" "$BASE/api/currencies" | jq -c '.count, (.currencies[] | select(.code == "THB" or .code == "JPY"))'
 ```
 
-`{"currencies":[{"code","name","scale"}],"count":n}`, sorted by code. `scale`
-is the number of decimals allowed in amounts.
+`{"currencies":[{"code","name","scale","flag"}],"count":n}`, sorted by code. `scale`
+is the number of decimals allowed in amounts. `flag` is a display-only emoji
+(issuing country's flag from the code's first two letters, e.g. THB → 🇹🇭;
+EUR → 🇪🇺, ANG/XCG → 🇨🇼, multi-country XAF/XOF/XCD/XPF → 🌐). Use it when
+showing currencies to the user if you like, but always send the plain code
+(`"currency": "THB"`), never the flag.
 
 ## Exchange rates
 

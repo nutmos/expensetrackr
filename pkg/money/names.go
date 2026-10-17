@@ -43,13 +43,15 @@ type Currency struct {
 	Code  string `json:"code"`
 	Name  string `json:"name"`
 	Scale int    `json:"scale"`
+	// Flag is an emoji for the issuing country or region (see Flag).
+	Flag string `json:"flag"`
 }
 
 // Currencies returns every supported currency, sorted by code.
 func Currencies() []Currency {
 	out := make([]Currency, 0, len(currencyMinorUnits))
 	for c, s := range currencyMinorUnits {
-		out = append(out, Currency{Code: c, Name: currencyNames[c], Scale: s})
+		out = append(out, Currency{Code: c, Name: currencyNames[c], Scale: s, Flag: Flag(c)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Code < out[j].Code })
 	return out

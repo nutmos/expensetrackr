@@ -282,7 +282,7 @@
     $("#fx-field").hidden = !p;
     clearTimeout(fxTimer);
     if (!p) { fxGen++; renderConversion(null); return; }
-    $("#fx-currency").textContent = p.to;
+    $("#fx-currency").textContent = App.currencyText(p.to);
     if (fxManual) { showManualRate(p); return; }
     $("#fx-reset").hidden = true;
     const q = fxQuote;
@@ -428,7 +428,7 @@
       clearTimeout(fxTimer);
       fxGen++;
       $("#fx-field").hidden = false;
-      $("#fx-currency").textContent = e.to_currency;
+      $("#fx-currency").textContent = App.currencyText(e.to_currency);
       $("#to_amount").value = e.to_amount;
       $("#fx-reset").hidden = !fxManual;
       setRateLine(fxManual ? "Rates from your amounts:"
@@ -545,7 +545,7 @@
     }
     const parts = [];
     for (const [code, { scale, expense, income }] of sums) {
-      parts.push(`${code}: expenses ${formatMinor(expense, scale)}, income ${formatMinor(income, scale)}`);
+      parts.push(`${App.currencyText(code)}: expenses ${formatMinor(expense, scale)}, income ${formatMinor(income, scale)}`);
     }
     totalsEl.textContent = parts.length ? "Totals (shown rows, transfers, asset purchases and balance adjustments excluded): " + parts.join(" · ") : "";
   }
@@ -606,6 +606,7 @@
       const [res] = await Promise.all([
         fetch("/api/transactions" + (params.toString() ? "?" + params : "")),
         loadCategoriesList(),
+        App.loadCurrencies(), // cached; flags for the Currency column
       ]);
       const body = await res.json();
       if (my !== gen) return;
@@ -668,7 +669,7 @@
         }
         if (fxRow) tr.classList.add("fx-row");
         acctTd.classList.add("acct");
-        tr.append(timeTd, typeTd, amountTd, cell(fxRow ? `${e.currency} → ${e.to_currency}` : e.currency, "cur"), acctTd, cell(categoryName(e.category_uid), "cat"), cell(e.note || "", "note"));
+        tr.append(timeTd, typeTd, amountTd, cell(fxRow ? `${App.currencyText(e.currency)} → ${App.currencyText(e.to_currency)}` : App.currencyText(e.currency), "cur"), acctTd, cell(categoryName(e.category_uid), "cat"), cell(e.note || "", "note"));
         const actions = document.createElement("td");
         actions.className = "actions-cell";
         if (isAdj) {

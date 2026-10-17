@@ -789,7 +789,9 @@ paths:
       tags: [meta]
       operationId: listCurrencies
       summary: List supported currencies
-      description: ISO 4217 codes accepted by the API, sorted by code, with English name and minor-unit scale (decimal places).
+      description: |
+        ISO 4217 codes accepted by the API, sorted by code, with English name, minor-unit scale
+        (decimal places) and a display-only flag emoji for the issuing country or region.
       responses:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '200':
@@ -802,13 +804,7 @@ paths:
                 properties:
                   currencies:
                     type: array
-                    items:
-                      type: object
-                      required: [code, name, scale]
-                      properties:
-                        code: { type: string, example: THB }
-                        name: { type: string, example: Baht }
-                        scale: { type: integer, example: 2 }
+                    items: { $ref: '#/components/schemas/CurrencyInfo' }
                   count: { type: integer }
   /api/exchange-rates:
     get:
@@ -1305,6 +1301,22 @@ components:
       description: ISO 4217 code (trimmed and upper-cased on input; responses are upper-case). Determines the minor-unit scale.
       pattern: '^[A-Za-z]{3}$'
       example: THB
+    CurrencyInfo:
+      type: object
+      description: One supported currency (`GET /api/currencies`).
+      required: [code, name, scale, flag]
+      properties:
+        code: { type: string, example: THB, description: ISO 4217 code. Send this (never the flag) in requests. }
+        name: { type: string, example: Baht }
+        scale: { type: integer, example: 2, description: Minor-unit digits (decimal places allowed in amounts). }
+        flag:
+          type: string
+          example: 🇹🇭
+          description: |
+            Display-only emoji: the issuing country's flag as two Unicode regional indicator symbols,
+            derived from the code's first two letters (ISO 3166-1 alpha-2), with overrides:
+            EUR → 🇪🇺, ANG and XCG → 🇨🇼 (Curaçao), and 🌐 for currencies shared by several countries
+            (XAF, XOF, XCD, XPF). Platforms without flag emoji show the two letters instead.
     DecimalInput:
       description: |
         Plain decimal as a JSON string (recommended) or number, read as text (never a float):
