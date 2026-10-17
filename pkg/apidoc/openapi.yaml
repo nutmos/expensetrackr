@@ -1471,9 +1471,9 @@ components:
         adjusts_balances:
           type: boolean
           description: |
-            `true` when this transaction moved its balances (every expense/income/transfer created
-            since schema v11). `false` for older rows (editing or deleting them leaves balances
-            alone) and for `balance_adjustment`.
+            `true` when this transaction moved its balances (every expense, income, transfer and
+            asset purchase). `false` for `balance_adjustment` rows, which never move a balance
+            (editing or deleting a row with `false` leaves balances alone).
           example: true
         adjustment_direction:
           type: string

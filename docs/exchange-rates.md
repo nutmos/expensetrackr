@@ -1,4 +1,4 @@
-# Exchange rates and cross-currency transfers (schema v17)
+# Exchange rates and cross-currency transfers
 
 A **transfer** may move money between two balances in different currencies
 (e.g. a USD account to a THB account). Every other type (expense, income,
@@ -18,8 +18,8 @@ to equal its balance(s)' currency.
 
 All six are `null` for same-currency transfers and every other type. In the
 database they are `to_amount_minor`, `to_amount_scale`, `to_currency`,
-`exchange_rate` (TEXT), `rate_source`, `rate_date` — all nullable (added by
-migration v17; existing rows keep NULLs).
+`exchange_rate` (TEXT), `rate_source`, `rate_date` — all nullable (part of
+the baseline schema, `pkg/store/schema.go`).
 
 ## `conversion_rates` (computed, response-only)
 

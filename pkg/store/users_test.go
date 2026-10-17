@@ -11,60 +11,6 @@ import (
 	"github.com/nutmos/expensetrackr/pkg/validate"
 )
 
-// schemaV9 is a database as shipped at version 9 (categories, category_uid,
-// no users yet), with the two v7 fixture transactions.
-const schemaV9 = schemaV7 + categoriesSchema + `
-ALTER TABLE transactions ADD COLUMN category_uid TEXT CHECK (category_uid IS NULL OR length(category_uid) = 36);
-CREATE INDEX idx_transactions_category_uid ON transactions (category_uid);
-PRAGMA user_version = 9;
-`
-
-func TestMigrationV9ToV10AddsUsers(t *testing.T) {
-	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "v9.db")
-	rawDB(t, path, schemaV9)
-	st, err := Open(path)
-	if err != nil {
-		t.Fatalf("open v9: %v", err)
-	}
-	if items, err := st.List(ctx, ListFilter{}); err != nil || len(items) != 2 {
-		t.Fatalf("existing transactions kept: %d %v", len(items), err)
-	}
-	if us, err := st.ListUsers(ctx); err != nil || len(us) != 0 {
-		t.Fatalf("users empty after migration: %v %v", us, err)
-	}
-	st.Close()
-	assertCurrentSchema(t, path)
-	for _, col := range []string{"uid", "username", "email", "email_verified_at", "display_name", "preferences",
-		"password_hash", "password_updated_at", "status", "last_login_at", "created_at", "updated_at"} {
-		if !hasColumn(t, path, "users", col) {
-			t.Errorf("users.%s missing", col)
-		}
-	}
-	for _, col := range []string{"uid", "user_uid", "provider", "provider_subject", "email", "created_at", "last_used_at"} {
-		if !hasColumn(t, path, "user_identities", col) {
-			t.Errorf("user_identities.%s missing", col)
-		}
-	}
-	// Existing tables gain no user scoping yet.
-	if hasColumn(t, path, "transactions", "user_uid") || hasColumn(t, path, "balances", "user_uid") {
-		t.Error("user_uid must not be added to existing tables yet")
-	}
-}
-
-// v10 is idempotent: a v9 database that already has the users tables (e.g.
-// created by hand) migrates cleanly.
-func TestMigrationV10IdempotentIfTablesExist(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "v9users.db")
-	rawDB(t, path, schemaV9+usersSchema+`PRAGMA user_version = 9;`)
-	st, err := Open(path)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	st.Close()
-	assertCurrentSchema(t, path)
-}
-
 func newUser(t *testing.T, st *Store, in user.Input) user.User {
 	t.Helper()
 	u, err := in.Validate()

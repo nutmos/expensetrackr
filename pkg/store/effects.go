@@ -15,7 +15,7 @@ import (
 // caller's database transaction tx:
 //
 //   - old (update/delete): its effect is reversed, if it ever applied one
-//     (old.AdjustsBalances; rows recorded before schema v11 did not).
+//     (old.AdjustsBalances; balance_adjustment rows never do).
 //   - next (create/update): its effect is applied (if next.AdjustsBalances).
 //     Every balance it references must exist and use the transaction's
 //     currency, else a *validate.ValidationError on balance_uid /

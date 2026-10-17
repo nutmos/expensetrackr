@@ -122,10 +122,9 @@ touch the real database.
 ## Data model
 
 Transactions are stored in the SQLite table **`transactions`**, with index
-`idx_transactions_spent_at_unix` on `(spent_at_unix DESC, id DESC)`. Until schema
-version 2 the table was named `expenses`; see "Schema migrations". The HTTP API
-uses `/api/transactions` and the list key `transactions` (the old
-`/api/transactions` paths were removed, no alias).
+`idx_transactions_spent_at_unix` on `(spent_at_unix DESC, id DESC)` (see
+"Database schema"). The HTTP API uses `/api/transactions` and the list key
+`transactions` (the old `/api/transactions` paths were removed, no alias).
 
 | Field         | JSON           | Stored as                                                              |
 |---------------|----------------|------------------------------------------------------------------------|
@@ -185,7 +184,7 @@ account by the balance's immutable **`uid`** (`balance_uid` on the transaction).
 There is **no SQLite foreign key**: deleting a balance leaves the transaction's
 `balance_uid` and the denormalized `account` name snapshot intact.
 
-**Balances adjust automatically** (schema v11). Creating, editing or deleting
+**Balances adjust automatically.** Creating, editing or deleting
 a transaction moves its balances in the same database transaction:
 - an expense lowers an account's balance or raises a card's debt;
 - income raises a balance;
@@ -220,7 +219,7 @@ immutable `uid` (UUID v4), `name` (required, ≤ 100 chars), `type`
 `updated_at`. Names are unique **case-insensitively within a type**
 (`Food` as expense and `food` as income may coexist); a duplicate is 409.
 
-Categories are **per user** (schema v15, issue #34): every `/api/categories`
+Categories are **per user** (issue #34): every `/api/categories`
 call works on the logged-in user's own set, and another user's category uid
 is a 404. All of a user's categories are stored in **one row** of
 `user_categories` as a JSON array (at most 500 per user, 409 beyond). See
@@ -248,7 +247,7 @@ Rules linking transactions and categories:
 
 ### Users (tables `users`, `user_identities`)
 
-User profiles, added in schema v10. Each has a `uid`, a required
+User profiles. Each has a `uid`, a required
 `display_name` and an optional `username` and `email`, both unique and
 case-insensitive. `preferences` is a free-form **JSON object**, checked by
 both the app and SQLite (`json_valid`, `json_type = 'object'`), up to 32 KiB.
@@ -260,7 +259,7 @@ SSO links (Sign in with Apple / Google) go in `user_identities`, unique per
 `(provider, provider_subject)`.
 
 Username/password login uses `password_hash` (bcrypt) and the `sessions`
-table (v14); see [docs/auth.md](docs/auth.md). Existing data is still not
+table; see [docs/auth.md](docs/auth.md). Existing data is still not
 tied to a user. Details and follow-ups are in
 [docs/user-profile.md](docs/user-profile.md).
 
@@ -361,75 +360,35 @@ When you edit a record saved with a different offset (e.g. `09:15+07:00` on a
 time; hover a time to see the stored value. The API is unchanged and still
 accepts any RFC 3339 offset.
 
-### Schema migrations
+### Database schema
 
-The schema version is tracked in SQLite's `PRAGMA user_version`. The code is in
-`pkg/store/migrate.go`.
+The whole schema is one **baseline (version 1)**, defined in
+`pkg/store/schema.go`; versioning lives in `pkg/store/migrate.go`. The
+version is tracked in SQLite's `PRAGMA user_version`, and every database
+created by this code is tagged with `PRAGMA application_id = 0x45585452`
+("EXTR").
 
-- **New, empty database:** the latest schema (`transactions` and `balances`
-  tables + indexes) is created directly at the current version, in one SQL
-  transaction.
-- **Existing database:** pending migrations run in order. Each migration and
-  its `user_version` bump share one SQL transaction, so an interrupted upgrade
-  rolls back to the previous version and runs again on the next start.
-  Migrations are also written to be idempotent, as a second line of defence.
+- **New, empty database** (missing or zero-byte file): the baseline is
+  created in one SQL transaction together with `user_version = 1` and the
+  application id. Logged as `store: migrated schema to version 1`.
+- **Existing baseline database:** pending migrations (none yet) run in order,
+  each in one SQL transaction with its `user_version` bump.
+- **Database from before the baseline reset** (the old `user_version` 1–18
+  history, or any non-empty file without the application id) or **from a
+  newer build:** startup fails with `unsupported database schema` and a
+  message to delete the file; the file is not modified. Old databases are
+  **not upgraded**: stop the server, delete (or move away)
+  `data/expenses.db` together with `expenses.db-wal` / `expenses.db-shm`, and
+  start again to get a fresh one.
 
 | Version | Change |
 |---------|--------|
-| 0       | original schema: table `expenses`, index `idx_expenses_spent_at_unix` |
-| 1       | `ALTER TABLE expenses ADD COLUMN updated_at TEXT` (NULL for existing rows) |
-| 2       | `ALTER TABLE expenses RENAME TO transactions`, then `DROP INDEX IF EXISTS idx_expenses_spent_at_unix` and `CREATE INDEX IF NOT EXISTS idx_transactions_spent_at_unix ON transactions (spent_at_unix DESC, id DESC)` |
-| 3       | `CREATE TABLE IF NOT EXISTS balances (...)` with per-type CHECK constraints and `name COLLATE NOCASE UNIQUE`, plus `CREATE INDEX IF NOT EXISTS idx_balances_type ON balances (type, name)`. `transactions` is not touched. |
-| 4       | `ALTER TABLE balances ADD COLUMN uid TEXT` (if missing), backfill every empty uid with a new UUID v4, then `CREATE UNIQUE INDEX IF NOT EXISTS idx_balances_uid ON balances (uid)`. `transactions` is not touched. New databases create `uid TEXT NOT NULL UNIQUE` from the start. |
-| 5       | `ALTER TABLE transactions ADD COLUMN balance_uid TEXT` (if missing); match each free-text `account` to a payable balance name (`payment_account` / `credit_card`, case-insensitive) and set `balance_uid`; fail the migration if any row cannot be matched; `CREATE INDEX IF NOT EXISTS idx_transactions_balance_uid ON transactions (balance_uid)`. The `account` column is kept as a denormalized name snapshot. New databases create `balance_uid TEXT NOT NULL` (+ length CHECK) from the start. |
-| 6       | `ALTER TABLE transactions ADD COLUMN uid TEXT` (if missing), backfill every empty uid with a new UUID v4, then `CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_uid ON transactions (uid)`. Same style as v4; idempotent (existing uids kept). New databases create `uid TEXT NOT NULL UNIQUE` from the start. |
-| 7       | `ALTER TABLE transactions ADD COLUMN type TEXT NOT NULL DEFAULT 'expense' CHECK (type IN ('expense','income','transfer'))` (existing rows become `expense`), `ADD COLUMN to_balance_uid TEXT` and `ADD COLUMN to_account TEXT` (each only if missing), then `CREATE INDEX IF NOT EXISTS idx_transactions_type ON transactions (type, spent_at_unix DESC)`. One SQL transaction, idempotent. |
-| 8       | `CREATE TABLE IF NOT EXISTS categories (...)` + `CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_type_name ON categories (type, name COLLATE NOCASE)`, then `ALTER TABLE transactions ADD COLUMN category_uid TEXT` (only if missing; existing rows get no category) and `CREATE INDEX IF NOT EXISTS idx_transactions_category_uid ON transactions (category_uid)`. One SQL transaction, idempotent. |
-| 9       | Drop `transactions.category` if present (`ALTER TABLE transactions DROP COLUMN category`, SQLite ≥ 3.35). Only databases created by a pre-release build of v8, which stored a category name copy, have it; otherwise a no-op. One SQL transaction, idempotent. |
-| 10      | `CREATE TABLE IF NOT EXISTS users (...)` (uid, username, email, email_verified_at, display_name, preferences JSON object, password_hash, password_updated_at, status, last_login_at, timestamps) + unique NOCASE indexes on username and email; `CREATE TABLE IF NOT EXISTS user_identities (...)` (user_uid → users.uid ON DELETE CASCADE, provider, provider_subject, email, timestamps, UNIQUE(provider, provider_subject)) + index on user_uid. No change to existing tables. One SQL transaction, idempotent. |
-| 11      | `balances` rebuilt (copy rows → drop → rename, indexes recreated, AUTOINCREMENT sequence kept) to add `version INTEGER NOT NULL DEFAULT 1` and drop `CHECK (debt_minor >= 0)` (negative debt = in credit); `transactions.version` (1) and `transactions.balance_applied` (0 for existing rows: they never moved a balance) + index on `to_balance_uid`. Existing balances are **not** recomputed. One SQL transaction, idempotent. See [docs/balances.md](docs/balances.md). |
-| 12      | `DROP TABLE IF EXISTS balance_adjustments` (plus its index and sequence row). Only a pre-release build of v11 created that table (manual-edit audit, removed before release); otherwise a no-op. One SQL transaction, idempotent. |
-| 13      | `transactions` rebuilt (create new → copy every row with the same ids/uids/values → drop → rename → recreate all indexes incl. unique uid → restore the AUTOINCREMENT counter) so `type` may be `balance_adjustment`; adds `adjustment_direction` (`increase`/`decrease`, NULL for existing rows) and table CHECKs tying it to that type (no destination/category, `balance_applied = 0`). One SQL transaction, idempotent. See [docs/balances.md](docs/balances.md). |
-| 14      | table `sessions` (login sessions: SHA-256 of the cookie token, `user_uid` → `users.uid` ON DELETE CASCADE, created/expires/last-seen, optional user agent) + indexes on `user_uid`, `expires_at`. Additive, one SQL transaction, idempotent. See [docs/auth.md](docs/auth.md). |
-| 15      | Per-user categories (issue #34): `CREATE TABLE IF NOT EXISTS user_categories (user_uid PK → users.uid ON DELETE CASCADE, categories JSON array, version, timestamps)` and `meta (key, value JSON)`; every row of `categories` (uids, names, types, descriptions, timestamps unchanged) moves to the oldest user with a password, else the oldest user, or — with no users — into `meta['unclaimed_categories']` for the first user to register; then `DROP TABLE categories`. Transactions are untouched (`category_uid` links stay valid). Merges by uid, so it is idempotent; one SQL transaction. **Back up the database first** (operator step). See [docs/categories.md](docs/categories.md). |
-| 16      | `transactions` rebuilt exactly like v13 (every row, id, uid, version, `balance_applied`, `adjustment_direction` copied unchanged; indexes and AUTOINCREMENT counter restored) so the `type` CHECK also allows `asset_purchase`. Skipped if already allowed. One SQL transaction, idempotent. |
-| 17      | Cross-currency transfers: `ALTER TABLE transactions ADD COLUMN` `to_amount_minor`, `to_amount_scale`, `to_currency`, `exchange_rate` (TEXT), `rate_source` (`frankfurter`/`manual`), `rate_date` (each only if missing; all NULL for existing rows, which are otherwise untouched) + tables `fx_rates (base, quote, rate_date, rate, fetched_at, PK(base, quote, rate_date))` and `fx_rate_lookups` (requested date → rate date). Additive, one SQL transaction, idempotent. See [docs/exchange-rates.md](docs/exchange-rates.md). |
-| 18      | Bulk import idempotency: `ALTER TABLE transactions ADD COLUMN import_ref TEXT CHECK (import_ref IS NULL OR length(import_ref) BETWEEN 1 AND 200)` (only if missing; NULL for existing rows, which are otherwise untouched) + `CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_import_ref ON transactions (balance_uid, import_ref) WHERE import_ref IS NOT NULL`. Additive, one SQL transaction, idempotent. See [docs/bulk-import.md](docs/bulk-import.md). |
+| 1       | baseline: `transactions`, `balances`, `users`, `user_identities`, `sessions`, `user_categories`, `meta`, `fx_rates`, `fx_rate_lookups` and their indexes |
 
-Notes on version 2:
-
-- `RENAME TO` keeps every row, the AUTOINCREMENT counter (deleted IDs are still
-  not reused) and attached indexes.
-- SQLite cannot rename an index, so the old one is dropped and recreated
-  under the new name.
-- If the table is already called `transactions` (e.g. renamed by hand), only
-  the index is fixed.
-- If **both** `expenses` and `transactions` exist, startup fails with a clear
-  error and nothing is changed. The tool won't guess which table holds the data.
-
-Version 3 is idempotent thanks to `IF NOT EXISTS`. If a `balances` table
-already exists without the expected columns, startup fails and nothing is
-changed. Version 4 is idempotent: existing uids are kept, only empty ones are
-filled, and the unique index is created with `IF NOT EXISTS`.
-
-Version 5 notes:
-
-- Payable types only: `payment_account` and `credit_card`. `other_asset` /
-  `other_liability` cannot be used as a payment account (they are not spendable
-  wallets in this prototype).
-- Matching is by balance `name` (`COLLATE NOCASE`) against the old free-text
-  `account` value. An empty `transactions` table migrates cleanly. If any row
-  cannot be matched, startup fails with a count and nothing is committed —
-  create the missing payable balances (or delete the orphan rows) and restart.
-- No foreign key is added. The `account` column remains as a display snapshot
-  written at create/update time from the balance's current name.
-
-Version 1 checks `pragma_table_info` before adding the column. A database with a
-newer version than the binary supports is refused rather than modified. Each
-step is logged (`store: migrated schema to version N`, or `store: created new
-database at schema version N`). To be extra safe, stop the server and copy
-`data/expenses.db` (the file name is unchanged) to `data/backups/` before
-upgrading.
+To change the schema, append a migration to `migrations` in
+`pkg/store/migrate.go` (it becomes v2, then v3, ...) instead of editing the
+baseline; the steps are documented at the top of that file. A fresh database
+runs every step from 0, so it always matches an upgraded one.
 
 ## API
 
@@ -650,10 +609,11 @@ pkg/store/                         persistence (modernc.org/sqlite)
   effects.go                       applyBalanceEffects: move balances for a transaction write (same DB transaction)
   balances.go                      table "balances": CreateBalance, ListBalances, GetBalance, UpdateBalance(With), DeleteBalance(With)
   adjustments.go                   balance_adjustment transactions recorded by manual balance edits
-  categories.go                    table "categories": CreateCategory, ListCategories, GetCategoryByUID, UpdateCategory, DeleteCategory
+  categories.go                    table "user_categories" (one JSON row per user): CreateCategory, ListCategories, GetCategoryByUID, UpdateCategory, DeleteCategory
   users.go                         tables "users", "user_identities": CreateUser, ListUsers, GetUserByUID, UpdateUser, DeleteUser, SetPasswordHash, CreateIdentity, ListIdentities, FindUserByIdentity
-  migrate.go                       current schema, versioned migrations (v0 -> … -> v14)
-  store_test.go, balances_test.go  fresh DB, upgrades from v0/v1/v2, partial/ambiguous states
+  schema.go                        baseline schema (v1): every table and index
+  migrate.go                       schema versioning (user_version + application_id), migration list, how to add one
+  store_test.go                    fresh DB gets the baseline; old/foreign/newer databases are refused untouched
 pkg/api/                           Gin routes and handlers
   api.go                           router setup + shared helpers
   transactions.go                  /api/transactions routes

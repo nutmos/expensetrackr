@@ -1,4 +1,4 @@
-# Balances: automatic adjustment, manual edits and versioning (schema v11–v13)
+# Balances: automatic adjustment, manual edits and versioning
 
 Balances now follow the transactions recorded against them. You can still set
 the amount by hand when it has to match a statement; that edit is recorded as
@@ -43,10 +43,9 @@ The code is `transaction.Effects` (signs) and
 - **Delete:** the effect is reversed.
 - **Balance deleted meanwhile:** if a referenced balance was deleted, its part
   of the reversal is skipped. The other balance is still adjusted.
-- **Older transactions:** transactions recorded **before schema v11** never
-  moved a balance (`"adjusts_balances": false` in the API). Editing or
-  deleting them leaves balances alone. Correct those by hand if needed (see
-  §2). Every transaction created from v11 on has `"adjusts_balances": true`.
+- **`adjusts_balances`:** every expense, income, transfer and asset purchase
+  has `"adjusts_balances": true`. Balance Adjustment rows (§2) have `false`:
+  they record a manual edit and never move a balance themselves.
 
 Cross-currency transfers: the source changes by `amount` (source currency)
 and the destination by the stored `to_amount` (destination currency). An
@@ -58,8 +57,8 @@ refetched for a reversal.
 A transaction's `currency` must equal the currency of every balance it moves
 (`balance_uid`, and `to_balance_uid` for asset purchases). A **transfer** is
 the exception for its destination: if `to_balance_uid` is in another
-currency, the destination moves by `to_amount` in its own currency (schema
-v17, see [exchange-rates.md](exchange-rates.md)); the source still moves by
+currency, the destination moves by `to_amount` in its own currency (see
+[exchange-rates.md](exchange-rates.md)); the source still moves by
 `amount` and must be in `currency`. Otherwise the request is
 rejected with **422** and nothing is written:
 
@@ -80,8 +79,8 @@ rejected with **422** and nothing is written:
 
 - **Negative debt is allowed.** A card or loan that is overpaid is in credit,
   e.g. `debt: "-50.00"`.
-- Schema v11 drops the old `CHECK (debt_minor >= 0)`, and manual edits may set
-  a negative debt too. `limit` must still be ≥ 0.
+- The schema has no `CHECK (debt_minor >= 0)`, and manual edits may set a
+  negative debt too. `limit` must still be ≥ 0.
 - `over_limit` (debt > limit) and `available` (limit − debt) are still
   computed on every read. An overpaid card's available credit is above its
   limit.
@@ -223,42 +222,23 @@ pages send it with Delete. On a 409:
 - **List page:** an alert explains that nothing was deleted, and the list is
   refreshed.
 
-## 4. Migrations v11–v13
+## 4. Schema
 
-Each migration runs in one SQL transaction and is idempotent.
+These columns are part of the baseline schema (`pkg/store/schema.go`):
 
-**v11:**
-
-1. **`balances` is rebuilt.** Rows, ids, uids and amounts are copied
-   unchanged, and the AUTOINCREMENT sequence is kept. The rebuild adds
-   `version` (existing rows: 1) and drops `CHECK (debt_minor >= 0)`, which
-   SQLite cannot drop in place. Nothing references `balances` by foreign key,
-   so this is safe with `foreign_keys` on. It is skipped if the table already
-   has `version` and no debt check.
-2. **`transactions` gets new columns:** `version` (existing rows 1) and
-   `balance_applied` (existing rows 0, i.e. "never moved a balance"; shown as
-   `adjusts_balances`), plus an index on `to_balance_uid`.
-
-**v12:** drops `balance_adjustments` (and its index and AUTOINCREMENT
-counter) if present. Only a pre-release build of v11 created that table; on
-any other database v12 is a no-op.
-
-**v13:** `transactions` is rebuilt, since SQLite cannot change a `CHECK` in
-place: create the new table, copy every row (same ids, uids and values;
-`adjustment_direction` NULL), drop the old table, rename, recreate all
-indexes (including the unique uid index) and restore the AUTOINCREMENT
-counter so ids of deleted rows are not reused. The new table allows type
-`balance_adjustment`, adds `adjustment_direction` and the table `CHECK`s
-above. Nothing references `transactions` by foreign key. Skipped if already
-done. A row violating the current constraints would abort the migration (and
-roll it back) rather than be altered.
-
-**Existing balances are not recomputed** from existing transactions. Their
-amounts stay exactly as entered.
+- `balances.version` and `transactions.version`: optimistic-locking
+  counters, 1 on insert. `balances` has no `CHECK (debt_minor >= 0)`
+  (negative debt = in credit); `limit_minor` must be ≥ 0.
+- `transactions.balance_applied` (shown as `adjusts_balances`): 1 when the
+  row moved its balances, 0 for `balance_adjustment` rows.
+- `transactions.adjustment_direction` (`increase` / `decrease`): set exactly
+  for type `balance_adjustment`; table `CHECK`s keep such rows free of a
+  destination or category and with `balance_applied = 0`.
+- Index `idx_transactions_to_balance_uid` on `to_balance_uid`.
 
 ## Follow-ups
 
 - FX for other types (e.g. a foreign-currency expense on a card); transfers
-  are done (v17, [exchange-rates.md](exchange-rates.md)).
+  are done ([exchange-rates.md](exchange-rates.md)).
 - Optional "recompute from transactions" tool, or a reconciliation report.
 - Versioning for categories and users.

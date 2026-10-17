@@ -5,32 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/nutmos/expensetrackr/pkg/balance"
 	"github.com/nutmos/expensetrackr/pkg/money"
-	"github.com/nutmos/expensetrackr/pkg/transaction"
 )
-
-// schemaV2 is the v2 schema (table "transactions", no balances) with rows,
-// including a deleted id so the AUTOINCREMENT counter is ahead of max(id).
-const schemaV2 = `
-CREATE TABLE transactions (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    amount_minor  INTEGER NOT NULL CHECK (amount_minor > 0),
-    amount_scale  INTEGER NOT NULL CHECK (amount_scale BETWEEN 0 AND 4),
-    currency      TEXT    NOT NULL CHECK (length(currency) = 3),
-    account       TEXT    NOT NULL CHECK (length(account) > 0),
-    spent_at      TEXT    NOT NULL,
-    spent_at_unix INTEGER NOT NULL,
-    note          TEXT    NOT NULL DEFAULT '',
-    created_at    TEXT    NOT NULL,
-    updated_at    TEXT
-);
-CREATE INDEX idx_transactions_spent_at_unix ON transactions (spent_at_unix DESC, id DESC);
-PRAGMA user_version = 2;
-`
 
 func mustBalance(t *testing.T, in balance.Input) balance.Balance {
 	t.Helper()
@@ -42,87 +21,6 @@ func mustBalance(t *testing.T, in balance.Input) balance.Balance {
 }
 
 func dec(s string) *money.DecimalInput { d := money.DecimalInput(s); return &d }
-
-func TestMigrationV2ToV3AddsBalances(t *testing.T) {
-	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "v2.db")
-	rawDB(t, path, schemaV2)
-
-	st, err := Open(path)
-	if err != nil {
-		t.Fatalf("open v2 db: %v", err)
-	}
-	// Empty transactions table migrated through to v5.
-	items, err := st.List(ctx, ListFilter{})
-	if err != nil || len(items) != 0 {
-		t.Fatalf("transactions after migration: %v %v", items, err)
-	}
-	// Balances work on the new table.
-	b := mustBalance(t, balance.Input{Name: "KBank debit", Type: "payment_account", Currency: "THB", Balance: dec("1500.25")})
-	if err := st.CreateBalance(ctx, &b); err != nil || b.ID != 1 {
-		t.Fatalf("create balance: id=%d err=%v", b.ID, err)
-	}
-	if !looksLikeUUID(b.UID) {
-		t.Fatalf("create balance uid = %q, want UUID v4", b.UID)
-	}
-	e, err := transaction.CreateInput{Amount: "120.50", Currency: "THB", BalanceUID: b.UID, SpentAt: "2026-10-05T09:00:00+07:00"}.Validate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	e.Account = b.Name
-	if err := st.Create(ctx, &e); err != nil || e.ID != 1 {
-		t.Fatalf("create transaction: id=%d err=%v", e.ID, err)
-	}
-	gotTxn, err := st.Get(ctx, 1)
-	if err != nil || gotTxn.BalanceUID != transaction.UID(b.UID) || gotTxn.Account != "KBank debit" {
-		t.Errorf("transaction: %+v %v", gotTxn, err)
-	}
-	st.Close()
-	assertCurrentSchema(t, path)
-
-	st, err = Open(path)
-	if err != nil {
-		t.Fatalf("reopen: %v", err)
-	}
-	defer st.Close()
-	got, err := st.GetBalance(ctx, 1)
-	// The 120.50 expense was taken off the balance when it was created.
-	if err != nil || got.Balance == nil || *got.Balance != "1379.75" || got.Version != 2 || !looksLikeUUID(got.UID) {
-		t.Errorf("balance after reopen: %+v %v", got, err)
-	}
-	if byUID, err := st.GetBalanceByUID(ctx, got.UID); err != nil || byUID.ID != 1 {
-		t.Errorf("GetBalanceByUID: %+v %v", byUID, err)
-	}
-}
-
-func TestMigrationV3IdempotentIfTableExists(t *testing.T) {
-	// balances already created (e.g. by hand) but version still 2.
-	path := filepath.Join(t.TempDir(), "partial.db")
-	rawDB(t, path, schemaV2+balancesSchemaV3)
-	st, err := Open(path)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	st.Close()
-	assertCurrentSchema(t, path)
-}
-
-func TestMigrationV3RefusesForeignBalancesTable(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "foreign.db")
-	rawDB(t, path, schemaV2+`CREATE TABLE balances (id INTEGER PRIMARY KEY, amount REAL);`)
-	if st, err := Open(path); err == nil {
-		st.Close()
-		t.Fatal("expected error for a balances table with an unexpected layout")
-	} else if !strings.Contains(err.Error(), "lacks column") {
-		t.Errorf("unexpected error: %v", err)
-	}
-	if v := userVersion(t, path); v != 2 {
-		t.Errorf("user_version = %d, want 2 (untouched)", v)
-	}
-	if _, ok := schemaObjects(t, path)["idx_balances_type"]; ok {
-		t.Error("index created despite rollback")
-	}
-}
 
 func TestBalanceCRUDAndConstraints(t *testing.T) {
 	ctx := context.Background()
@@ -207,7 +105,7 @@ func TestBalanceCRUDAndConstraints(t *testing.T) {
 			t.Errorf("CHECK constraint did not reject %s", name)
 		}
 	}
-	// v11: a negative debt (overpaid card, in credit) is allowed.
+	// A negative debt (overpaid card, in credit) is allowed.
 	if _, err := db.Exec(`INSERT INTO balances (uid,name,type,currency,amount_scale,debt_minor,limit_minor,created_at) VALUES ('aaaaaaaa-0000-4000-8000-000000000006','neg','credit_card','THB',2,-100,500,'t')`); err != nil {
 		t.Errorf("negative debt rejected: %v", err)
 	}
@@ -235,102 +133,6 @@ func looksLikeUUID(s string) bool {
 		}
 	}
 	return true
-}
-
-// schemaV3 is the v3 schema (balances without uid) with two rows.
-const schemaV3 = schemaV2 + `
-CREATE TABLE balances (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    name          TEXT    NOT NULL COLLATE NOCASE UNIQUE CHECK (length(trim(name)) > 0),
-    type          TEXT    NOT NULL CHECK (type IN ('payment_account', 'credit_card', 'other_asset', 'other_liability')),
-    currency      TEXT    NOT NULL CHECK (length(currency) = 3),
-    description   TEXT    NOT NULL DEFAULT '',
-    amount_scale  INTEGER NOT NULL CHECK (amount_scale BETWEEN 0 AND 4),
-    balance_minor INTEGER,
-    debt_minor    INTEGER CHECK (debt_minor >= 0),
-    limit_minor   INTEGER CHECK (limit_minor >= 0),
-    created_at    TEXT    NOT NULL,
-    updated_at    TEXT,
-    CHECK (
-        (type IN ('payment_account', 'other_asset')
-            AND balance_minor IS NOT NULL AND debt_minor IS NULL AND limit_minor IS NULL)
-        OR
-        (type IN ('credit_card', 'other_liability')
-            AND balance_minor IS NULL AND debt_minor IS NOT NULL AND limit_minor IS NOT NULL)
-    )
-);
-CREATE INDEX idx_balances_type ON balances (type, name);
-INSERT INTO balances (name, type, currency, description, amount_scale, balance_minor, debt_minor, limit_minor, created_at, updated_at) VALUES
-  ('KBank debit', 'payment_account', 'THB', 'salary', 2, 1500050, NULL, NULL, '2026-10-07T00:00:00Z', NULL),
-  ('UOB One', 'credit_card', 'SGD', '', 2, NULL, 120000, 100000, '2026-10-07T00:01:00Z', '2026-10-07T00:02:00Z');
-PRAGMA user_version = 3;
-`
-
-func TestMigrationV3ToV4BackfillsUID(t *testing.T) {
-	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "v3.db")
-	rawDB(t, path, schemaV3)
-
-	st, err := Open(path)
-	if err != nil {
-		t.Fatalf("open v3 db: %v", err)
-	}
-	items, err := st.ListBalances(ctx, "")
-	if err != nil || len(items) != 2 {
-		t.Fatalf("balances: %d %v", len(items), err)
-	}
-	seen := map[string]bool{}
-	for _, b := range items {
-		if !looksLikeUUID(b.UID) {
-			t.Errorf("backfilled uid = %q", b.UID)
-		}
-		if seen[b.UID] {
-			t.Errorf("duplicate uid %q", b.UID)
-		}
-		seen[b.UID] = true
-	}
-	if items[0].Name != "KBank debit" || *items[0].Balance != "15000.50" ||
-		items[1].Name != "UOB One" || *items[1].Debt != "1200.00" || !*items[1].OverLimit {
-		t.Errorf("row data changed by migration: %+v", items)
-	}
-	st.Close()
-	assertCurrentSchema(t, path)
-
-	// Idempotent reopen.
-	st, err = Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	again, _ := st.ListBalances(ctx, "")
-	if again[0].UID != items[0].UID || again[1].UID != items[1].UID {
-		t.Errorf("uids changed on reopen: %v vs %v", again, items)
-	}
-}
-
-func TestMigrationV4IdempotentIfColumnExists(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "partial.db")
-	// Column added by hand / interrupted before version bump; one row still empty.
-	rawDB(t, path, schemaV3+`
-ALTER TABLE balances ADD COLUMN uid TEXT;
-UPDATE balances SET uid = '11111111-1111-4111-8111-111111111111' WHERE id = 1;
-`)
-	st, err := Open(path)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	items, err := st.ListBalances(context.Background(), "")
-	st.Close()
-	if err != nil || len(items) != 2 {
-		t.Fatalf("rows: %d %v", len(items), err)
-	}
-	if items[0].UID != "11111111-1111-4111-8111-111111111111" {
-		t.Errorf("existing uid overwritten: %q", items[0].UID)
-	}
-	if !looksLikeUUID(items[1].UID) {
-		t.Errorf("empty uid not backfilled: %q", items[1].UID)
-	}
-	assertCurrentSchema(t, path)
 }
 
 func TestBalanceUIDAssignedAndImmutable(t *testing.T) {
@@ -370,114 +172,4 @@ func TestBalanceUIDAssignedAndImmutable(t *testing.T) {
 	if _, err := st.GetBalanceByUID(ctx, "00000000-0000-4000-8000-000000000099"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("missing uid: %v", err)
 	}
-}
-
-// schemaV4 is a v4 database: balances with uids, transactions still using free-text account only.
-const schemaV4 = `
-CREATE TABLE transactions (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    amount_minor  INTEGER NOT NULL CHECK (amount_minor > 0),
-    amount_scale  INTEGER NOT NULL CHECK (amount_scale BETWEEN 0 AND 4),
-    currency      TEXT    NOT NULL CHECK (length(currency) = 3),
-    account       TEXT    NOT NULL CHECK (length(account) > 0),
-    spent_at      TEXT    NOT NULL,
-    spent_at_unix INTEGER NOT NULL,
-    note          TEXT    NOT NULL DEFAULT '',
-    created_at    TEXT    NOT NULL,
-    updated_at    TEXT
-);
-CREATE INDEX idx_transactions_spent_at_unix ON transactions (spent_at_unix DESC, id DESC);
-CREATE TABLE balances (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    uid           TEXT    NOT NULL UNIQUE CHECK (length(uid) = 36),
-    name          TEXT    NOT NULL COLLATE NOCASE UNIQUE CHECK (length(trim(name)) > 0),
-    type          TEXT    NOT NULL CHECK (type IN ('payment_account', 'credit_card', 'other_asset', 'other_liability')),
-    currency      TEXT    NOT NULL CHECK (length(currency) = 3),
-    description   TEXT    NOT NULL DEFAULT '',
-    amount_scale  INTEGER NOT NULL CHECK (amount_scale BETWEEN 0 AND 4),
-    balance_minor INTEGER,
-    debt_minor    INTEGER CHECK (debt_minor >= 0),
-    limit_minor   INTEGER CHECK (limit_minor >= 0),
-    created_at    TEXT    NOT NULL,
-    updated_at    TEXT,
-    CHECK (
-        (type IN ('payment_account', 'other_asset')
-            AND balance_minor IS NOT NULL AND debt_minor IS NULL AND limit_minor IS NULL)
-        OR
-        (type IN ('credit_card', 'other_liability')
-            AND balance_minor IS NULL AND debt_minor IS NOT NULL AND limit_minor IS NOT NULL)
-    )
-);
-CREATE INDEX idx_balances_type ON balances (type, name);
-CREATE UNIQUE INDEX idx_balances_uid ON balances (uid);
-INSERT INTO balances (uid, name, type, currency, description, amount_scale, balance_minor, debt_minor, limit_minor, created_at) VALUES
-  ('11111111-1111-4111-8111-111111111111', 'KBank debit', 'payment_account', 'THB', '', 2, 100000, NULL, NULL, '2026-10-07T00:00:00Z'),
-  ('22222222-2222-4222-8222-222222222222', 'UOB One', 'credit_card', 'SGD', '', 2, NULL, 0, 500000, '2026-10-07T00:00:00Z'),
-  ('33333333-3333-4333-8333-333333333333', 'Gold', 'other_asset', 'THB', '', 2, 8000000, NULL, NULL, '2026-10-07T00:00:00Z');
-INSERT INTO transactions (amount_minor, amount_scale, currency, account, spent_at, spent_at_unix, note, created_at) VALUES
-  (12050, 2, 'THB', 'KBank debit', '2026-10-05T09:00:00+07:00', 1791172800, 'pad thai', '2026-10-06T13:00:00Z'),
-  (1890,  2, 'SGD', 'uob one', '2026-10-06T12:30:00+08:00', 1791267000, 'chicken rice', '2026-10-06T13:01:00Z');
-PRAGMA user_version = 4;
-`
-
-func TestMigrationV4ToV5LinksAccountToBalanceUID(t *testing.T) {
-	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "v4.db")
-	rawDB(t, path, schemaV4)
-
-	st, err := Open(path)
-	if err != nil {
-		t.Fatalf("open v4 db: %v", err)
-	}
-	items, err := st.List(ctx, ListFilter{})
-	if err != nil || len(items) != 2 {
-		t.Fatalf("list: %d %v", len(items), err)
-	}
-	uids := map[string]transaction.UID{}
-	for _, e := range items {
-		uids[e.Account] = e.BalanceUID
-	}
-	if uids["KBank debit"] != "11111111-1111-4111-8111-111111111111" {
-		t.Errorf("KBank debit: %v", uids)
-	}
-	if uids["uob one"] != "22222222-2222-4222-8222-222222222222" {
-		t.Errorf("uob one (case-insensitive match, original casing kept): %v", uids)
-	}
-	st.Close()
-	assertCurrentSchema(t, path)
-}
-
-func TestMigrationV5FailsWhenAccountUnmatched(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "orphan.db")
-	rawDB(t, path, schemaV4+`
-INSERT INTO transactions (amount_minor, amount_scale, currency, account, spent_at, spent_at_unix, note, created_at)
-VALUES (100, 2, 'THB', 'Ghost Wallet', '2026-10-06T00:00:00Z', 1791244800, '', '2026-10-06T13:02:00Z');
-`)
-	if st, err := Open(path); err == nil {
-		st.Close()
-		t.Fatal("expected migration to fail for unmatched account")
-	} else if !strings.Contains(err.Error(), "Ghost Wallet") && !strings.Contains(err.Error(), "1 transaction") {
-		t.Errorf("unexpected error: %v", err)
-	}
-	if v := userVersion(t, path); v != 4 {
-		t.Errorf("user_version = %d, want 4 (rolled back)", v)
-	}
-}
-
-func TestMigrationV5IdempotentIfColumnExists(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "partial.db")
-	rawDB(t, path, schemaV4+`
-ALTER TABLE transactions ADD COLUMN balance_uid TEXT;
-UPDATE transactions SET balance_uid = '11111111-1111-4111-8111-111111111111' WHERE account = 'KBank debit';
-`)
-	st, err := Open(path)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	items, err := st.List(context.Background(), ListFilter{})
-	st.Close()
-	if err != nil || len(items) != 2 {
-		t.Fatalf("rows: %d %v", len(items), err)
-	}
-	assertCurrentSchema(t, path)
 }
