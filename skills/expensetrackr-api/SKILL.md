@@ -175,6 +175,32 @@ VND) → ask the user for the received amount and resend with `to_amount`;
 `to_amount`. Nothing is saved on failure. Preview a rate without writing:
 `GET /api/exchange-rates?from=USD&to=THB&date=2026-10-12` (see reference.md).
 
+### Bulk import (bank statement / PDF list)
+
+Use `POST /api/transactions/bulk` to record many parsed rows at once (max 500
+per request). Items have the single-create shape. Give every row a stable
+`import_ref`: the bank reference, or a hash of date+amount+description(+seq).
+A re-sent row is then `skipped` and never duplicated. Always send a dry run
+first, show the user the summary, then send the same body for real (atomic by
+default: on 422/503 nothing is written).
+
+```bash
+BODY=$(jq -n --arg b "$WALLET_UID" '{dry_run:true, transactions:[
+  {type:"expense", amount:"45.00", currency:"THB", balance_uid:$b, spent_at:"2026-10-01T08:15:00+07:00", note:"COFFEE", import_ref:"stmt-2026-10:0001"},
+  {type:"income",  amount:"120.00", currency:"THB", balance_uid:$b, spent_at:"2026-10-02T10:00:00+07:00", note:"REFUND", import_ref:"stmt-2026-10:0002"}]}')
+curl -sS -b "$JAR" -c "$JAR" -X POST "$BASE/api/transactions/bulk" -H 'Content-Type: application/json' -d "$BODY" \
+  | jq '{created, skipped, failed, valid, errors: [.results[] | select(.status=="failed") | {index, error}], balances: [.balances[] | {name, balance, debt}]}'
+# looks right → same body with dry_run:false (expect 201; 200 if everything was already imported)
+curl -sS -b "$JAR" -c "$JAR" -X POST "$BASE/api/transactions/bulk" -H 'Content-Type: application/json' \
+  -d "$(echo "$BODY" | jq '.dry_run=false')" | jq '{created, skipped, failed}'
+```
+
+Amounts are always positive: purchases and fees are `expense`; refunds and
+credits to a bank account are `income` (a refund on a credit card can't be
+recorded yet, so list those rows for the user); card payments and moves between own accounts are
+`transfer` (import them from one side only). Never `balance_adjustment`. Full
+guide: [docs/bulk-import.md](../../docs/bulk-import.md).
+
 ## Step 3: list and filter
 
 ```bash

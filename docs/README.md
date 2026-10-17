@@ -33,6 +33,9 @@ match the Go JSON shapes.
   v14), first-run setup, public vs protected routes, CSRF and throttling.
 - [Exchange rates](exchange-rates.md): cross-currency transfers (schema
   v17), Frankfurter / ECB rates, caching, failure behaviour.
+- [Bulk import](bulk-import.md): `POST /api/transactions/bulk` (up to 500
+  items, atomic / partial / dry run), `import_ref` idempotency (schema v18)
+  and guidance for agents importing bank statements.
 - [Balances](balances.md): automatic adjustment from transactions (sign
   rules), manual overrides via PUT recorded as Balance Adjustment
   transactions, optimistic locking (`version`, `ETag`, `If-Match`, 428/409),

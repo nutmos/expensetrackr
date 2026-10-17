@@ -61,6 +61,9 @@ import (
 //	    to_amount_scale, to_currency, exchange_rate, rate_source, rate_date
 //	    (all nullable, null on existing rows); tables fx_rates and
 //	    fx_rate_lookups (Frankfurter rate cache, docs/exchange-rates.md)
+//	v18 bulk import idempotency: transactions.import_ref (nullable, null on
+//	    existing rows) + partial unique index idx_transactions_import_ref on
+//	    (balance_uid, import_ref) WHERE import_ref IS NOT NULL (docs/bulk-import.md)
 //
 // A brand-new database is created directly at the latest version from
 // currentSchema. An existing database is upgraded by running the pending
@@ -75,7 +78,7 @@ import (
 // transactions.balance_applied: 1 if the row moved its balances (all rows
 // written by v11+); 0 for rows recorded before v11, whose edits/deletes
 // therefore never touch balances, and for balance_adjustment rows.
-var currentSchema = transactionsTable("transactions") + transactionsIndexes + balancesSchemaCurrent + usersSchema + sessionsSchema + userCategoriesSchema + fxRatesSchema
+var currentSchema = transactionsTable("transactions") + transactionsIndexes + importRefIndex + balancesSchemaCurrent + usersSchema + sessionsSchema + userCategoriesSchema + fxRatesSchema
 
 // transactionsTable returns the CREATE TABLE statement of the current (v13+)
 // transactions table under the given name (also used by the v13 rebuild).
@@ -112,6 +115,7 @@ CREATE TABLE ` + name + ` (
     exchange_rate TEXT,
     rate_source   TEXT    CHECK (rate_source IS NULL OR rate_source IN ('frankfurter', 'manual')),
     rate_date     TEXT    CHECK (rate_date IS NULL OR length(rate_date) = 10),
+    import_ref    TEXT    CHECK (import_ref IS NULL OR length(import_ref) BETWEEN 1 AND 200),
     CHECK ((type = 'balance_adjustment') = (adjustment_direction IS NOT NULL)),
     CHECK (type <> 'balance_adjustment' OR (to_balance_uid IS NULL AND category_uid IS NULL AND balance_applied = 0))
 );
@@ -322,6 +326,8 @@ var migrations = []migration{
 	rebuildTransactionsV16,
 	// v16 -> v17: cross-currency transfer columns + fx_rates cache.
 	addCrossCurrency,
+	// v17 -> v18: transactions.import_ref + unique (balance_uid, import_ref).
+	addImportRef,
 }
 
 // SchemaVersion is the user_version a fully migrated database has.
@@ -888,7 +894,7 @@ func rebuildTransactions(tx *sql.Tx, tmp, dir string) error {
 	}
 	// Keep the v17 cross-currency columns if a later rebuild runs on a
 	// table that already has them.
-	for _, c := range fxCols {
+	for _, c := range append(append([][2]string{}, fxCols...), importRefCol) {
 		ok, err := columnExists(tx, "transactions", c[0])
 		if err != nil {
 			return err
@@ -1172,6 +1178,27 @@ func addCrossCurrency(tx *sql.Tx) error {
 	}
 	if _, err := tx.Exec(fxRatesSchema); err != nil {
 		return fmt.Errorf("create fx_rates: %w", err)
+	}
+	return nil
+}
+
+// importRefCol is the v18 column (same declaration as transactionsTable).
+var importRefCol = [2]string{"import_ref", "TEXT CHECK (import_ref IS NULL OR length(import_ref) BETWEEN 1 AND 200)"}
+
+// importRefIndex (v18+) makes import_ref unique per balance. Partial, so rows
+// without a ref are unaffected.
+const importRefIndex = `
+CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_import_ref ON transactions (balance_uid, import_ref) WHERE import_ref IS NOT NULL;
+`
+
+// addImportRef is migration v17 -> v18. Purely additive (existing rows get
+// NULL import_ref, so the partial unique index cannot conflict). Idempotent.
+func addImportRef(tx *sql.Tx) error {
+	if err := addColumnIfMissing(tx, "transactions", importRefCol[0], importRefCol[1]); err != nil {
+		return fmt.Errorf("add transactions.import_ref: %w", err)
+	}
+	if _, err := tx.Exec(importRefIndex); err != nil {
+		return fmt.Errorf("create idx_transactions_import_ref: %w", err)
 	}
 	return nil
 }

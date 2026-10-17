@@ -132,6 +132,7 @@ paths:
                 expense: { $ref: '#/components/examples/TransactionExpense' }
                 transfer: { $ref: '#/components/examples/TransactionTransfer' }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/DuplicateImportRef' }
         '422': { $ref: '#/components/responses/TransactionValidationFailed' }
         '502': { $ref: '#/components/responses/FXBadGateway' }
         '503': { $ref: '#/components/responses/FXUnavailable' }
@@ -184,6 +185,88 @@ paths:
                 fields:
                   type: 'must be one of: expense, income, transfer, asset_purchase, balance_adjustment'
                   limit: must be an integer between 1 and 5000
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/transactions/bulk:
+    post:
+      tags: [transactions]
+      operationId: bulkCreateTransactions
+      summary: Create many transactions at once (statement import)
+      description: |
+        Creates up to 500 transactions in one request, e.g. rows an AI agent parsed from a bank
+        statement or PDF. Every item has exactly the shape of POST /api/transactions and goes through
+        the same validation, balance resolution and FX conversion; balances move as they would for
+        single creates, in input order. See docs/bulk-import.md.
+
+        * **Phases.** All items are validated first and any Frankfurter rate needed for a
+          cross-currency transfer without `to_amount` is fetched (and cached) **before** the database
+          transaction opens. Then every insert and balance adjustment runs in **one** SQL transaction
+          (each item in a savepoint).
+        * **Idempotency.** An item whose `import_ref` already exists on the same `balance_uid` (in the
+          database, or earlier in the same request) is `skipped` with `existing_uid`; it is not an
+          error. The same ref on a different balance is a different key.
+        * **atomic** (default `true`): if any item fails nothing is written and the answer is 422
+          (503/502 if a failure was the exchange-rate service being down), with per-item results;
+          items that would have succeeded are `valid`. On success the answer is 201 (200 if every item
+          was skipped).
+        * **atomic: false**: valid items are created, failing ones reported; always 200 (inspect
+          `failed`). A Frankfurter outage fails only the affected items (`code`
+          exchange_rate_unavailable).
+        * **dry_run: true**: full validation including balance currency checks and FX conversion,
+          then everything is rolled back. Items are `valid`/`skipped`/`failed`, `balances` shows the
+          balances as they would be afterwards. 200 (or 422/503/502 when atomic and an item fails).
+
+        Limits: at most 500 items (413 `code` too_many_items) and a 2 MiB body (400). An empty list is
+        a 400. Unknown fields in an item, `uid` or `version` in an item, or a non-object item fail that
+        item (`code` invalid_item), not the request.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BulkTransactionRequest' }
+            examples:
+              statementImport: { $ref: '#/components/examples/BulkStatementImport' }
+      responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '201':
+          description: Atomic batch committed with at least one created item.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BulkTransactionResponse' }
+              examples:
+                created: { $ref: '#/components/examples/BulkResponseCreated' }
+        '200':
+          description: Dry run, non-atomic batch (check `failed`), or every item skipped as a duplicate.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BulkTransactionResponse' }
+              examples:
+                reimport: { $ref: '#/components/examples/BulkResponseReimport' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413':
+          description: More than 500 items (`code` too_many_items). Split the import into batches.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422':
+          description: Atomic batch with at least one failed item; nothing was written. Per-item errors in `results`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BulkTransactionResponse' }
+              examples:
+                failed: { $ref: '#/components/examples/BulkResponseFailed' }
+        '502':
+          description: Atomic batch where Frankfurter answered unexpectedly for an item; nothing was written.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BulkTransactionResponse' }
+        '503':
+          description: Atomic batch where Frankfurter was unreachable for an item; nothing was written. Retry later, send `to_amount`, or use `atomic:false`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BulkTransactionResponse' }
         '500': { $ref: '#/components/responses/InternalError' }
 
   /api/transactions/{uid}:
@@ -1184,6 +1267,15 @@ components:
               value: { error: a user with this username already exists, fields: { username: is already taken (usernames are case-insensitive) } }
             email:
               value: { error: a user with this email already exists, fields: { email: is already used by another user } }
+    DuplicateImportRef:
+      description: '`import_ref` is already used by another transaction on the same balance (`code` duplicate_import_ref).'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            error: import_ref "KBANK-20261003-000123" is already used by transaction ea67cb7c-9cef-4323-9b16-59a5139cb582 on this balance
+            code: duplicate_import_ref
+            fields: { import_ref: is already used on this balance by transaction ea67cb7c-9cef-4323-9b16-59a5139cb582 }
     FXUnavailable:
       description: The exchange-rate service (Frankfurter) is unreachable or timed out (`code` exchange_rate_unavailable). Retry later or send `to_amount`.
       content:
@@ -1303,7 +1395,7 @@ components:
       description: Whether a manual edit raised or lowered the edited amount (balance of an asset, debt of a liability).
     Transaction:
       type: object
-      required: [uid, amount, amount_minor, currency, type, balance_uid, account, to_balance_uid, to_account, category_uid, spent_at, note, created_at, updated_at, version, adjusts_balances, adjustment_direction, to_amount, to_amount_minor, to_currency, exchange_rate, rate_source, rate_date]
+      required: [uid, amount, amount_minor, currency, type, balance_uid, account, to_balance_uid, to_account, category_uid, spent_at, note, created_at, updated_at, version, adjusts_balances, adjustment_direction, to_amount, to_amount_minor, to_currency, exchange_rate, rate_source, rate_date, import_ref]
       properties:
         uid: { $ref: '#/components/schemas/Uid' }
         amount:
@@ -1411,6 +1503,12 @@ components:
           nullable: true
           description: Date of the Frankfurter rate used (the previous working day for weekends/holidays); `null` for manual rates and non-cross-currency rows.
           example: null
+        import_ref:
+          type: string
+          nullable: true
+          maxLength: 200
+          description: Client-chosen idempotency key (e.g. a bank reference or a hash of date+amount+description), unique per `balance_uid`; `null` when not set. See docs/bulk-import.md.
+          example: null
     ExchangeRate:
       type: object
       required: [from, to, rate, date, source]
@@ -1482,6 +1580,17 @@ components:
           nullable: true
           maxLength: 1000
           description: Trimmed. Omitted or `null` means empty.
+        import_ref:
+          type: string
+          nullable: true
+          maxLength: 200
+          description: |
+            Optional idempotency key (trimmed, ≤ 200 characters, no control characters), unique per
+            `balance_uid`. On POST and PUT a ref already used by another transaction on the same balance
+            is a 409 (`code` duplicate_import_ref); in POST /api/transactions/bulk it is reported as
+            `skipped`. On POST, omitted, empty or `null` means none. On PUT, omitted or `null` keeps the
+            stored ref and `""` clears it.
+          example: 'KBANK-20261003-000123'
         uid:
           type: string
           description: Accepted and ignored (the uid is immutable).
@@ -1491,6 +1600,73 @@ components:
           minimum: 1
           description: PUT only, as an alternative to `If-Match`. Ignored on POST.
       additionalProperties: false
+    BulkTransactionRequest:
+      type: object
+      required: [transactions]
+      additionalProperties: false
+      properties:
+        transactions:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items: { $ref: '#/components/schemas/TransactionInput' }
+          description: Same item shape as POST /api/transactions (plus optional `import_ref`; `uid`/`version` not accepted). Inserted in this order.
+        atomic:
+          type: boolean
+          default: true
+          description: All-or-nothing (true) or insert every valid item (false).
+        dry_run:
+          type: boolean
+          default: false
+          description: Validate and compute effects only; nothing is written.
+    BulkItemError:
+      type: object
+      required: [message, code]
+      properties:
+        message: { type: string, example: validation failed }
+        code:
+          type: string
+          enum: [validation_failed, invalid_item, exchange_rate_unsupported, exchange_rate_unavailable, balance_adjustment_readonly]
+        fields:
+          type: object
+          additionalProperties: { type: string }
+          example: { balance_uid: 'balance "Wallet" is in THB but the transaction is in USD; the currencies must match' }
+    BulkTransactionResult:
+      type: object
+      required: [index, status]
+      properties:
+        index: { type: integer, description: Position in the request array (results keep input order). }
+        status:
+          type: string
+          enum: [created, skipped, failed, valid]
+          description: '`valid` = would be created (dry run, or an atomic batch that was rolled back because another item failed).'
+        transaction:
+          allOf:
+            - $ref: '#/components/schemas/Transaction'
+          description: For created/valid. For `valid` items nothing was stored, so `uid` and `created_at` are empty and `version` is 0.
+        existing_uid:
+          type: string
+          format: uuid
+          description: For skipped. The transaction that already has this `import_ref` on the balance.
+        error: { $ref: '#/components/schemas/BulkItemError' }
+    BulkTransactionResponse:
+      type: object
+      required: [created, skipped, failed, valid, dry_run, atomic, written, results, balances]
+      properties:
+        created: { type: integer }
+        skipped: { type: integer }
+        failed: { type: integer }
+        valid: { type: integer, description: Items that passed but were not written (dry run or rolled-back atomic batch). }
+        dry_run: { type: boolean }
+        atomic: { type: boolean }
+        written: { type: boolean, description: True when the database transaction was committed. }
+        results:
+          type: array
+          items: { $ref: '#/components/schemas/BulkTransactionResult' }
+        balances:
+          type: array
+          items: { $ref: '#/components/schemas/Balance' }
+          description: Balances touched by created/valid items, as they are (or would be, for a dry run or a rolled-back batch) after the request.
     TransactionList:
       type: object
       required: [transactions, count]
@@ -1777,6 +1953,59 @@ components:
         count: { type: integer, example: 0 }
 
   examples:
+    BulkStatementImport:
+      summary: Statement import (sample data)
+      value:
+        atomic: true
+        dry_run: false
+        transactions:
+          - { type: expense, amount: '45.00', currency: THB, balance_uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5, spent_at: '2026-10-01T08:15:00+07:00', note: 'SAMPLE COFFEE SHOP', import_ref: 'stmt-2026-10:0001' }
+          - { type: income, amount: '30000.00', currency: THB, balance_uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5, spent_at: '2026-10-01T09:00:00+07:00', note: 'SAMPLE PAYROLL', import_ref: 'stmt-2026-10:0002' }
+          - { type: transfer, amount: '5000.00', currency: THB, balance_uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5, to_balance_uid: a8465748-a48b-426a-9466-9a6706d8143a, spent_at: '2026-10-02T12:00:00+07:00', note: 'SAMPLE CARD PAYMENT', import_ref: 'stmt-2026-10:0003' }
+    BulkResponseCreated:
+      summary: Committed atomic import
+      value:
+        created: 1
+        skipped: 0
+        failed: 0
+        valid: 0
+        dry_run: false
+        atomic: true
+        written: true
+        results:
+          - index: 0
+            status: created
+            transaction: { uid: ea67cb7c-9cef-4323-9b16-59a5139cb582, amount: '45.00', amount_minor: 4500, currency: THB, type: expense, balance_uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5, account: Wallet, to_balance_uid: null, to_account: null, category_uid: null, spent_at: '2026-10-01T08:15:00+07:00', note: SAMPLE COFFEE SHOP, created_at: '2026-10-17T05:31:00Z', updated_at: null, version: 1, adjusts_balances: true, adjustment_direction: null, to_amount: null, to_amount_minor: null, to_currency: null, exchange_rate: null, rate_source: null, rate_date: null, import_ref: 'stmt-2026-10:0001' }
+        balances: []
+    BulkResponseReimport:
+      summary: Same import sent again (all skipped)
+      value:
+        created: 0
+        skipped: 1
+        failed: 0
+        valid: 0
+        dry_run: false
+        atomic: true
+        written: true
+        results:
+          - { index: 0, status: skipped, existing_uid: ea67cb7c-9cef-4323-9b16-59a5139cb582 }
+        balances: []
+    BulkResponseFailed:
+      summary: Atomic batch rejected (nothing written)
+      value:
+        created: 0
+        skipped: 0
+        failed: 1
+        valid: 1
+        dry_run: false
+        atomic: true
+        written: false
+        results:
+          - { index: 0, status: valid }
+          - index: 1
+            status: failed
+            error: { message: validation failed, code: validation_failed, fields: { type: 'balance_adjustment transactions are created automatically when a balance amount is edited (PUT/PATCH /api/balances/:uid); they cannot be created or changed here' } }
+        balances: []
     TransactionInputExpense:
       summary: Expense with a category
       value:

@@ -29,10 +29,29 @@ func fxMessage(err error) string {
 	}
 }
 
+const fxMemoKey = "fx_memo"
+
+type fxMemoEntry struct {
+	q   fx.Quote
+	err error
+}
+
 // rate looks up a Frankfurter rate (cached).
 func (s *Server) rate(c *gin.Context, from, to, date string, loc *time.Location) (fx.Quote, error) {
 	if s.FX == nil {
 		return fx.Quote{}, errNoFX
+	}
+	// A bulk request memoizes lookups (including failures) so an upstream
+	// outage costs one attempt per currency pair and date, not one per item.
+	if v, ok := c.Get(fxMemoKey); ok {
+		memo := v.(map[string]fxMemoEntry)
+		key := from + "/" + to + "/" + date
+		if m, ok := memo[key]; ok {
+			return m.q, m.err
+		}
+		q, err := s.FX.Rate(c.Request.Context(), from, to, date, loc)
+		memo[key] = fxMemoEntry{q, err}
+		return q, err
 	}
 	return s.FX.Rate(c.Request.Context(), from, to, date, loc)
 }

@@ -150,11 +150,21 @@ Response fields: `uid, type, amount, amount_minor, currency, balance_uid,
 account (source name snapshot), to_balance_uid, to_account, category_uid,
 spent_at, note, created_at, updated_at, version, adjusts_balances,
 adjustment_direction, to_amount, to_amount_minor, to_currency,
-exchange_rate, rate_source, rate_date`.
+exchange_rate, rate_source, rate_date, import_ref`.
 
 **Input fields** (POST and PUT): `type, amount, currency, balance_uid,
-to_balance_uid, category_uid, spent_at, note, to_amount, to_currency`
-(+ optional `version` instead of `If-Match` on PUT).
+to_balance_uid, category_uid, spent_at, note, to_amount, to_currency, import_ref`
+(+ optional `version` instead of `If-Match` on PUT). `import_ref` (≤ 200 chars) is
+unique per balance: 409 `duplicate_import_ref` on POST/PUT. On PUT, omitting it keeps it
+and `""` clears it.
+
+### Bulk: `POST /api/transactions/bulk`
+
+`{"transactions":[...≤500 items...], "atomic":true, "dry_run":false}` →
+`{created, skipped, failed, valid, dry_run, atomic, written, results:[{index, status
+(created|skipped|failed|valid), transaction | existing_uid | error{message,code,fields}}], balances:[...]}`.
+201 atomic success; 200 dry run / partial / all skipped; 422 (503/502 for FX outage)
+atomic failure with nothing written; 413 over 500 items. See docs/bulk-import.md.
 
 Balance effects (automatic):
 

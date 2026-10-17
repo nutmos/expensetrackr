@@ -169,6 +169,17 @@ func TestOpenAPIResponseShapes(t *testing.T) {
 	check("Category", category.Category{})
 	check("User", user.User{})
 	check("Identity", user.Identity{})
+	check("BulkTransactionResponse", bulkResponse{})
+	// Per-item results omit fields that do not apply, so only the field set is compared.
+	for schema, v := range map[string]any{"BulkTransactionResult": bulkItemResult{}, "BulkItemError": bulkItemError{}} {
+		want := map[string]bool{}
+		for k := range doc.Components.Schemas[schema].Properties {
+			want[k] = true
+		}
+		if got := jsonFields(v); !reflect.DeepEqual(got, want) {
+			t.Errorf("schema %s fields differ from %T JSON:\n  code only: %v\n  spec only: %v", schema, v, only(got, want), only(want, got))
+		}
+	}
 }
 
 func jsonFields(v any) map[string]bool {
