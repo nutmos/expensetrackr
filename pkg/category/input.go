@@ -1,0 +1,58 @@
+package category
+
+import (
+	"fmt"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/nutmos/expensetrackr/pkg/validate"
+)
+
+// Input is the payload for POST /api/categories and PUT /api/categories/:uid.
+type Input struct {
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Description string `json:"description"`
+
+	// IgnoredUID lets a previous response be round-tripped; never used.
+	IgnoredUID string `json:"uid,omitempty"`
+}
+
+const (
+	MaxNameLen        = 100
+	MaxDescriptionLen = 1000
+)
+
+// Validate checks the input and returns a normalized Category (no UID/ID/times).
+func (in Input) Validate() (Category, error) {
+	fields := map[string]string{}
+	var c Category
+
+	name := strings.TrimSpace(in.Name)
+	switch {
+	case name == "":
+		fields["name"] = "is required"
+	case utf8.RuneCountInString(name) > MaxNameLen:
+		fields["name"] = fmt.Sprintf("must be at most %d characters", MaxNameLen)
+	}
+	c.Name = name
+
+	if t, ok := ParseType(in.Type); ok {
+		c.Type = t
+	} else if strings.TrimSpace(in.Type) == "" {
+		fields["type"] = "is required (expense or income)"
+	} else {
+		fields["type"] = "must be one of: expense, income"
+	}
+
+	desc := strings.TrimSpace(in.Description)
+	if utf8.RuneCountInString(desc) > MaxDescriptionLen {
+		fields["description"] = fmt.Sprintf("must be at most %d characters", MaxDescriptionLen)
+	}
+	c.Description = desc
+
+	if len(fields) > 0 {
+		return Category{}, &validate.ValidationError{Fields: fields}
+	}
+	return c, nil
+}
