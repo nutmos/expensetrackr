@@ -30,6 +30,7 @@ pkg/             library packages (api, store, transaction, balance, category, u
                  money, validate), pkg/web (embedded web page) and pkg/apidoc
                  (embedded OpenAPI spec + offline Swagger UI)
 docs/            project documentation (non-code)
+skills/          AI-agent skill (SKILL.md) for using the HTTP API
 README.md
 bin/, data/, server.log   local runtime files (git-ignored)
 ```
@@ -76,6 +77,20 @@ http://127.0.0.1:8080/swagger/ for the API documentation (Swagger UI).
 The web page header links there too. The raw spec is at
 http://127.0.0.1:8080/api/openapi.yaml (YAML) and
 http://127.0.0.1:8080/api/openapi.json (JSON).
+
+## AI agents
+
+[`skills/expensetrackr-api/`](skills/expensetrackr-api/SKILL.md) is an agent
+skill (the `SKILL.md` convention used by Claude Agent Skills, Cursor and
+similar tools) that teaches an LLM agent to use this API: login and CSRF
+rules, looking up balance/category uids, logging expenses, income, transfers
+(incl. cross-currency) and asset purchases, editing with `If-Match`, error
+handling and safety rules. Details are in its
+[`reference.md`](skills/expensetrackr-api/reference.md); the helper
+[`scripts/etr.sh`](skills/expensetrackr-api/scripts/etr.sh) wraps curl with a
+cookie jar, auto-login from `EXPENSETRACKR_USERNAME` / `EXPENSETRACKR_PASSWORD`
+and GET → PUT edits with conflict retry. Copy or symlink the folder into your
+agent's skills directory (e.g. `~/.claude/skills/` or `.cursor/skills/`).
 
 ## Test
 
