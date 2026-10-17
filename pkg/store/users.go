@@ -118,7 +118,7 @@ func (s *Store) UpdateUser(ctx context.Context, id int64, fn func(cur user.User)
 	if err != nil {
 		return user.User{}, fmt.Errorf("update user: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	cur, err := scanUser(tx.QueryRowContext(ctx, `SELECT `+userCols+` FROM users WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return user.User{}, ErrNotFound

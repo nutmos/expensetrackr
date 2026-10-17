@@ -58,7 +58,7 @@ func (s *Store) RegisterUser(ctx context.Context, u *user.User, hash string, fir
 	if err != nil {
 		return fmt.Errorf("register: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if firstRun {
 		var n int
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE password_hash IS NOT NULL)`).Scan(&n); err != nil {
@@ -168,7 +168,7 @@ func (s *Store) ChangePassword(ctx context.Context, uid, hash, keepTokenHash str
 	if err != nil {
 		return fmt.Errorf("change password: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	now := ts(time.Now())
 	res, err := tx.ExecContext(ctx, `UPDATE users SET password_hash = ?, password_updated_at = ?, updated_at = ? WHERE uid = ?`, hash, now, now, uid)
 	if err != nil {

@@ -94,7 +94,7 @@ func (s *Store) Create(ctx context.Context, e *transaction.Transaction) error {
 	if err != nil {
 		return fmt.Errorf("insert transaction: %w", err)
 	}
-	defer tx.Rollback() // no-op after Commit
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
 	next, err := insertTx(ctx, tx, *e, time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
 		return err
@@ -236,7 +236,7 @@ func (s *Store) UpdateWith(ctx context.Context, id int64, opts WriteOptions, fn 
 	if err != nil {
 		return transaction.Transaction{}, fmt.Errorf("update transaction: %w", err)
 	}
-	defer tx.Rollback() // no-op after Commit
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
 
 	cur, err := scan(tx.QueryRowContext(ctx, `SELECT `+selectCols+` FROM transactions WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -305,7 +305,7 @@ func (s *Store) DeleteWith(ctx context.Context, id int64, opts WriteOptions) err
 	if err != nil {
 		return fmt.Errorf("delete transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	cur, err := scan(tx.QueryRowContext(ctx, `SELECT `+selectCols+` FROM transactions WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {

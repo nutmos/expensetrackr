@@ -69,7 +69,7 @@ func TestRateCacheTTL(t *testing.T) {
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
-		w.Write([]byte(`{"amount":1.0,"base":"USD","date":"2026-10-12","rates":{"THB":33.615}}`))
+		_, _ = w.Write([]byte(`{"amount":1.0,"base":"USD","date":"2026-10-12","rates":{"THB":33.615}}`))
 	}))
 	defer srv.Close()
 	now := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)

@@ -111,7 +111,7 @@ func (s *Store) CreateBulk(ctx context.Context, items []BulkItem, opts BulkOptio
 	if err != nil {
 		return out, fmt.Errorf("bulk insert: %w", err)
 	}
-	defer tx.Rollback() // no-op after Commit
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	failed := 0

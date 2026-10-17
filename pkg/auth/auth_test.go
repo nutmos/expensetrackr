@@ -45,7 +45,8 @@ func TestToken(t *testing.T) {
 	if a == b || len(a) != 43 {
 		t.Fatalf("tokens %q %q", a, b)
 	}
-	if HashToken(a) == a || len(HashToken(a)) != 64 || HashToken(a) != HashToken(a) {
+	h1, h2 := HashToken(a), HashToken(a)
+	if h1 == a || len(h1) != 64 || h1 != h2 {
 		t.Error("bad token hash")
 	}
 }

@@ -226,7 +226,9 @@ func TestUserCategoriesCRUDIsolationAndLimits(t *testing.T) {
 		t.Fatalf("update: %+v %v", up, err)
 	}
 	tr := category.Category{Name: "Transport", Type: category.Expense}
-	st.CreateCategory(ctx, a, &tr)
+	if err := st.CreateCategory(ctx, a, &tr); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := st.UpdateCategory(ctx, a, tr.UID, func(c category.Category) (category.Category, error) {
 		c.Name = "meals"
 		return c, nil
@@ -262,12 +264,16 @@ func TestUserCategoriesCRUDIsolationAndLimits(t *testing.T) {
 
 	// Deleting a user cascades its categories row.
 	var bid int64
-	st.db.QueryRow(`SELECT id FROM users WHERE uid = ?`, b).Scan(&bid)
+	if err := st.db.QueryRow(`SELECT id FROM users WHERE uid = ?`, b).Scan(&bid); err != nil {
+		t.Fatal(err)
+	}
 	if err := st.DeleteUser(ctx, bid); err != nil {
 		t.Fatal(err)
 	}
 	var n int
-	st.db.QueryRow(`SELECT count(*) FROM user_categories WHERE user_uid = ?`, b).Scan(&n)
+	if err := st.db.QueryRow(`SELECT count(*) FROM user_categories WHERE user_uid = ?`, b).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
 	if n != 0 {
 		t.Errorf("categories row of deleted user remains")
 	}
@@ -277,7 +283,9 @@ func TestUserCategoriesInUse(t *testing.T) {
 	ctx := context.Background()
 	st, u := newUserStore(t, "alice")
 	food := category.Category{Name: "Food", Type: category.Expense}
-	st.CreateCategory(ctx, u[0], &food)
+	if err := st.CreateCategory(ctx, u[0], &food); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := st.db.Exec(`INSERT INTO transactions (uid, type, amount_minor, amount_scale, currency, balance_uid, account, category_uid, spent_at, spent_at_unix, created_at)
 		VALUES ('cccccccc-cccc-4ccc-8ccc-cccccccccccc', 'expense', 100, 2, 'THB', 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'Cash', ?, '2026-01-05T00:00:00Z', 1, '2026-01-05T00:00:00Z')`, food.UID); err != nil {
 		t.Fatal(err)

@@ -37,10 +37,10 @@ func fakeFrankfurter(t *testing.T) (*httptest.Server, *atomic.Int32) {
 		rate, ok := rates[from+"/"+to]
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
-			w.Write([]byte(`{"message":"not found"}`))
+			_, _ = w.Write([]byte(`{"message":"not found"}`))
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]any{"amount": 1.0, "base": from, "date": date, "rates": map[string]float64{to: rate}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"amount": 1.0, "base": from, "date": date, "rates": map[string]float64{to: rate}})
 	}))
 	t.Cleanup(srv.Close)
 	return srv, &n
@@ -283,7 +283,7 @@ func TestCrossCurrencyUpstreamDown(t *testing.T) {
 			w.WriteHeader(500)
 			return
 		}
-		w.Write([]byte("<html>"))
+		_, _ = w.Write([]byte("<html>"))
 	}))
 	defer bad.Close()
 	h2, _ := newFXServer(t, bad.URL)

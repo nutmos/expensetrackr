@@ -447,8 +447,6 @@ func TestMigrationV4ToV5LinksAccountToBalanceUID(t *testing.T) {
 	assertCurrentSchema(t, path)
 }
 
-func contains(s, sub string) bool { return strings.Contains(s, sub) }
-
 func TestMigrationV5FailsWhenAccountUnmatched(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "orphan.db")
 	rawDB(t, path, schemaV4+`

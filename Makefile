@@ -5,6 +5,7 @@ GO        ?= go
 BIN      ?= bin/expense-server
 ADDR     ?= 127.0.0.1:8080
 DB       ?= data/expenses.db
+GOLANGCI_LINT ?= golangci-lint
 
 export GOTOOLCHAIN ?= local
 export CGO_ENABLED ?= 0
@@ -39,8 +40,12 @@ fmt: ## Format Go code (gofmt -s -w).
 fmt-check: ## Fail if any Go file is not gofmt-formatted.
 	@out="$$(gofmt -s -l cmd pkg)"; if [ -n "$$out" ]; then echo "needs gofmt:"; echo "$$out"; exit 1; fi
 
+.PHONY: lint
+lint: ## Run golangci-lint (config in .golangci.yml).
+	$(GOLANGCI_LINT) run ./...
+
 .PHONY: check
-check: fmt-check vet test ## fmt-check + vet + test.
+check: fmt-check vet lint test ## fmt-check + vet + lint + test.
 
 .PHONY: clean
 clean: ## Remove build output (bin/). Never touches data/.
