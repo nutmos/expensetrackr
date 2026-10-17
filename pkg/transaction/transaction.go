@@ -238,10 +238,10 @@ func (e *Transaction) AttachPaymentBalance(b balance.Balance) error {
 	if b.UID == "" || !SourceAllowed(tt, b.Type) {
 		return fieldError("balance_uid", sourceRule(tt))
 	}
-	if e.BalanceUID != "" && !e.BalanceUID.Matches(b.UID) {
+	if e.BalanceUID != "" && !e.BalanceUID.Matches(b.UID.String()) {
 		return fieldError("balance_uid", "does not match the resolved balance")
 	}
-	e.BalanceUID = UID(b.UID)
+	e.BalanceUID = b.UID
 	e.Account = b.Name
 	return nil
 }
@@ -252,13 +252,13 @@ func (e *Transaction) AttachDestinationBalance(b balance.Balance) error {
 	if !e.Type.HasDestination() || e.ToBalanceUID == nil {
 		return fieldError("to_balance_uid", "is only allowed when type is transfer or asset_purchase")
 	}
-	if b.UID == "" || !e.ToBalanceUID.Matches(b.UID) {
+	if b.UID == "" || !e.ToBalanceUID.Matches(b.UID.String()) {
 		return fieldError("to_balance_uid", "does not match any balance")
 	}
 	if !DestinationAllowed(e.Type, b.Type) {
 		return fieldError("to_balance_uid", "must refer to an other_asset balance (asset purchase destination)")
 	}
-	uid, name := UID(b.UID), b.Name
+	uid, name := b.UID, b.Name
 	e.ToBalanceUID, e.ToAccount = &uid, &name
 	return nil
 }

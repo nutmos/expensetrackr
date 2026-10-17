@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nutmos/expensetrackr/pkg/category"
+	"github.com/nutmos/expensetrackr/pkg/common_type"
 
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
@@ -164,12 +165,12 @@ func indexOfCategory(cats []category.Category, uid string) int {
 // CreateCategory adds a validated category to the user's set with a new
 // UUID v4 uid.
 func (s *Store) CreateCategory(ctx context.Context, userUID string, c *category.Category) error {
-	uid, err := newUID()
+	uid, err := common_type.NewUID()
 	if err != nil {
 		return err
 	}
 	out := *c
-	out.UID = uid
+	out.UID = uid.String()
 	out.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	out.UpdatedAt = nil
 	err = s.modifyCategories(ctx, userUID, func(_ *sql.Tx, cats []category.Category) ([]category.Category, error) {

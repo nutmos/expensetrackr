@@ -85,7 +85,7 @@ func (s *Server) createBalance(c *gin.Context) {
 		writeBalanceError(c, err)
 		return
 	}
-	c.Header("Location", "/api/balances/"+b.UID)
+	c.Header("Location", "/api/balances/"+string(b.UID))
 	setETag(c, b.Version)
 	c.JSON(http.StatusCreated, b)
 }
@@ -147,12 +147,12 @@ func (s *Server) balanceConflict(c *gin.Context, uid string) {
 // response: 200 + ETag, 409 on a stale version, or the mapped error.
 func (s *Server) saveBalance(c *gin.Context, cur balance.Balance, opts store.WriteOptions, fn func(existing balance.Balance) (balance.Balance, error)) {
 	if cur.Version != opts.Version { // fail fast; re-checked inside the write
-		s.balanceConflict(c, cur.UID)
+		s.balanceConflict(c, string(cur.UID))
 		return
 	}
 	updated, err := s.Store.UpdateBalanceWith(c.Request.Context(), cur.ID, opts, fn)
 	if errors.Is(err, store.ErrVersionConflict) {
-		s.balanceConflict(c, cur.UID)
+		s.balanceConflict(c, string(cur.UID))
 		return
 	}
 	if err != nil {
@@ -200,7 +200,7 @@ func (s *Server) deleteBalance(c *gin.Context) {
 	}
 	err := s.Store.DeleteBalanceWith(c.Request.Context(), cur.ID, store.WriteOptions{Version: version})
 	if errors.Is(err, store.ErrVersionConflict) {
-		s.balanceConflict(c, cur.UID)
+		s.balanceConflict(c, string(cur.UID))
 		return
 	}
 	if err != nil {

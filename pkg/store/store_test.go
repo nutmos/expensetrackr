@@ -204,7 +204,7 @@ func TestFreshDatabaseUsesCurrentSchema(t *testing.T) {
 	if err := st.CreateBalance(context.Background(), &b); err != nil {
 		t.Fatal(err)
 	}
-	e, err := transaction.CreateInput{Amount: "5", Currency: "SGD", BalanceUID: b.UID, SpentAt: "2026-10-07T08:00:00+08:00"}.Validate()
+	e, err := transaction.CreateInput{Amount: "5", Currency: "SGD", BalanceUID: string(b.UID), SpentAt: "2026-10-07T08:00:00+08:00"}.Validate()
 	if err != nil {
 		t.Fatal(err)
 	}

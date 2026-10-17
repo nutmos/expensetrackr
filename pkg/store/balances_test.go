@@ -62,10 +62,10 @@ func TestMigrationV2ToV3AddsBalances(t *testing.T) {
 	if err := st.CreateBalance(ctx, &b); err != nil || b.ID != 1 {
 		t.Fatalf("create balance: id=%d err=%v", b.ID, err)
 	}
-	if !looksLikeUUID(b.UID) {
+	if !looksLikeUUID(string(b.UID)) {
 		t.Fatalf("create balance uid = %q, want UUID v4", b.UID)
 	}
-	e, err := transaction.CreateInput{Amount: "120.50", Currency: "THB", BalanceUID: b.UID, SpentAt: "2026-10-05T09:00:00+07:00"}.Validate()
+	e, err := transaction.CreateInput{Amount: "120.50", Currency: "THB", BalanceUID: string(b.UID), SpentAt: "2026-10-05T09:00:00+07:00"}.Validate()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestMigrationV2ToV3AddsBalances(t *testing.T) {
 		t.Fatalf("create transaction: id=%d err=%v", e.ID, err)
 	}
 	gotTxn, err := st.Get(ctx, 1)
-	if err != nil || gotTxn.BalanceUID != transaction.UID(b.UID) || gotTxn.Account != "KBank debit" {
+	if err != nil || gotTxn.BalanceUID != b.UID || gotTxn.Account != "KBank debit" {
 		t.Errorf("transaction: %+v %v", gotTxn, err)
 	}
 	st.Close()
@@ -87,10 +87,10 @@ func TestMigrationV2ToV3AddsBalances(t *testing.T) {
 	defer st.Close()
 	got, err := st.GetBalance(ctx, 1)
 	// The 120.50 expense was taken off the balance when it was created.
-	if err != nil || got.Balance == nil || *got.Balance != "1379.75" || got.Version != 2 || !looksLikeUUID(got.UID) {
+	if err != nil || got.Balance == nil || *got.Balance != "1379.75" || got.Version != 2 || !looksLikeUUID(string(got.UID)) {
 		t.Errorf("balance after reopen: %+v %v", got, err)
 	}
-	if byUID, err := st.GetBalanceByUID(ctx, got.UID); err != nil || byUID.ID != 1 {
+	if byUID, err := st.GetBalanceByUID(ctx, string(got.UID)); err != nil || byUID.ID != 1 {
 		t.Errorf("GetBalanceByUID: %+v %v", byUID, err)
 	}
 }
@@ -281,13 +281,13 @@ func TestMigrationV3ToV4BackfillsUID(t *testing.T) {
 	}
 	seen := map[string]bool{}
 	for _, b := range items {
-		if !looksLikeUUID(b.UID) {
+		if !looksLikeUUID(string(b.UID)) {
 			t.Errorf("backfilled uid = %q", b.UID)
 		}
-		if seen[b.UID] {
+		if seen[string(b.UID)] {
 			t.Errorf("duplicate uid %q", b.UID)
 		}
-		seen[b.UID] = true
+		seen[string(b.UID)] = true
 	}
 	if items[0].Name != "KBank debit" || *items[0].Balance != "15000.50" ||
 		items[1].Name != "UOB One" || *items[1].Debt != "1200.00" || !*items[1].OverLimit {
@@ -327,7 +327,7 @@ UPDATE balances SET uid = '11111111-1111-4111-8111-111111111111' WHERE id = 1;
 	if items[0].UID != "11111111-1111-4111-8111-111111111111" {
 		t.Errorf("existing uid overwritten: %q", items[0].UID)
 	}
-	if !looksLikeUUID(items[1].UID) {
+	if !looksLikeUUID(string(items[1].UID)) {
 		t.Errorf("empty uid not backfilled: %q", items[1].UID)
 	}
 	assertCurrentSchema(t, path)
@@ -346,7 +346,7 @@ func TestBalanceUIDAssignedAndImmutable(t *testing.T) {
 	if err := st.CreateBalance(ctx, &b); err != nil {
 		t.Fatal(err)
 	}
-	if !looksLikeUUID(b.UID) || b.UID == "client-supplied-should-be-ignored" {
+	if !looksLikeUUID(string(b.UID)) || b.UID == "client-supplied-should-be-ignored" {
 		t.Fatalf("uid = %q", b.UID)
 	}
 	orig := b.UID
@@ -363,7 +363,7 @@ func TestBalanceUIDAssignedAndImmutable(t *testing.T) {
 	if upd.UID != orig || *upd.Balance != "20.00" {
 		t.Errorf("update changed uid or amount: %+v", upd)
 	}
-	got, err := st.GetBalanceByUID(ctx, orig)
+	got, err := st.GetBalanceByUID(ctx, string(orig))
 	if err != nil || got.ID != b.ID {
 		t.Errorf("GetBalanceByUID: %+v %v", got, err)
 	}

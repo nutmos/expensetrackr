@@ -30,9 +30,28 @@ type Input struct {
 	Version *int64 `json:"version,omitempty"`
 }
 
+// Input returns the editable fields of a stored balance, e.g. to build a PUT
+// body from a stored record.
+func (b Balance) Input() Input {
+	dec := func(s *string) *money.DecimalInput {
+		if s == nil {
+			return nil
+		}
+		d := money.DecimalInput(*s)
+		return &d
+	}
+	return Input{
+		Name: b.Name, Type: string(b.Type), Currency: b.Currency, Description: b.Description,
+		Balance: dec(b.Balance), Debt: dec(b.Debt), Limit: dec(b.Limit),
+	}
+}
+
 func provided(d *money.DecimalInput) bool {
 	return d != nil && strings.TrimSpace(string(*d)) != ""
 }
+
+// normalizeType trims and lower-cases a type as sent by a client.
+func normalizeType(s string) Type { return Type(strings.ToLower(strings.TrimSpace(s))) }
 
 // Validate checks the input and returns a normalized Balance (without ID and
 // timestamps), or a *validate.ValidationError listing every invalid field.
@@ -49,7 +68,7 @@ func (in Input) Validate() (Balance, error) {
 	}
 	b.Name = name
 
-	t := Type(strings.ToLower(strings.TrimSpace(in.Type)))
+	t := normalizeType(in.Type)
 	switch {
 	case t == "":
 		fields["type"] = "is required (one of " + typeList() + ")"
@@ -122,12 +141,12 @@ func (in Input) Validate() (Balance, error) {
 const ErrTypeChanged = "balance type cannot be changed after creation"
 
 // ValidateUpdate validates in as the new state of a stored balance of type
-// stored (PUT). The type is fixed at creation: in
-// must carry the same type (case/space-insensitive); a different one is a
-// validation error on "type". The other fields are then still checked against
-// the stored type, so every problem is reported at once.
+// stored (PUT). The type is fixed at creation: in must carry the same type
+// (case/space-insensitive); a different one is a validation error on "type".
+// The other fields are then still checked against the stored type, so every
+// problem is reported at once.
 func (in Input) ValidateUpdate(stored Type) (Balance, error) {
-	t := Type(strings.ToLower(strings.TrimSpace(in.Type)))
+	t := normalizeType(in.Type)
 	changed := t != "" && t != stored
 	if !changed {
 		return in.Validate()
