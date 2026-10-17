@@ -810,3 +810,10 @@ User data is only inserted with `textContent` / input `.value` (never
   "transactions" mean income/transfers will be recorded too, which would need
   a type/sign field?
 - Refunds or negative amounts (currently rejected; amounts must be > 0).
+
+## License
+
+expensetrackr is released under the [MIT License](LICENSE).
+
+The vendored Swagger UI files in `pkg/apidoc/swagger-ui/` keep their own
+Apache License 2.0; see the `LICENSE` and `NOTICE` files in that folder.
