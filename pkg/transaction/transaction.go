@@ -11,7 +11,6 @@ import (
 	"github.com/nutmos/expensetrackr/pkg/balance"
 	"github.com/nutmos/expensetrackr/pkg/category"
 	"github.com/nutmos/expensetrackr/pkg/money"
-	"github.com/nutmos/expensetrackr/pkg/validate"
 )
 
 const (
@@ -69,23 +68,6 @@ type Transaction struct {
 	ConversionRates []ConversionRate `json:"conversion_rates"`
 	SpentTime       time.Time        `json:"-"`
 }
-
-// Direction is the sign of a balance adjustment.
-type Direction string
-
-const (
-	Increase Direction = "increase"
-	Decrease Direction = "decrease"
-)
-
-// DecimalInput keeps the literal text of a JSON string or number amount.
-type DecimalInput = money.DecimalInput
-
-// ValidationError and RequestError are shared with other domain packages.
-type (
-	ValidationError = validate.ValidationError
-	RequestError    = validate.RequestError
-)
 
 // CreateInput is the payload accepted by POST /api/transactions and
 // PUT /api/transactions/:id (full replace). Payment account is identified by
