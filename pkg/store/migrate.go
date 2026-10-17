@@ -376,11 +376,11 @@ func migrate(db *sql.DB) error {
 			return fmt.Errorf("migration %d: %w", v+1, err)
 		}
 		if err := migrations[v](tx); err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return fmt.Errorf("migration %d: %w", v+1, err)
 		}
 		if err := setVersion(tx, v+1); err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return fmt.Errorf("migration %d: %w", v+1, err)
 		}
 		if err := tx.Commit(); err != nil {
@@ -399,11 +399,11 @@ func createFresh(db *sql.DB) error {
 		return fmt.Errorf("create schema: %w", err)
 	}
 	if _, err := tx.Exec(currentSchema); err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		return fmt.Errorf("create schema: %w", err)
 	}
 	if err := setVersion(tx, len(migrations)); err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		return fmt.Errorf("create schema: %w", err)
 	}
 	if err := tx.Commit(); err != nil {

@@ -34,7 +34,7 @@ func (s *Store) FXStore(ctx context.Context, base, quote, requested, rateDate, r
 	if err != nil {
 		return fmt.Errorf("write fx cache: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO fx_rates (base, quote, rate_date, rate, fetched_at) VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT (base, quote, rate_date) DO UPDATE SET rate = excluded.rate, fetched_at = excluded.fetched_at`,
 		base, quote, rateDate, rate, at); err != nil {

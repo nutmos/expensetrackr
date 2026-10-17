@@ -231,6 +231,7 @@ func TestOpenAPIServed(t *testing.T) {
 	}
 
 	res := get("/api/openapi.yaml")
+	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK || !strings.Contains(res.Header.Get("Content-Type"), "yaml") {
 		t.Fatalf("yaml: %d %s", res.StatusCode, res.Header.Get("Content-Type"))
 	}
@@ -239,6 +240,7 @@ func TestOpenAPIServed(t *testing.T) {
 	}
 
 	res = get("/api/openapi.json")
+	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK || !strings.Contains(res.Header.Get("Content-Type"), "json") {
 		t.Fatalf("json: %d %s", res.StatusCode, res.Header.Get("Content-Type"))
 	}
@@ -248,11 +250,13 @@ func TestOpenAPIServed(t *testing.T) {
 	}
 
 	res = get("/swagger")
+	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK || !strings.Contains(res.Request.URL.Path, "/swagger/") {
 		t.Fatalf("/swagger did not redirect to /swagger/: %d %s", res.StatusCode, res.Request.URL)
 	}
 
 	res = get("/swagger/")
+	defer res.Body.Close()
 	html := string(body(res))
 	if res.StatusCode != http.StatusOK || !strings.Contains(res.Header.Get("Content-Type"), "text/html") {
 		t.Fatalf("ui: %d %s", res.StatusCode, res.Header.Get("Content-Type"))
@@ -268,6 +272,7 @@ func TestOpenAPIServed(t *testing.T) {
 	}
 
 	res = get("/swagger/swagger-ui-bundle.js")
+	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK || !strings.Contains(res.Header.Get("Content-Type"), "javascript") {
 		t.Fatalf("bundle: %d %s", res.StatusCode, res.Header.Get("Content-Type"))
 	}
@@ -276,6 +281,7 @@ func TestOpenAPIServed(t *testing.T) {
 	}
 
 	res = get("/swagger/nope.js")
+	defer res.Body.Close()
 	if res.StatusCode != http.StatusNotFound || !bytes.Contains(body(res), []byte(`"error":"not found"`)) {
 		t.Error("unknown swagger asset should be the JSON 404")
 	}

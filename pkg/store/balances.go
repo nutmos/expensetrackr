@@ -177,7 +177,7 @@ func (s *Store) UpdateBalanceWith(ctx context.Context, id int64, opts WriteOptio
 	if err != nil {
 		return balance.Balance{}, fmt.Errorf("update balance: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	cur, err := scanBalance(tx.QueryRowContext(ctx, `SELECT `+balanceCols+` FROM balances WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {

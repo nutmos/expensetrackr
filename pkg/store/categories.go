@@ -122,7 +122,7 @@ func (s *Store) modifyCategoriesOnce(ctx context.Context, userUID string, fn fun
 	if err != nil {
 		return fmt.Errorf("categories: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	cats, version, err := readUserCategories(ctx, tx, userUID)
 	if err != nil {
 		return err

@@ -54,7 +54,9 @@ func TestMigrationV17ToV18(t *testing.T) {
 		t.Fatal("fixture still has import_ref")
 	}
 	var balancesBefore string
-	db.QueryRow(`SELECT group_concat(uid || ':' || coalesce(balance_minor, '') || ':' || coalesce(debt_minor, '') || ':' || version, ',') FROM balances`).Scan(&balancesBefore)
+	if err := db.QueryRow(`SELECT group_concat(uid || ':' || coalesce(balance_minor, '') || ':' || coalesce(debt_minor, '') || ':' || version, ',') FROM balances`).Scan(&balancesBefore); err != nil {
+		t.Fatal(err)
+	}
 	db.Close()
 	before := dumpTransactions(t, path)
 
@@ -70,12 +72,16 @@ func TestMigrationV17ToV18(t *testing.T) {
 	db, _ = sql.Open("sqlite", "file:"+path)
 	defer db.Close()
 	var balancesAfter string
-	db.QueryRow(`SELECT group_concat(uid || ':' || coalesce(balance_minor, '') || ':' || coalesce(debt_minor, '') || ':' || version, ',') FROM balances`).Scan(&balancesAfter)
+	if err := db.QueryRow(`SELECT group_concat(uid || ':' || coalesce(balance_minor, '') || ':' || coalesce(debt_minor, '') || ':' || version, ',') FROM balances`).Scan(&balancesAfter); err != nil {
+		t.Fatal(err)
+	}
 	if balancesAfter != balancesBefore {
 		t.Errorf("balances changed: %s -> %s", balancesBefore, balancesAfter)
 	}
 	var n int
-	db.QueryRow(`SELECT count(*) FROM transactions WHERE import_ref IS NULL`).Scan(&n)
+	if err := db.QueryRow(`SELECT count(*) FROM transactions WHERE import_ref IS NULL`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
 	if n != 3 {
 		t.Errorf("rows with null import_ref %d, want 3", n)
 	}
@@ -83,7 +89,9 @@ func TestMigrationV17ToV18(t *testing.T) {
 	if err := addImportRef(tx); err != nil {
 		t.Fatalf("re-run: %v", err)
 	}
-	tx.Commit()
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
 
 	st, err = Open(path)
 	if err != nil {

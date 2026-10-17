@@ -63,7 +63,9 @@ func TestMigrationV16ToV17(t *testing.T) {
 		}
 	}
 	var balancesBefore string
-	db.QueryRow(`SELECT group_concat(uid || ':' || coalesce(balance_minor, '') || ':' || coalesce(debt_minor, '') || ':' || version, ',') FROM balances`).Scan(&balancesBefore)
+	if err := db.QueryRow(`SELECT group_concat(uid || ':' || coalesce(balance_minor, '') || ':' || coalesce(debt_minor, '') || ':' || version, ',') FROM balances`).Scan(&balancesBefore); err != nil {
+		t.Fatal(err)
+	}
 	db.Close()
 	before := dumpTransactions(t, path)
 	if len(before) != 3 {
@@ -82,12 +84,16 @@ func TestMigrationV16ToV17(t *testing.T) {
 	db, _ = sql.Open("sqlite", "file:"+path)
 	defer db.Close()
 	var balancesAfter string
-	db.QueryRow(`SELECT group_concat(uid || ':' || coalesce(balance_minor, '') || ':' || coalesce(debt_minor, '') || ':' || version, ',') FROM balances`).Scan(&balancesAfter)
+	if err := db.QueryRow(`SELECT group_concat(uid || ':' || coalesce(balance_minor, '') || ':' || coalesce(debt_minor, '') || ':' || version, ',') FROM balances`).Scan(&balancesAfter); err != nil {
+		t.Fatal(err)
+	}
 	if balancesAfter != balancesBefore {
 		t.Errorf("balances changed: %s -> %s", balancesBefore, balancesAfter)
 	}
 	var n int
-	db.QueryRow(`SELECT count(*) FROM transactions WHERE to_amount_minor IS NULL AND to_currency IS NULL AND exchange_rate IS NULL AND rate_source IS NULL AND rate_date IS NULL`).Scan(&n)
+	if err := db.QueryRow(`SELECT count(*) FROM transactions WHERE to_amount_minor IS NULL AND to_currency IS NULL AND exchange_rate IS NULL AND rate_source IS NULL AND rate_date IS NULL`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
 	if n != 3 {
 		t.Errorf("rows with null fx fields %d, want 3", n)
 	}
@@ -96,7 +102,9 @@ func TestMigrationV16ToV17(t *testing.T) {
 	if err := addCrossCurrency(tx); err != nil {
 		t.Fatal(err)
 	}
-	tx.Commit()
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
 	if after := dumpTransactions(t, path); strings.Join(after, "\n") != strings.Join(before, "\n") {
 		t.Errorf("re-run changed rows")
 	}
