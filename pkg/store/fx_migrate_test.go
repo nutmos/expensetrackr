@@ -119,9 +119,8 @@ func TestMigrationV16ToV17(t *testing.T) {
 	if err := st.CreateBalance(ctx, &usd); err != nil {
 		t.Fatal(err)
 	}
-	payUID := transaction.UID(f.pay.UID)
-	e := transaction.Transaction{Type: transaction.Transfer, Amount: "10.00", AmountMinor: 1000, Currency: "USD", BalanceUID: transaction.UID(usd.UID), Account: "usd",
-		ToBalanceUID: &payUID, ToAccount: &f.pay.Name, SpentAt: "2026-10-09T09:00:00Z", SpentTime: time.Date(2026, 10, 9, 9, 0, 0, 0, time.UTC)}
+	e := transaction.Transaction{Type: transaction.Transfer, Amount: "10.00", AmountMinor: 1000, Currency: "USD", BalanceUID: usd.UID, Account: "usd",
+		ToBalanceUID: &f.pay.UID, ToAccount: &f.pay.Name, SpentAt: "2026-10-09T09:00:00Z", SpentTime: time.Date(2026, 10, 9, 9, 0, 0, 0, time.UTC)}
 	m, a, c, r, s, d := int64(33615), "336.15", "THB", "33.615", "frankfurter", "2026-10-09"
 	e.ToAmountMinor, e.ToAmount, e.ToCurrency, e.ExchangeRate, e.RateSource, e.RateDate = &m, &a, &c, &r, &s, &d
 	if err := st.Create(ctx, &e); err != nil {

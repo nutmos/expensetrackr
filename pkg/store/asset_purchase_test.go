@@ -138,8 +138,8 @@ func TestMigrationV15ToV16(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pay, _ := st.GetBalanceByUID(ctx, f.pay.UID)
-	gold, _ := st.GetBalanceByUID(ctx, f.gold.UID)
+	pay, _ := st.GetBalanceByUID(ctx, string(f.pay.UID))
+	gold, _ := st.GetBalanceByUID(ctx, string(f.gold.UID))
 	g := &fixture{t: t, st: st, pay: pay, gold: gold}
 	e := g.create(g.tx("asset_purchase", "5", "THB", pay, &gold))
 	if e.ID != 5 {
