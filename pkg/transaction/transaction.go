@@ -137,7 +137,8 @@ func (in CreateInput) Validate() (Transaction, error) {
 	}
 
 	tt, okType := ParseType(in.Type)
-	if okType || normalizeType(in.Type) == BalanceAdjustment {
+	if okType { // Do Nothing
+	} else if normalizeType(in.Type) == BalanceAdjustment {
 		fields["type"] = ErrAdjustmentType
 	} else {
 		fields["type"] = "must be one of: expense, income, transfer, asset_purchase"
@@ -155,7 +156,8 @@ func (in CreateInput) Validate() (Transaction, error) {
 
 	// to_balance_uid is only checked once the type is known.
 	to := common_type.NormalizeUID(in.ToBalanceUID)
-	if !okType || !tt.HasDestination() {
+	if !okType { // Do Nothing
+	} else if !tt.HasDestination() {
 		if to != "" {
 			fields["to_balance_uid"] = "is only allowed when type is transfer or asset_purchase"
 		}
@@ -170,7 +172,8 @@ func (in CreateInput) Validate() (Transaction, error) {
 	}
 
 	cat := common_type.NormalizeUID(in.CategoryUID)
-	if cat == "" || (okType && tt == Transfer) {
+	if cat == "" { // Do Nothing
+	} else if okType && tt == Transfer {
 		fields["category_uid"] = "is not allowed for a transfer"
 	} else if !cat.Valid() {
 		fields["category_uid"] = "must be a UUID (the uid of a category)"
