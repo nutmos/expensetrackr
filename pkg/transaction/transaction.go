@@ -137,10 +137,9 @@ func (in CreateInput) Validate() (Transaction, error) {
 	}
 
 	tt, okType := ParseType(in.Type)
-	if okType { // Do Nothing
-	} else if normalizeType(in.Type) == BalanceAdjustment {
+	if normalizeType(in.Type) == BalanceAdjustment {
 		fields["type"] = ErrAdjustmentType
-	} else {
+	} else if !okType {
 		fields["type"] = "must be one of: expense, income, transfer, asset_purchase"
 	}
 	exp.Type = tt
