@@ -17,7 +17,7 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
-// Categories are per user (schema v15, issue #34): all of a user's categories
+// Categories are per user (issue #34): all of a user's categories
 // live in one user_categories row as a JSON array. See docs/categories.md.
 
 var (
@@ -305,31 +305,4 @@ func (s *Store) DeleteCategory(ctx context.Context, userUID, uid string) error {
 		out := append([]category.Category(nil), cats[:i]...)
 		return append(out, cats[i+1:]...), nil
 	})
-}
-
-// claimUnclaimedCategories gives the categories stashed by migration v15 (a
-// database that had categories but no users) to userUID, inside the caller's
-// transaction. No-op when nothing is stashed.
-func claimUnclaimedCategories(ctx context.Context, tx *sql.Tx, userUID string) error {
-	var raw string
-	err := tx.QueryRowContext(ctx, `SELECT value FROM meta WHERE key = ?`, unclaimedCategoriesKey).Scan(&raw)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("read unclaimed categories: %w", err)
-	}
-	var add []category.Category
-	if err := json.Unmarshal([]byte(raw), &add); err != nil {
-		return fmt.Errorf("decode unclaimed categories: %w", err)
-	}
-	cur, version, err := readUserCategories(ctx, tx, userUID)
-	if err != nil {
-		return err
-	}
-	if err := writeUserCategories(ctx, tx, userUID, mergeByUID(cur, add), version); err != nil {
-		return err
-	}
-	_, err = tx.ExecContext(ctx, `DELETE FROM meta WHERE key = ?`, unclaimedCategoriesKey)
-	return err
 }

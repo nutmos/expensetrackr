@@ -13,40 +13,6 @@ import (
 
 func strp(s string) *string { return &s }
 
-// downgradeToV13 turns a fresh database into a v13 one (no sessions table).
-func downgradeToV13(t *testing.T, path string, dropSessions bool) {
-	t.Helper()
-	st, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	st.Close()
-	script := "DROP TABLE user_categories;\nDROP TABLE meta;\n" + categoriesSchema + `INSERT INTO users (uid, username, display_name, created_at) VALUES ('11111111-1111-4111-8111-111111111111', 'keep', 'Keep Me', '2026-01-01T00:00:00Z');
-INSERT INTO categories (uid, name, type, description, created_at) VALUES ('22222222-2222-4222-8222-222222222222', 'Food', 'expense', '', '2026-01-01T00:00:00Z');
-PRAGMA user_version = 13;`
-	if dropSessions {
-		script = "DROP TABLE sessions;\n" + script
-	}
-	rawDB(t, path, script)
-}
-
-func TestMigrationV13ToV14AddsSessions(t *testing.T) {
-	for _, drop := range []bool{true, false} { // false: tables already exist (idempotent)
-		path := filepath.Join(t.TempDir(), "v13.db")
-		downgradeToV13(t, path, drop)
-		st, err := Open(path)
-		if err != nil {
-			t.Fatalf("open v13 (drop=%v): %v", drop, err)
-		}
-		u, err := st.GetUserByUsername(context.Background(), "KEEP")
-		if err != nil || u.DisplayName != "Keep Me" || u.HasPassword {
-			t.Errorf("user not preserved: %+v %v", u, err)
-		}
-		st.Close()
-		assertCurrentSchema(t, path)
-	}
-}
-
 func TestRegisterAndSessions(t *testing.T) {
 	ctx := context.Background()
 	st, err := Open(filepath.Join(t.TempDir(), "s.db"))

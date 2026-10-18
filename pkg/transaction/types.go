@@ -34,8 +34,8 @@ type Transaction struct {
 	// send the version they last read (If-Match or "version"); see docs/balances.md.
 	Version int64 `json:"version"`
 	// AdjustsBalances is true when this transaction moved its balances (every
-	// transaction created by schema v11+). Rows recorded before v11 never did,
-	// so editing or deleting them leaves balances alone.
+	// transaction except balance_adjustment rows, which never do). Editing or
+	// deleting a row with false leaves balances alone.
 	AdjustsBalances bool `json:"adjusts_balances"`
 	// AdjustmentDirection is set only for type balance_adjustment: whether the
 	// manual edit increased or decreased the edited amount (balance for an

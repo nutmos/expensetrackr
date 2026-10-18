@@ -25,21 +25,20 @@ match the Go JSON shapes.
 
 ## Pages
 
-- [User profiles](user-profile.md): the `users` and `user_identities` tables
-  (schema v10), the `/api/users` API, and the auth-readiness decisions.
+- [User profiles](user-profile.md): the `users` and `user_identities` tables,
+  the `/api/users` API, and the auth-readiness decisions.
 - [Categories](categories.md): per-user categories stored as one JSON
-  row per user (schema v15, issue #34), migration and concurrency.
-- [Authentication](auth.md): username/password login, sessions (schema
-  v14), first-run setup, public vs protected routes, CSRF and throttling.
-- [Exchange rates](exchange-rates.md): cross-currency transfers (schema
-  v17), Frankfurter / ECB rates, caching, failure behaviour.
+  row per user (issue #34) and concurrency.
+- [Authentication](auth.md): username/password login, sessions,
+  first-run setup, public vs protected routes, CSRF and throttling.
+- [Exchange rates](exchange-rates.md): cross-currency transfers,
+  Frankfurter / ECB rates, caching, failure behaviour.
 - [Bulk import](bulk-import.md): `POST /api/transactions/bulk` (up to 500
-  items, atomic / partial / dry run), `import_ref` idempotency (schema v18)
+  items, atomic / partial / dry run), `import_ref` idempotency
   and guidance for agents importing bank statements.
 - [Balances](balances.md): automatic adjustment from transactions (sign
   rules), manual overrides via PUT recorded as Balance Adjustment
-  transactions, optimistic locking (`version`, `ETag`, `If-Match`, 428/409),
-  schema v11–v13.
+  transactions, optimistic locking (`version`, `ETag`, `If-Match`, 428/409).
 - [Currencies](currencies.md): supported ISO 4217 codes, `GET
   /api/currencies`, and how the display-only `flag` emoji is derived.
 - [Agent skill](../skills/expensetrackr-api/SKILL.md): `SKILL.md` for LLM

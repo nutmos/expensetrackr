@@ -1,4 +1,4 @@
-# User profiles (schema v10)
+# User profiles
 
 Status: **profiles only**. Login, sessions and endpoint protection are not
 implemented yet. The schema has fields ready for basic username/password
@@ -42,13 +42,11 @@ allows repeated NULLs.
 `UNIQUE (provider, provider_subject)`: a provider account can be linked to
 only one user. One user can have several identities (e.g. Apple and Google).
 
-## Migration
+## Schema
 
-v9 → v10 (`addUsers` in `pkg/store/migrate.go`) creates both tables and their
-indexes with `IF NOT EXISTS`, in one SQL transaction together with the
-`user_version` bump, so it is idempotent. Nothing else changes: existing
-transactions, balances and categories are not tied to a user yet. New
-databases get the same DDL (`usersSchema`) directly.
+Both tables and their indexes are part of the baseline schema
+(`pkg/store/schema.go`). Transactions and balances are not tied to a user
+yet.
 
 ## API
 

@@ -1,6 +1,6 @@
 // Package store persists transaction records in the SQLite table "transactions",
-// using the pure-Go modernc.org/sqlite driver (no CGO required). The schema and
-// its migrations live in migrate.go.
+// using the pure-Go modernc.org/sqlite driver (no CGO required). The schema is
+// in schema.go; versioning and migrations live in migrate.go.
 package store
 
 import (
@@ -50,7 +50,9 @@ type Store struct {
 }
 
 // Open opens (creating if needed) the SQLite database at path and brings its
-// schema up to date (see migrate).
+// schema up to date (see migrate). A database created before the schema
+// baseline reset, or by a newer build, fails with ErrUnsupportedSchema and is
+// not modified.
 func Open(path string) (*Store, error) {
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -71,7 +73,7 @@ func Open(path string) (*Store, error) {
 	db.SetMaxOpenConns(1)
 	if err := migrate(db); err != nil {
 		db.Close()
-		return nil, err
+		return nil, fmt.Errorf("database %s: %w", path, err)
 	}
 	return &Store{db: db, path: path}, nil
 }

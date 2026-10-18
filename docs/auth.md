@@ -1,4 +1,4 @@
-# Authentication: username + password (issue #30, schema v14)
+# Authentication: username + password (issue #30)
 
 Basic login with a **username and password only**. Email is not used anywhere
 in the flow (the `users.email` column stays, optional). SSO (Apple / Google via
@@ -59,7 +59,7 @@ Non-browser clients (curl, scripts) send neither header and are unaffected.
 `SameSite=Lax` on the cookie is a further layer. The login endpoint is guarded
 too (prevents login CSRF).
 
-## Schema v14: `sessions`
+## Table `sessions`
 
 ```sql
 CREATE TABLE sessions (
@@ -74,9 +74,8 @@ CREATE TABLE sessions (
 -- + indexes on user_uid and expires_at
 ```
 
-Migration v13 → v14 only creates the table (`IF NOT EXISTS`) in one SQL
-transaction with the `user_version` bump; no existing data is touched.
-Deleting a user deletes their sessions.
+Part of the baseline schema (`pkg/store/schema.go`). Deleting a user deletes
+their sessions.
 
 ## First run
 
@@ -109,7 +108,7 @@ Forgot the only password? There is no reset flow yet; with shell access,
 ## Tests
 
 `pkg/auth` (hashing, rules, tokens, throttle), `pkg/store/sessions_test.go`
-(migration v13→v14 incl. idempotency, register first-run rule, sessions,
+(register first-run rule, sessions,
 password change) and `pkg/api/auth_test.go` (first-run register, login
 success/failure, disabled user, throttle, sliding expiry, logout, every
 protected route → 401, password change invalidates other sessions, CSRF).
