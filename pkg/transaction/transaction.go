@@ -117,10 +117,9 @@ func (in CreateInput) Validate() (Transaction, error) {
 
 	cur := strings.ToUpper(strings.TrimSpace(in.Currency))
 	exponent, known := money.MinorUnits(cur)
-	switch {
-	case cur == "":
+	if cur == "" {
 		fields["currency"] = "is required"
-	case !known:
+	} else if !known {
 		fields["currency"] = fmt.Sprintf("%q is not a recognised ISO 4217 currency code", in.Currency)
 	}
 	exp.Currency = cur
@@ -138,50 +137,46 @@ func (in CreateInput) Validate() (Transaction, error) {
 	}
 
 	tt, okType := ParseType(in.Type)
-	switch {
-	case okType:
-	case normalizeType(in.Type) == BalanceAdjustment:
+	if normalizeType(in.Type) == BalanceAdjustment {
 		fields["type"] = ErrAdjustmentType
-	default:
+	} else if !okType {
 		fields["type"] = "must be one of: expense, income, transfer, asset_purchase"
 	}
 	exp.Type = tt
 
 	uid := common_type.NormalizeUID(in.BalanceUID)
-	switch {
-	case uid == "":
+
+	if uid == "" {
 		fields["balance_uid"] = "is required"
-	case !uid.Valid():
+	} else if !uid.Valid() {
 		fields["balance_uid"] = "must be a UUID (the uid of a balance)"
 	}
 	exp.BalanceUID = uid
 
 	// to_balance_uid is only checked once the type is known.
 	to := common_type.NormalizeUID(in.ToBalanceUID)
-	switch {
-	case !okType:
-	case !tt.HasDestination():
+	if !okType { // Do Nothing
+	} else if !tt.HasDestination() {
 		if to != "" {
 			fields["to_balance_uid"] = "is only allowed when type is transfer or asset_purchase"
 		}
-	case to == "":
+	} else if to == "" {
 		fields["to_balance_uid"] = "is required for a " + strings.ReplaceAll(string(tt), "_", " ")
-	case !to.Valid():
+	} else if !to.Valid() {
 		fields["to_balance_uid"] = "must be a UUID (the uid of a balance)"
-	case to == uid:
+	} else if to == uid {
 		fields["to_balance_uid"] = "must differ from balance_uid"
-	default:
+	} else {
 		exp.ToBalanceUID = &to
 	}
 
 	cat := common_type.NormalizeUID(in.CategoryUID)
-	switch {
-	case cat == "":
-	case okType && tt == Transfer:
+	if cat == "" { // Do Nothing
+	} else if okType && tt == Transfer {
 		fields["category_uid"] = "is not allowed for a transfer"
-	case !cat.Valid():
+	} else if !cat.Valid() {
 		fields["category_uid"] = "must be a UUID (the uid of a category)"
-	default:
+	} else {
 		exp.CategoryUID = &cat
 	}
 
