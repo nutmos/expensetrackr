@@ -143,7 +143,7 @@ func (s *Store) modifyCategoriesOnce(ctx context.Context, userUID string, fn fun
 
 // nameTaken reports whether another category (uid != skipUID) of the same
 // type already has this name, compared case-insensitively (Unicode folding).
-func nameTaken(cats []category.Category, c category.Category, skipUID string) bool {
+func nameTaken(cats []category.Category, c category.Category, skipUID common_type.UID) bool {
 	for _, o := range cats {
 		if o.UID != skipUID && o.Type == c.Type && strings.EqualFold(o.Name, c.Name) {
 			return true
@@ -153,9 +153,8 @@ func nameTaken(cats []category.Category, c category.Category, skipUID string) bo
 }
 
 func indexOfCategory(cats []category.Category, uid string) int {
-	uid = strings.ToLower(uid)
 	for i, c := range cats {
-		if c.UID == uid {
+		if c.UID.Matches(uid) {
 			return i
 		}
 	}
@@ -170,7 +169,7 @@ func (s *Store) CreateCategory(ctx context.Context, userUID string, c *category.
 		return err
 	}
 	out := *c
-	out.UID = uid.String()
+	out.UID = uid
 	out.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	out.UpdatedAt = nil
 	err = s.modifyCategories(ctx, userUID, func(_ *sql.Tx, cats []category.Category) ([]category.Category, error) {
@@ -239,9 +238,9 @@ func (s *Store) GetCategoryByUID(ctx context.Context, userUID, uid string) (cate
 	return category.Category{}, ErrNotFound
 }
 
-func countCategoryRefs(ctx context.Context, tx *sql.Tx, uid string) (int, error) {
+func countCategoryRefs(ctx context.Context, tx *sql.Tx, uid common_type.UID) (int, error) {
 	var n int
-	err := tx.QueryRowContext(ctx, `SELECT count(*) FROM transactions WHERE category_uid = ?`, strings.ToLower(uid)).Scan(&n)
+	err := tx.QueryRowContext(ctx, `SELECT count(*) FROM transactions WHERE category_uid = ?`, string(uid)).Scan(&n)
 	return n, err
 }
 

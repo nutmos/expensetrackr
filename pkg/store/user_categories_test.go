@@ -54,13 +54,13 @@ func TestUserCategoriesCRUDIsolationAndLimits(t *testing.T) {
 	if err := st.CreateCategory(ctx, b, &category.Category{Name: "Food", Type: category.Expense}); err != nil {
 		t.Errorf("bob same name: %v", err)
 	}
-	if _, err := st.GetCategoryByUID(ctx, b, food.UID); !errors.Is(err, ErrNotFound) {
+	if _, err := st.GetCategoryByUID(ctx, b, string(food.UID)); !errors.Is(err, ErrNotFound) {
 		t.Errorf("bob get alice's: %v", err)
 	}
-	if err := st.DeleteCategory(ctx, b, food.UID); !errors.Is(err, ErrNotFound) {
+	if err := st.DeleteCategory(ctx, b, string(food.UID)); !errors.Is(err, ErrNotFound) {
 		t.Errorf("bob delete alice's: %v", err)
 	}
-	if _, err := st.UpdateCategory(ctx, b, food.UID, func(c category.Category) (category.Category, error) { return c, nil }); !errors.Is(err, ErrNotFound) {
+	if _, err := st.UpdateCategory(ctx, b, string(food.UID), func(c category.Category) (category.Category, error) { return c, nil }); !errors.Is(err, ErrNotFound) {
 		t.Errorf("bob update alice's: %v", err)
 	}
 	if c, _ := st.ListCategories(ctx, b, ""); len(c) != 1 {
@@ -68,7 +68,7 @@ func TestUserCategoriesCRUDIsolationAndLimits(t *testing.T) {
 	}
 
 	// Update: rename, keep uid/created_at, uniqueness on rename.
-	up, err := st.UpdateCategory(ctx, a, strings.ToUpper(food.UID), func(c category.Category) (category.Category, error) {
+	up, err := st.UpdateCategory(ctx, a, strings.ToUpper(string(food.UID)), func(c category.Category) (category.Category, error) {
 		c.Name, c.Description = "Meals", "d"
 		return c, nil
 	})
@@ -79,7 +79,7 @@ func TestUserCategoriesCRUDIsolationAndLimits(t *testing.T) {
 	if err := st.CreateCategory(ctx, a, &tr); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.UpdateCategory(ctx, a, tr.UID, func(c category.Category) (category.Category, error) {
+	if _, err := st.UpdateCategory(ctx, a, string(tr.UID), func(c category.Category) (category.Category, error) {
 		c.Name = "meals"
 		return c, nil
 	}); !errors.Is(err, ErrDuplicateCategory) {
@@ -91,10 +91,10 @@ func TestUserCategoriesCRUDIsolationAndLimits(t *testing.T) {
 	if list, _ := st.ListCategories(ctx, a, ""); len(list) != 3 || list[0].Name != "Meals" || list[1].Name != "Transport" || list[2].Type != category.Income {
 		t.Errorf("order: %v", list)
 	}
-	if err := st.DeleteCategory(ctx, a, tr.UID); err != nil {
+	if err := st.DeleteCategory(ctx, a, string(tr.UID)); err != nil {
 		t.Errorf("delete: %v", err)
 	}
-	if _, err := st.GetCategoryByUID(ctx, a, tr.UID); !errors.Is(err, ErrNotFound) {
+	if _, err := st.GetCategoryByUID(ctx, a, string(tr.UID)); !errors.Is(err, ErrNotFound) {
 		t.Errorf("deleted still there: %v", err)
 	}
 
@@ -140,16 +140,16 @@ func TestUserCategoriesInUse(t *testing.T) {
 		VALUES ('cccccccc-cccc-4ccc-8ccc-cccccccccccc', 'expense', 100, 2, 'THB', 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'Cash', ?, '2026-01-05T00:00:00Z', 1, '2026-01-05T00:00:00Z')`, food.UID); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.DeleteCategory(ctx, u[0], food.UID); !errors.Is(err, ErrCategoryInUse) {
+	if err := st.DeleteCategory(ctx, u[0], string(food.UID)); !errors.Is(err, ErrCategoryInUse) {
 		t.Errorf("delete: %v", err)
 	}
-	if _, err := st.UpdateCategory(ctx, u[0], food.UID, func(c category.Category) (category.Category, error) {
+	if _, err := st.UpdateCategory(ctx, u[0], string(food.UID), func(c category.Category) (category.Category, error) {
 		c.Type = category.Income
 		return c, nil
 	}); !errors.Is(err, ErrCategoryInUse) {
 		t.Errorf("type change: %v", err)
 	}
-	if _, err := st.UpdateCategory(ctx, u[0], food.UID, func(c category.Category) (category.Category, error) {
+	if _, err := st.UpdateCategory(ctx, u[0], string(food.UID), func(c category.Category) (category.Category, error) {
 		c.Name = "Groceries"
 		return c, nil
 	}); err != nil {
