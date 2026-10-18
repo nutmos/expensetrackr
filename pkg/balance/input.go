@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/nutmos/expensetrackr/pkg/common_type"
 	"github.com/nutmos/expensetrackr/pkg/money"
 	"github.com/nutmos/expensetrackr/pkg/validate"
 )
@@ -16,7 +17,7 @@ import (
 // UID is accepted so clients can round-trip a previous response; it is
 // ignored (the server assigns and never changes it).
 type Input struct {
-	UID         string              `json:"uid,omitempty"` // ignored; server-assigned
+	UID         common_type.UID     `json:"uid,omitempty"` // ignored; server-assigned
 	Name        string              `json:"name"`
 	Type        string              `json:"type"`
 	Currency    string              `json:"currency"`
