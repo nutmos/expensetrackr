@@ -269,7 +269,7 @@ func (e *Transaction) AttachDestinationBalance(b balance.Balance) error {
 // the name is looked up from the categories table (or GET /api/categories)
 // when needed.
 func (e *Transaction) AttachCategory(c category.Category) error {
-	if e.CategoryUID == nil || c.UID == "" || !e.CategoryUID.Matches(c.UID) {
+	if e.CategoryUID == nil || c.UID == "" || !e.CategoryUID.Matches(c.UID.String()) {
 		return fieldError("category_uid", "does not match any category")
 	}
 	want := string(e.Type)
@@ -279,7 +279,7 @@ func (e *Transaction) AttachCategory(c category.Category) error {
 	if string(c.Type) != want {
 		return fieldError("category_uid", fmt.Sprintf("must be an %s category (this one is %s)", want, c.Type))
 	}
-	uid := UID(c.UID)
+	uid := c.UID
 	e.CategoryUID = &uid
 	return nil
 }

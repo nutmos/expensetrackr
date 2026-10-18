@@ -5,6 +5,8 @@ package category
 
 import (
 	"strings"
+
+	"github.com/nutmos/expensetrackr/pkg/common_type"
 )
 
 // Type is the kind of category.
@@ -29,12 +31,12 @@ func ParseType(s string) (Type, bool) {
 
 // Category is a stored category record.
 type Category struct {
-	UID         string  `json:"uid"` // server-assigned UUID v4; immutable
-	Name        string  `json:"name"`
-	Type        Type    `json:"type"`
-	Description string  `json:"description"`
-	CreatedAt   string  `json:"created_at"`
-	UpdatedAt   *string `json:"updated_at"`
+	UID         common_type.UID `json:"uid"` // server-assigned UUID v4; immutable
+	Name        string          `json:"name"`
+	Type        Type            `json:"type"`
+	Description string          `json:"description"`
+	CreatedAt   string          `json:"created_at"`
+	UpdatedAt   *string         `json:"updated_at"`
 }
 
 // Input returns the editable fields of c, e.g. to build a PUT body from a stored record.
