@@ -148,7 +148,7 @@ func TestBalanceUIDAssignedAndImmutable(t *testing.T) {
 	if err := st.CreateBalance(ctx, &b); err != nil {
 		t.Fatal(err)
 	}
-	if !looksLikeUUID(b.UID) || b.UID == "client-supplied-should-be-ignored" {
+	if !looksLikeUUID(string(b.UID)) || b.UID == "client-supplied-should-be-ignored" {
 		t.Fatalf("uid = %q", b.UID)
 	}
 	orig := b.UID
@@ -165,7 +165,7 @@ func TestBalanceUIDAssignedAndImmutable(t *testing.T) {
 	if upd.UID != orig || *upd.Balance != "20.00" {
 		t.Errorf("update changed uid or amount: %+v", upd)
 	}
-	got, err := st.GetBalanceByUID(ctx, orig)
+	got, err := st.GetBalanceByUID(ctx, string(orig))
 	if err != nil || got.ID != b.ID {
 		t.Errorf("GetBalanceByUID: %+v %v", got, err)
 	}

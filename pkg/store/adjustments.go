@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/nutmos/expensetrackr/pkg/balance"
+	"github.com/nutmos/expensetrackr/pkg/common_type"
 	"github.com/nutmos/expensetrackr/pkg/money"
 	"github.com/nutmos/expensetrackr/pkg/transaction"
 )
@@ -70,7 +71,7 @@ func recordBalanceAdjustment(ctx context.Context, tx *sql.Tx, cur, next balance.
 	if !ok {
 		return nil
 	}
-	uid, err := newUID()
+	uid, err := common_type.NewUID()
 	if err != nil {
 		return err
 	}

@@ -49,7 +49,7 @@ func newFixture(t *testing.T) *fixture {
 // amount returns "balance" for assets and "debt" for liabilities, plus version.
 func (f *fixture) amount(b balance.Balance) (string, int64) {
 	f.t.Helper()
-	got, err := f.st.GetBalanceByUID(context.Background(), b.UID)
+	got, err := f.st.GetBalanceByUID(context.Background(), string(b.UID))
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -68,9 +68,9 @@ func (f *fixture) want(b balance.Balance, amount string, version int64) {
 
 func (f *fixture) tx(typ, amount, currency string, from balance.Balance, to *balance.Balance) transaction.Transaction {
 	f.t.Helper()
-	in := transaction.CreateInput{Type: typ, Amount: transaction.DecimalInput(amount), Currency: currency, BalanceUID: from.UID, SpentAt: "2026-10-08T12:00:00+08:00"}
+	in := transaction.CreateInput{Type: typ, Amount: transaction.DecimalInput(amount), Currency: currency, BalanceUID: string(from.UID), SpentAt: "2026-10-08T12:00:00+08:00"}
 	if to != nil {
-		in.ToBalanceUID = to.UID
+		in.ToBalanceUID = string(to.UID)
 	}
 	e, err := in.Validate()
 	if err != nil {
@@ -157,12 +157,12 @@ func TestBalanceSignRules(t *testing.T) {
 func TestOverLimitStillComputed(t *testing.T) {
 	f := newFixture(t)
 	f.create(f.tx("expense", "950", "THB", f.card, nil))
-	got, _ := f.st.GetBalanceByUID(context.Background(), f.card.UID)
+	got, _ := f.st.GetBalanceByUID(context.Background(), string(f.card.UID))
 	if *got.Debt != "1050.00" || !*got.OverLimit || *got.Available != "-50.00" {
 		t.Errorf("over limit: debt %s over %v avail %s", *got.Debt, *got.OverLimit, *got.Available)
 	}
 	f.create(f.tx("transfer", "1100", "THB", f.pay, &f.card))
-	got, _ = f.st.GetBalanceByUID(context.Background(), f.card.UID)
+	got, _ = f.st.GetBalanceByUID(context.Background(), string(f.card.UID))
 	if *got.Debt != "-50.00" || *got.OverLimit || *got.Available != "1050.00" {
 		t.Errorf("in credit: debt %s over %v avail %s", *got.Debt, *got.OverLimit, *got.Available)
 	}
@@ -387,7 +387,7 @@ func TestConcurrentWritesStayConsistent(t *testing.T) {
 	f.want(f.card, "80.00", 1+n/2)
 
 	// Many clients PUT the same balance from the same version: exactly one wins.
-	b, _ := f.st.GetBalanceByUID(ctx, f.gold.UID)
+	b, _ := f.st.GetBalanceByUID(ctx, string(f.gold.UID))
 	var mu sync.Mutex
 	wins, conflicts := 0, 0
 	for i := 0; i < n; i++ {

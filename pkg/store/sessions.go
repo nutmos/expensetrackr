@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/nutmos/expensetrackr/pkg/common_type"
 	"github.com/nutmos/expensetrackr/pkg/user"
 )
 
@@ -50,7 +51,7 @@ func (s *Store) GetUserByUsername(ctx context.Context, username string) (user.Us
 // transaction. With firstRun set it fails with ErrRegistrationClosed if a
 // user with a password already exists (checked inside the same transaction).
 func (s *Store) RegisterUser(ctx context.Context, u *user.User, hash string, firstRun bool) error {
-	uid, err := newUID()
+	uid, err := common_type.NewUID()
 	if err != nil {
 		return err
 	}
@@ -86,7 +87,7 @@ func (s *Store) RegisterUser(ctx context.Context, u *user.User, hash string, fir
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("register: %w", err)
 	}
-	u.ID, u.UID, u.CreatedAt, u.Status = id, uid, now, user.StatusActive
+	u.ID, u.UID, u.CreatedAt, u.Status = id, uid.String(), now, user.StatusActive
 	u.PasswordHash, u.PasswordUpdated, u.HasPassword = &hash, &now, true
 	return nil
 }

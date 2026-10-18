@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/nutmos/expensetrackr/pkg/balance"
+	"github.com/nutmos/expensetrackr/pkg/common_type"
 	"github.com/nutmos/expensetrackr/pkg/money"
 
-	"github.com/google/uuid"
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 )
@@ -25,25 +25,6 @@ var ErrDuplicateName = errors.New("a balance with this name already exists")
 var ErrBalanceInUse = errors.New("balance is used by transactions")
 
 const balanceCols = `id, uid, name, type, currency, description, amount_scale, balance_minor, debt_minor, limit_minor, created_at, updated_at, version`
-
-// newUID returns a random lowercase UUID v4 string (used for transactions).
-func newUID() (string, error) {
-	id, err := uuid.NewRandom()
-	if err != nil {
-		return "", fmt.Errorf("generate uid: %w", err)
-	}
-	return id.String(), nil
-}
-
-// newBalanceUID returns a random UUID v4 string
-// (xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx, lowercase).
-func newBalanceUID() (string, error) {
-	id, err := uuid.NewRandom()
-	if err != nil {
-		return "", fmt.Errorf("generate balance uid: %w", err)
-	}
-	return id.String(), nil
-}
 
 // mapBalanceErr turns a UNIQUE violation on balances.name into ErrDuplicateName.
 func mapBalanceErr(err error) error {
@@ -68,7 +49,7 @@ func (s *Store) CreateBalance(ctx context.Context, b *balance.Balance) error {
 	if !ok {
 		return fmt.Errorf("unknown currency %q", b.Currency)
 	}
-	uid, err := newBalanceUID()
+	uid, err := common_type.NewUID()
 	if err != nil {
 		return err
 	}

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nutmos/expensetrackr/pkg/common_type"
 	"github.com/nutmos/expensetrackr/pkg/user"
 
 	"modernc.org/sqlite"
@@ -58,11 +59,11 @@ func nullStr(p *string) any {
 // CreateUser inserts a validated profile with a new UUID v4 uid. Auth fields
 // (password hash, verification, last login) start empty; status is active.
 func (s *Store) CreateUser(ctx context.Context, u *user.User) error {
-	uid, err := newUID()
+	uid, err := common_type.NewUID()
 	if err != nil {
 		return err
 	}
-	u.UID = uid
+	u.UID = uid.String()
 	u.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	u.UpdatedAt, u.EmailVerifiedAt, u.PasswordHash, u.PasswordUpdated, u.LastLoginAt = nil, nil, nil, nil, nil
 	u.HasPassword = false
@@ -211,11 +212,11 @@ func (s *Store) CreateIdentity(ctx context.Context, id *user.Identity) error {
 	if err := id.Validate(); err != nil {
 		return err
 	}
-	uid, err := newUID()
+	uid, err := common_type.NewUID()
 	if err != nil {
 		return err
 	}
-	id.UID = uid
+	id.UID = uid.String()
 	id.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	id.LastUsedAt = nil
 	res, err := s.db.ExecContext(ctx,
