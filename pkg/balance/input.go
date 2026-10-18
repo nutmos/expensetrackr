@@ -61,29 +61,26 @@ func (in Input) Validate() (Balance, error) {
 	var b Balance
 
 	name := strings.TrimSpace(in.Name)
-	switch {
-	case name == "":
+	if name == "" {
 		fields["name"] = "is required"
-	case utf8.RuneCountInString(name) > MaxNameLen:
+	} else if utf8.RuneCountInString(name) > MaxNameLen {
 		fields["name"] = fmt.Sprintf("must be at most %d characters", MaxNameLen)
 	}
 	b.Name = name
 
 	t := normalizeType(in.Type)
-	switch {
-	case t == "":
+	if t == "" {
 		fields["type"] = "is required (one of " + typeList() + ")"
-	case !t.Valid():
+	} else if !t.Valid() {
 		fields["type"] = fmt.Sprintf("%q is not valid; use one of %s", in.Type, typeList())
 	}
 	b.Type = t
 
 	cur := strings.ToUpper(strings.TrimSpace(in.Currency))
 	scale, known := money.MinorUnits(cur)
-	switch {
-	case cur == "":
+	if cur == "" {
 		fields["currency"] = "is required"
-	case !known:
+	} else if !known {
 		fields["currency"] = fmt.Sprintf("%q is not a recognised ISO 4217 currency code", in.Currency)
 	}
 	b.Currency = cur
@@ -119,12 +116,11 @@ func (in Input) Validate() (Balance, error) {
 	}
 
 	var bal, debt, limit *int64
-	switch {
-	case t.IsAsset():
+	if t.IsAsset() {
 		bal = parse("balance", in.Balance, true, money.ParseSigned)
 		notUsed("debt", in.Debt, "credit_card and other_liability")
 		notUsed("limit", in.Limit, "credit_card and other_liability")
-	case t.IsLiability():
+	} else if t.IsLiability() {
 		// Debt may be negative: an overpaid card or loan is in credit.
 		debt = parse("debt", in.Debt, true, money.ParseSigned)
 		limit = parse("limit", in.Limit, true, money.ParseNonNegative)
