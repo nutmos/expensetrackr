@@ -81,7 +81,7 @@ func (in Input) Validate() (Balance, error) {
 	parse := func(name string, d *money.DecimalInput, required bool, fn func(string, int) (int64, error)) *int64 {
 		if !provided(d) {
 			if required {
-				fields[name] = "is required for type " + string(t)
+				fields[name] = "is required for type " + string(b.Type)
 			}
 			return nil
 		}
@@ -97,7 +97,7 @@ func (in Input) Validate() (Balance, error) {
 	}
 	notUsed := func(name string, d *money.DecimalInput, usedBy string) {
 		if provided(d) {
-			fields[name] = fmt.Sprintf("is not used for type %s (only for %s)", t, usedBy)
+			fields[name] = fmt.Sprintf("is not used for type %s (only for %s)", b.Type, usedBy)
 		}
 	}
 
@@ -149,7 +149,7 @@ func (b *Balance) inputCurrencyField(in string) (scale int, known bool, out stri
 		return scale, known, "is required"
 	}
 	if !known {
-		return scale, known, fmt.Sprintf("%q is not a recognised ISO 4217 currency code", in.Currency)
+		return scale, known, fmt.Sprintf("%q is not a recognised ISO 4217 currency code", in)
 	}
 	return scale, known, ""
 }
