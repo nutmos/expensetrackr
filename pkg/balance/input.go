@@ -60,36 +60,22 @@ func (in Input) Validate() (Balance, error) {
 	fields := map[string]string{}
 	var b Balance
 
-	name := strings.TrimSpace(in.Name)
-	if name == "" {
-		fields["name"] = "is required"
-	} else if utf8.RuneCountInString(name) > MaxNameLen {
-		fields["name"] = fmt.Sprintf("must be at most %d characters", MaxNameLen)
+	if out := b.inputNameField(in.Name); out != "" {
+		fields["name"] = out
 	}
-	b.Name = name
 
-	t := normalizeType(in.Type)
-	if t == "" {
-		fields["type"] = "is required (one of " + typeList() + ")"
-	} else if !t.Valid() {
-		fields["type"] = fmt.Sprintf("%q is not valid; use one of %s", in.Type, typeList())
+	if out := b.inputTypeField(in.Type); out != "" {
+		fields["type"] = out
 	}
-	b.Type = t
 
-	cur := strings.ToUpper(strings.TrimSpace(in.Currency))
-	scale, known := money.MinorUnits(cur)
-	if cur == "" {
-		fields["currency"] = "is required"
-	} else if !known {
-		fields["currency"] = fmt.Sprintf("%q is not a recognised ISO 4217 currency code", in.Currency)
+	scale, known, outCurrency := b.inputCurrencyField(in.Currency)
+	if outCurrency != "" {
+		fields["currency"] = outCurrency
 	}
-	b.Currency = cur
 
-	desc := strings.TrimSpace(in.Description)
-	if utf8.RuneCountInString(desc) > MaxDescriptionLen {
-		fields["description"] = fmt.Sprintf("must be at most %d characters", MaxDescriptionLen)
+	if out := b.inputDescriptionField(in.Description); out != "" {
+		fields["description"] = out
 	}
-	b.Description = desc
 
 	// parse validates one amount field; it returns nil if absent or invalid.
 	parse := func(name string, d *money.DecimalInput, required bool, fn func(string, int) (int64, error)) *int64 {
@@ -116,11 +102,11 @@ func (in Input) Validate() (Balance, error) {
 	}
 
 	var bal, debt, limit *int64
-	if t.IsAsset() {
+	if b.Type.IsAsset() {
 		bal = parse("balance", in.Balance, true, money.ParseSigned)
 		notUsed("debt", in.Debt, "credit_card and other_liability")
 		notUsed("limit", in.Limit, "credit_card and other_liability")
-	} else if t.IsLiability() {
+	} else if b.Type.IsLiability() {
 		// Debt may be negative: an overpaid card or loan is in credit.
 		debt = parse("debt", in.Debt, true, money.ParseSigned)
 		limit = parse("limit", in.Limit, true, money.ParseNonNegative)
@@ -132,6 +118,48 @@ func (in Input) Validate() (Balance, error) {
 	}
 	b.SetAmounts(scale, bal, debt, limit)
 	return b, nil
+}
+
+func (b *Balance) inputNameField(in string) string {
+	b.Name = strings.TrimSpace(in)
+	if b.Name == "" {
+		return "is required"
+	}
+	if utf8.RuneCountInString(b.Name) > MaxNameLen {
+		return fmt.Sprintf("must be at most %d characters", MaxNameLen)
+	}
+	return ""
+}
+
+func (b *Balance) inputTypeField(in string) string {
+	b.Type = normalizeType(in)
+	if b.Type == "" {
+		return "is required (one of " + typeList() + ")"
+	}
+	if !b.Type.Valid() {
+		return fmt.Sprintf("%q is not valid; use one of %s", in, typeList())
+	}
+	return ""
+}
+
+func (b *Balance) inputCurrencyField(in string) (scale int, known bool, out string) {
+	b.Currency = strings.ToUpper(strings.TrimSpace(in))
+	scale, known = money.MinorUnits(b.Currency)
+	if b.Currency == "" {
+		return scale, known, "is required"
+	}
+	if !known {
+		return scale, known, fmt.Sprintf("%q is not a recognised ISO 4217 currency code", in.Currency)
+	}
+	return scale, known, ""
+}
+
+func (b *Balance) inputDescriptionField(in string) string {
+	b.Description = strings.TrimSpace(in)
+	if utf8.RuneCountInString(b.Description) > MaxDescriptionLen {
+		return fmt.Sprintf("must be at most %d characters", MaxDescriptionLen)
+	}
+	return ""
 }
 
 // ErrTypeChanged is the field message for an update that tries to change type.
