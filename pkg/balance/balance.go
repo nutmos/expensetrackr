@@ -26,7 +26,7 @@ type Balance struct {
 	UID            common_type.UID `json:"uid"` // server-assigned UUID v4; immutable
 	Name           string          `json:"name"`
 	Type           Type            `json:"type"`
-	Kind           string          `json:"kind"`     // "asset" or "liability" (derived from type)
+	Kind           Kind            `json:"kind"`     // "asset" or "liability" (derived from type)
 	Currency       string          `json:"currency"` // base currency, ISO 4217
 	Description    string          `json:"description"`
 	Balance        *string         `json:"balance"` // decimal string; may be negative (overdraft)
@@ -84,14 +84,13 @@ var ErrOverflow = errors.New("amount out of range")
 // balance or lowers a liability's debt (possibly below zero: in credit). The
 // derived fields (available, over_limit) are recomputed.
 func (b *Balance) ApplyValueDelta(delta int64) error {
-	switch {
-	case b.Type.IsAsset() && b.BalanceMinor != nil:
+	if b.Type.IsAsset() && b.BalanceMinor != nil {
 		v, ok := addChecked(*b.BalanceMinor, delta)
 		if !ok {
 			return ErrOverflow
 		}
 		b.SetAmounts(b.Scale, &v, nil, nil)
-	case b.Type.IsLiability() && b.DebtMinor != nil && b.LimitMinor != nil:
+	} else if b.Type.IsLiability() && b.DebtMinor != nil && b.LimitMinor != nil {
 		if delta == math.MinInt64 {
 			return ErrOverflow
 		}
@@ -101,7 +100,7 @@ func (b *Balance) ApplyValueDelta(delta int64) error {
 		}
 		limit := *b.LimitMinor
 		b.SetAmounts(b.Scale, nil, &v, &limit)
-	default:
+	} else {
 		return fmt.Errorf("balance %q has no amount for type %q", b.UID, b.Type)
 	}
 	return nil

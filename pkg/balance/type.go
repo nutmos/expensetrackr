@@ -18,6 +18,13 @@ var Types = []Type{PaymentAccount, CreditCard, OtherAsset, OtherLiability}
 // Valid reports whether t is a known type.
 func (t Type) Valid() bool { return t.IsAsset() || t.IsLiability() }
 
+type Kind string
+
+const (
+	Asset     Kind = "asset"
+	Liability Kind = "liability"
+)
+
 // IsAsset reports whether t carries a balance (payment_account, other_asset).
 func (t Type) IsAsset() bool { return t == PaymentAccount || t == OtherAsset }
 
@@ -25,12 +32,12 @@ func (t Type) IsAsset() bool { return t == PaymentAccount || t == OtherAsset }
 func (t Type) IsLiability() bool { return t == CreditCard || t == OtherLiability }
 
 // Kind is "asset" or "liability" ("" for unknown types).
-func (t Type) Kind() string {
-	switch {
-	case t.IsAsset():
-		return "asset"
-	case t.IsLiability():
-		return "liability"
+func (t Type) Kind() Kind {
+	switch t {
+	case PaymentAccount, OtherAsset:
+		return Asset
+	case CreditCard, OtherLiability:
+		return Liability
 	}
 	return ""
 }
