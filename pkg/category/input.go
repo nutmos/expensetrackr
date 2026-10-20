@@ -29,10 +29,10 @@ func (in Input) Validate() (Category, error) {
 	var c Category
 
 	name := strings.TrimSpace(in.Name)
-	switch {
-	case name == "":
+
+	if name == "" {
 		fields["name"] = "is required"
-	case utf8.RuneCountInString(name) > MaxNameLen:
+	} else if utf8.RuneCountInString(name) > MaxNameLen {
 		fields["name"] = fmt.Sprintf("must be at most %d characters", MaxNameLen)
 	}
 	c.Name = name
