@@ -40,18 +40,18 @@ func TestUserCategoriesCRUDIsolationAndLimits(t *testing.T) {
 	if c, err := st.ListCategories(ctx, a, ""); err != nil || len(c) != 0 {
 		t.Fatalf("empty list: %v %v", c, err)
 	}
-	food := category.Category{Name: "Food", Type: category.Expense}
+	food := category.Category{Name: "Food", Type: category.TypeExpense}
 	if err := st.CreateCategory(ctx, a, &food); err != nil || len(food.UID) != 36 {
 		t.Fatalf("create: %+v %v", food, err)
 	}
-	if err := st.CreateCategory(ctx, a, &category.Category{Name: "FOOD", Type: category.Expense}); !errors.Is(err, ErrDuplicateCategory) {
+	if err := st.CreateCategory(ctx, a, &category.Category{Name: "FOOD", Type: category.TypeExpense}); !errors.Is(err, ErrDuplicateCategory) {
 		t.Errorf("dup: %v", err)
 	}
-	if err := st.CreateCategory(ctx, a, &category.Category{Name: "food", Type: category.Income}); err != nil {
+	if err := st.CreateCategory(ctx, a, &category.Category{Name: "food", Type: category.TypeIncome}); err != nil {
 		t.Errorf("same name other type: %v", err)
 	}
 	// Bob may reuse Alice's names, and cannot see or touch her categories.
-	if err := st.CreateCategory(ctx, b, &category.Category{Name: "Food", Type: category.Expense}); err != nil {
+	if err := st.CreateCategory(ctx, b, &category.Category{Name: "Food", Type: category.TypeExpense}); err != nil {
 		t.Errorf("bob same name: %v", err)
 	}
 	if _, err := st.GetCategoryByUID(ctx, b, string(food.UID)); !errors.Is(err, ErrNotFound) {
@@ -75,7 +75,7 @@ func TestUserCategoriesCRUDIsolationAndLimits(t *testing.T) {
 	if err != nil || up.UID != food.UID || up.CreatedAt != food.CreatedAt || up.UpdatedAt == nil || up.Name != "Meals" {
 		t.Fatalf("update: %+v %v", up, err)
 	}
-	tr := category.Category{Name: "Transport", Type: category.Expense}
+	tr := category.Category{Name: "Transport", Type: category.TypeExpense}
 	if err := st.CreateCategory(ctx, a, &tr); err != nil {
 		t.Fatal(err)
 	}
@@ -85,10 +85,10 @@ func TestUserCategoriesCRUDIsolationAndLimits(t *testing.T) {
 	}); !errors.Is(err, ErrDuplicateCategory) {
 		t.Errorf("rename to dup: %v", err)
 	}
-	if list, _ := st.ListCategories(ctx, a, category.Income); len(list) != 1 || list[0].Name != "food" {
+	if list, _ := st.ListCategories(ctx, a, category.TypeIncome); len(list) != 1 || list[0].Name != "food" {
 		t.Errorf("income filter: %v", list)
 	}
-	if list, _ := st.ListCategories(ctx, a, ""); len(list) != 3 || list[0].Name != "Meals" || list[1].Name != "Transport" || list[2].Type != category.Income {
+	if list, _ := st.ListCategories(ctx, a, ""); len(list) != 3 || list[0].Name != "Meals" || list[1].Name != "Transport" || list[2].Type != category.TypeIncome {
 		t.Errorf("order: %v", list)
 	}
 	if err := st.DeleteCategory(ctx, a, string(tr.UID)); err != nil {
@@ -100,7 +100,7 @@ func TestUserCategoriesCRUDIsolationAndLimits(t *testing.T) {
 
 	// Limit.
 	for i := 0; ; i++ {
-		err := st.CreateCategory(ctx, b, &category.Category{Name: fmt.Sprintf("c%d", i), Type: category.Expense})
+		err := st.CreateCategory(ctx, b, &category.Category{Name: fmt.Sprintf("c%d", i), Type: category.TypeExpense})
 		if errors.Is(err, ErrCategoryLimit) {
 			if c, _ := st.ListCategories(ctx, b, ""); len(c) != MaxCategoriesPerUser {
 				t.Errorf("limit hit at %d", len(c))
@@ -132,7 +132,7 @@ func TestUserCategoriesCRUDIsolationAndLimits(t *testing.T) {
 func TestUserCategoriesInUse(t *testing.T) {
 	ctx := context.Background()
 	st, u := newUserStore(t, "alice")
-	food := category.Category{Name: "Food", Type: category.Expense}
+	food := category.Category{Name: "Food", Type: category.TypeExpense}
 	if err := st.CreateCategory(ctx, u[0], &food); err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestUserCategoriesInUse(t *testing.T) {
 		t.Errorf("delete: %v", err)
 	}
 	if _, err := st.UpdateCategory(ctx, u[0], string(food.UID), func(c category.Category) (category.Category, error) {
-		c.Type = category.Income
+		c.Type = category.TypeIncome
 		return c, nil
 	}); !errors.Is(err, ErrCategoryInUse) {
 		t.Errorf("type change: %v", err)
@@ -161,7 +161,7 @@ func TestUserCategoriesVersionConflictRetry(t *testing.T) {
 	ctx := context.Background()
 	st, u := newUserStore(t, "alice")
 	a := u[0]
-	first := category.Category{Name: "First", Type: category.Expense}
+	first := category.Category{Name: "First", Type: category.TypeExpense}
 	if err := st.CreateCategory(ctx, a, &first); err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestUserCategoriesVersionConflictRetry(t *testing.T) {
 		}
 	}
 	defer func() { testHookCategoryRead = nil }()
-	second := category.Category{Name: "Second", Type: category.Expense}
+	second := category.Category{Name: "Second", Type: category.TypeExpense}
 	if err := st.CreateCategory(ctx, a, &second); err != nil {
 		t.Fatalf("create with one conflict: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestUserCategoriesVersionConflictRetry(t *testing.T) {
 			t.Error(err)
 		}
 	}
-	if err := st.CreateCategory(ctx, a, &category.Category{Name: "Third", Type: category.Expense}); !errors.Is(err, errCategoryRowConflict) {
+	if err := st.CreateCategory(ctx, a, &category.Category{Name: "Third", Type: category.TypeExpense}); !errors.Is(err, errCategoryRowConflict) {
 		t.Errorf("persistent conflict: %v", err)
 	}
 }
@@ -216,7 +216,7 @@ func TestUserCategoriesConcurrentWrites(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			errs <- st.CreateCategory(ctx, u[0], &category.Category{Name: fmt.Sprintf("cat %d", i), Type: category.Expense})
+			errs <- st.CreateCategory(ctx, u[0], &category.Category{Name: fmt.Sprintf("cat %d", i), Type: category.TypeExpense})
 		}(i)
 	}
 	wg.Wait()
