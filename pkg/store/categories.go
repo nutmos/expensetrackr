@@ -191,7 +191,7 @@ func (s *Store) CreateCategory(ctx context.Context, userUID string, c *category.
 // sortCategories orders expense first, then income, by name (case-insensitive).
 func sortCategories(cats []category.Category) {
 	rank := func(t category.Type) int {
-		if t == category.Expense {
+		if t == category.TypeExpense {
 			return 1
 		}
 		return 2

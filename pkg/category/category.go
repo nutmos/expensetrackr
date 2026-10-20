@@ -13,15 +13,16 @@ import (
 type Type string
 
 const (
-	Expense Type = "expense"
-	Income  Type = "income"
+	TypeExpense Type = "expense"
+	TypeIncome  Type = "income"
+	TypeUnknown Type = "unknown"
 )
 
 // Types lists every type in display order.
-var Types = []Type{Expense, Income}
+var Types = []Type{TypeExpense, TypeIncome}
 
 // Valid reports whether t is a known type.
-func (t Type) Valid() bool { return t == Expense || t == Income }
+func (t Type) Valid() bool { return t == TypeExpense || t == TypeIncome }
 
 // ParseType normalizes s; ok is false for unknown or empty values.
 func ParseType(s string) (Type, bool) {

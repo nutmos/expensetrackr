@@ -111,7 +111,7 @@ func (s *Store) ListPayableBalances(ctx context.Context) ([]balance.Balance, err
 	}
 	out := make([]balance.Balance, 0, len(all))
 	for _, b := range all {
-		if b.Type == balance.PaymentAccount || b.Type == balance.CreditCard {
+		if b.Type == balance.TypePaymentAccount || b.Type == balance.TypeCreditCard {
 			out = append(out, b)
 		}
 	}

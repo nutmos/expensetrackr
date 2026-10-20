@@ -90,15 +90,15 @@ func TestAttachPaymentBalance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ok := balance.Balance{UID: "11111111-1111-4111-8111-111111111111", Name: "KBank debit", Type: balance.PaymentAccount}
+	ok := balance.Balance{UID: "11111111-1111-4111-8111-111111111111", Name: "KBank debit", Type: balance.TypePaymentAccount}
 	if err := e.AttachPaymentBalance(ok); err != nil || e.Account != "KBank debit" {
 		t.Errorf("attach: %+v %v", e, err)
 	}
-	card := balance.Balance{UID: "11111111-1111-4111-8111-111111111111", Name: "Visa", Type: balance.CreditCard}
+	card := balance.Balance{UID: "11111111-1111-4111-8111-111111111111", Name: "Visa", Type: balance.TypeCreditCard}
 	if err := e.AttachPaymentBalance(card); err != nil || e.Account != "Visa" {
 		t.Errorf("card: %+v %v", e, err)
 	}
-	asset := balance.Balance{UID: "11111111-1111-4111-8111-111111111111", Name: "Gold", Type: balance.OtherAsset}
+	asset := balance.Balance{UID: "11111111-1111-4111-8111-111111111111", Name: "Gold", Type: balance.TypeOtherAsset}
 	var ve *ValidationError
 	if err := e.AttachPaymentBalance(asset); !errors.As(err, &ve) || ve.Fields["balance_uid"] == "" {
 		t.Errorf("other_asset should fail: %v", err)
@@ -106,10 +106,10 @@ func TestAttachPaymentBalance(t *testing.T) {
 }
 
 func TestIsPayableType(t *testing.T) {
-	if !IsPayableType(balance.PaymentAccount) || !IsPayableType(balance.CreditCard) {
+	if !IsPayableType(balance.TypePaymentAccount) || !IsPayableType(balance.TypeCreditCard) {
 		t.Fatal("expected payable")
 	}
-	if IsPayableType(balance.OtherAsset) || IsPayableType(balance.OtherLiability) {
+	if IsPayableType(balance.TypeOtherAsset) || IsPayableType(balance.TypeOtherLiability) {
 		t.Fatal("expected not payable")
 	}
 }

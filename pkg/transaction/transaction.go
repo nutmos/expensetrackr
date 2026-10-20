@@ -61,7 +61,7 @@ func ParseFilterType(s string) (Type, bool) {
 // IsPayableType reports whether a balance of this type can be used as a payment
 // account on a transaction (payment accounts and credit cards only).
 func IsPayableType(t balance.Type) bool {
-	return t == balance.PaymentAccount || t == balance.CreditCard
+	return t == balance.TypePaymentAccount || t == balance.TypeCreditCard
 }
 
 // SourceAllowed reports whether a balance type may be used as balance_uid for
@@ -75,7 +75,7 @@ func SourceAllowed(tt Type, bt balance.Type) bool {
 	case Expense, AssetPurchase:
 		return IsPayableType(bt)
 	case Income:
-		return bt == balance.PaymentAccount || bt == balance.OtherAsset
+		return bt == balance.TypePaymentAccount || bt == balance.TypeOtherAsset
 	case Transfer:
 		return bt.Valid()
 	}
@@ -103,7 +103,7 @@ func DestinationAllowed(tt Type, bt balance.Type) bool {
 	case Transfer:
 		return bt.Valid()
 	case AssetPurchase:
-		return bt == balance.OtherAsset
+		return bt == balance.TypeOtherAsset
 	}
 	return false
 }
