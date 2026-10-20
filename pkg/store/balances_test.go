@@ -70,15 +70,15 @@ func TestBalanceCRUDAndConstraints(t *testing.T) {
 		in.Balance = dec("12")
 		return in.ValidateUpdate(cur.Type)
 	})
-	if err != nil || *upd.Balance != "12.00" || upd.Type != balance.PaymentAccount || upd.UpdatedAt == nil {
+	if err != nil || *upd.Balance != "12.00" || upd.Type != balance.TypePaymentAccount || upd.UpdatedAt == nil {
 		t.Errorf("same-type update: %+v %v", upd, err)
 	}
 
 	list, _ := st.ListBalances(ctx, "")
-	if len(list) != 2 || list[0].Type != balance.PaymentAccount || list[1].Type != balance.CreditCard {
+	if len(list) != 2 || list[0].Type != balance.TypePaymentAccount || list[1].Type != balance.TypeCreditCard {
 		t.Errorf("list order: %+v", list)
 	}
-	if only, _ := st.ListBalances(ctx, balance.CreditCard); len(only) != 1 {
+	if only, _ := st.ListBalances(ctx, balance.TypeCreditCard); len(only) != 1 {
 		t.Errorf("type filter: %d", len(only))
 	}
 	if err := st.DeleteBalance(ctx, card.ID); err != nil {
