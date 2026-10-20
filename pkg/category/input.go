@@ -28,31 +28,51 @@ func (in Input) Validate() (Category, error) {
 	fields := map[string]string{}
 	var c Category
 
-	name := strings.TrimSpace(in.Name)
-
-	if name == "" {
-		fields["name"] = "is required"
-	} else if utf8.RuneCountInString(name) > MaxNameLen {
-		fields["name"] = fmt.Sprintf("must be at most %d characters", MaxNameLen)
-	}
-	c.Name = name
-
-	if t, ok := ParseType(in.Type); ok {
-		c.Type = t
-	} else if strings.TrimSpace(in.Type) == "" {
-		fields["type"] = "is required (expense or income)"
-	} else {
-		fields["type"] = "must be one of: expense, income"
+	if nameErr := c.inputNameField(in.Name); nameErr != "" {
+		fields["name"] = nameErr
 	}
 
-	desc := strings.TrimSpace(in.Description)
-	if utf8.RuneCountInString(desc) > MaxDescriptionLen {
-		fields["description"] = fmt.Sprintf("must be at most %d characters", MaxDescriptionLen)
+	if typeErr := c.inputTypeField(in.Type); typeErr != "" {
+		fields["type"] = typeErr
 	}
-	c.Description = desc
+
+	if descErr := c.inputDescriptionField(in.Type); descErr != "" {
+		fields["description"] = descErr
+	}
 
 	if len(fields) > 0 {
 		return Category{}, &validate.ValidationError{Fields: fields}
 	}
 	return c, nil
+}
+
+func (c *Category) inputNameField(in string) string {
+	c.Name = strings.TrimSpace(in)
+	if c.Name == "" {
+		return "is required"
+	}
+	if utf8.RuneCountInString(c.Name) > MaxNameLen {
+		return fmt.Sprintf("must be at most %d characters", MaxNameLen)
+	}
+	return ""
+}
+
+func (c *Category) inputTypeField(in string) string {
+	if t, ok := ParseType(in); ok {
+		c.Type = t
+		return ""
+	}
+	if strings.TrimSpace(in) == "" {
+		return "is required (expense or income)"
+	} else {
+		return "must be one of: expense, income"
+	}
+}
+
+func (c *Category) inputDescriptionField(in string) string {
+	c.Description = strings.TrimSpace(in)
+	if utf8.RuneCountInString(c.Description) > MaxDescriptionLen {
+		return fmt.Sprintf("must be at most %d characters", MaxDescriptionLen)
+	}
+	return ""
 }
