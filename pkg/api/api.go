@@ -128,26 +128,25 @@ func writeInputError(c *gin.Context, err error) {
 	var ve *validate.ValidationError
 	var re *validate.RequestError
 	var dup *store.DuplicateImportRefError
-	switch {
-	case errors.As(err, &ve):
+	if errors.As(err, &ve) {
 		c.JSON(http.StatusUnprocessableEntity, errorBody{Error: "validation failed", Fields: ve.Fields})
-	case errors.As(err, &re):
+	} else if errors.As(err, &re) {
 		c.JSON(http.StatusBadRequest, errorBody{Error: re.Msg})
-	case errors.Is(err, store.ErrNotFound):
+	} else if errors.Is(err, store.ErrNotFound) {
 		c.JSON(http.StatusNotFound, errorBody{Error: "transaction not found"})
-	case errors.Is(err, fx.ErrUnsupported):
+	} else if errors.Is(err, fx.ErrUnsupported) {
 		c.JSON(http.StatusUnprocessableEntity, errorBody{Error: fxMessage(err), Code: "exchange_rate_unsupported",
 			Fields: map[string]string{"to_amount": "no exchange rate is available for this currency pair; provide to_amount manually"}})
-	case errors.Is(err, fx.ErrUnavailable):
+	} else if errors.Is(err, fx.ErrUnavailable) {
 		c.JSON(http.StatusServiceUnavailable, errorBody{Error: fxMessage(err), Code: "exchange_rate_unavailable"})
-	case errors.Is(err, fx.ErrBadUpstream):
+	} else if errors.Is(err, fx.ErrBadUpstream) {
 		c.JSON(http.StatusBadGateway, errorBody{Error: fxMessage(err), Code: "exchange_rate_unavailable"})
-	case errors.Is(err, store.ErrReadOnly):
+	} else if errors.Is(err, store.ErrReadOnly) {
 		c.JSON(http.StatusConflict, errorBody{Error: err.Error(), Code: "balance_adjustment_readonly"})
-	case errors.As(err, &dup):
+	} else if errors.As(err, &dup) {
 		c.JSON(http.StatusConflict, errorBody{Error: dup.Error(), Code: "duplicate_import_ref",
 			Fields: map[string]string{"import_ref": "is already used on this balance by transaction " + dup.ExistingUID}})
-	default:
+	} else {
 		internalError(c, err)
 	}
 }
@@ -161,20 +160,23 @@ func describeJSONError(err error) string {
 	var syn *json.SyntaxError
 	var typ *json.UnmarshalTypeError
 	var mbe *http.MaxBytesError
-	switch {
-	case errors.Is(err, io.EOF):
+	if errors.Is(err, io.EOF) {
 		return "request body is empty; expected a JSON object"
-	case errors.As(err, &syn):
-		return fmt.Sprintf("malformed JSON at byte %d", syn.Offset)
-	case errors.As(err, &typ) && typ.Field == "":
-		return "request body must be a JSON object"
-	case errors.As(err, &typ):
-		return fmt.Sprintf("field %q must be a %s", typ.Field, typ.Type)
-	case errors.As(err, &mbe):
-		return fmt.Sprintf("request body too large (max %d bytes)", mbe.Limit)
-	case strings.HasPrefix(err.Error(), "json: unknown field "):
-		return "unknown field " + strings.TrimPrefix(err.Error(), "json: unknown field ")
-	default:
-		return "invalid JSON: " + err.Error()
 	}
+	if errors.As(err, &syn) {
+		return fmt.Sprintf("malformed JSON at byte %d", syn.Offset)
+	}
+	if errors.As(err, &typ) && typ.Field == "" {
+		return "request body must be a JSON object"
+	}
+	if errors.As(err, &typ) {
+		return fmt.Sprintf("field %q must be a %s", typ.Field, typ.Type)
+	}
+	if errors.As(err, &mbe) {
+		return fmt.Sprintf("request body too large (max %d bytes)", mbe.Limit)
+	}
+	if strings.HasPrefix(err.Error(), "json: unknown field ") {
+		return "unknown field " + strings.TrimPrefix(err.Error(), "json: unknown field ")
+	}
+	return "invalid JSON: " + err.Error()
 }

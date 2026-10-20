@@ -89,14 +89,13 @@ func ginToOpenAPIPath(p string) string {
 func diff(have, want []string) (missing, extra []string) {
 	i, j := 0, 0
 	for i < len(have) && j < len(want) {
-		switch {
-		case have[i] == want[j]:
+		if have[i] == want[j] {
 			i++
 			j++
-		case have[i] < want[j]:
+		} else if have[i] < want[j] {
 			missing = append(missing, have[i])
 			i++
-		default:
+		} else {
 			extra = append(extra, want[j])
 			j++
 		}

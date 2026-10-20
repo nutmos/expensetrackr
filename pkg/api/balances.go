@@ -24,21 +24,20 @@ func (s *Server) registerBalanceRoutes(api *gin.RouterGroup) {
 // currency change while in use, then the shared 422/400/500 handling.
 // (Version conflicts are answered by balanceConflict, which needs the store.)
 func writeBalanceError(c *gin.Context, err error) {
-	switch {
-	case errors.Is(err, store.ErrNotFound):
+	if errors.Is(err, store.ErrNotFound) {
 		c.JSON(http.StatusNotFound, errorBody{Error: "balance not found"})
-	case errors.Is(err, store.ErrBalanceInUse):
+	} else if errors.Is(err, store.ErrBalanceInUse) {
 		c.JSON(http.StatusConflict, errorBody{
 			Error:  err.Error(),
 			Code:   "balance_in_use",
 			Fields: map[string]string{"currency": "cannot change while transactions reference this balance (no exchange-rate conversion)"},
 		})
-	case errors.Is(err, store.ErrDuplicateName):
+	} else if errors.Is(err, store.ErrDuplicateName) {
 		c.JSON(http.StatusConflict, errorBody{
 			Error:  "a balance with this name already exists",
 			Fields: map[string]string{"name": "is already used by another balance (names are case-insensitive)"},
 		})
-	default:
+	} else {
 		writeInputError(c, err)
 	}
 }

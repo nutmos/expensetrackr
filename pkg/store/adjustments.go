@@ -50,12 +50,11 @@ func adjustmentFor(cur, next balance.Balance) (adjustment, bool) {
 	if newP != nil {
 		a.new = *newP
 	}
-	switch {
-	case a.new > a.old:
+	if a.new > a.old {
 		a.amount, a.direction = a.new-a.old, transaction.Increase
-	case a.new < a.old:
+	} else if a.new < a.old {
 		a.amount, a.direction = a.old-a.new, transaction.Decrease
-	default:
+	} else {
 		return adjustment{}, false
 	}
 	return a, true

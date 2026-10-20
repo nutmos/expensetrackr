@@ -20,13 +20,11 @@ import (
 var errNoFX = fmt.Errorf("%w: no exchange-rate service configured", fx.ErrUnavailable)
 
 func fxMessage(err error) string {
-	switch {
-	case errors.Is(err, fx.ErrUnsupported):
+	if errors.Is(err, fx.ErrUnsupported) {
 		return "Frankfurter has no exchange rate for this currency pair; provide to_amount (the amount received) manually"
-	default:
-		log.Printf("exchange rate lookup failed: %v", err)
-		return "the exchange-rate service (Frankfurter) is unavailable; try again later or provide to_amount (the amount received) manually"
 	}
+	log.Printf("exchange rate lookup failed: %v", err)
+	return "the exchange-rate service (Frankfurter) is unavailable; try again later or provide to_amount (the amount received) manually"
 }
 
 const fxMemoKey = "fx_memo"

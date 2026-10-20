@@ -205,12 +205,11 @@ func (in CreateInput) Validate() (Transaction, error) {
 	// A nil ImportRef means none (create) / keep the stored ref (PUT).
 	if in.ImportRef != nil {
 		if ref := strings.TrimSpace(*in.ImportRef); ref != "" {
-			switch {
-			case utf8.RuneCountInString(ref) > MaxImportRefLen:
+			if utf8.RuneCountInString(ref) > MaxImportRefLen {
 				fields["import_ref"] = fmt.Sprintf("must be at most %d characters", MaxImportRefLen)
-			case strings.ContainsFunc(ref, func(r rune) bool { return r < 0x20 || r == 0x7f }):
+			} else if strings.ContainsFunc(ref, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
 				fields["import_ref"] = "must not contain control characters"
-			default:
+			} else {
 				exp.ImportRef = &ref
 			}
 		}

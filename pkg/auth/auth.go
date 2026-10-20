@@ -32,10 +32,10 @@ var BcryptCost = 12
 
 // CheckPasswordRules returns "" if pw is acceptable, else a message.
 func CheckPasswordRules(pw string) string {
-	switch {
-	case len(pw) < MinPasswordLen:
+	if len(pw) < MinPasswordLen {
 		return "must be at least 8 characters"
-	case len(pw) > MaxPasswordLen:
+	}
+	if len(pw) > MaxPasswordLen {
 		return "must be at most 72 bytes"
 	}
 	return ""

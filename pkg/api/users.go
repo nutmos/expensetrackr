@@ -27,16 +27,15 @@ func (s *Server) registerUserRoutes(api *gin.RouterGroup) {
 // writeUserError maps user errors: 404, 409 duplicate username/email, then
 // the shared 422/400/500 handling.
 func writeUserError(c *gin.Context, err error) {
-	switch {
-	case errors.Is(err, store.ErrNotFound):
+	if errors.Is(err, store.ErrNotFound) {
 		c.JSON(http.StatusNotFound, errorBody{Error: "user not found"})
-	case errors.Is(err, store.ErrDuplicateUsername):
+	} else if errors.Is(err, store.ErrDuplicateUsername) {
 		c.JSON(http.StatusConflict, errorBody{Error: err.Error(),
 			Fields: map[string]string{"username": "is already taken (usernames are case-insensitive)"}})
-	case errors.Is(err, store.ErrDuplicateEmail):
+	} else if errors.Is(err, store.ErrDuplicateEmail) {
 		c.JSON(http.StatusConflict, errorBody{Error: err.Error(),
 			Fields: map[string]string{"email": "is already used by another user"}})
-	default:
+	} else {
 		writeInputError(c, err)
 	}
 }

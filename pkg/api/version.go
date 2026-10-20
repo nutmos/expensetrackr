@@ -67,15 +67,17 @@ func clientVersion(c *gin.Context, bodyVersion *int64, required bool) (version i
 		c.JSON(http.StatusBadRequest, errorBody{Error: `field "version" must be a positive integer`})
 		return 0, false
 	}
-	switch {
-	case h != "" && bodyVersion != nil && *bodyVersion != hv:
+	if h != "" && bodyVersion != nil && *bodyVersion != hv {
 		c.JSON(http.StatusBadRequest, errorBody{Error: fmt.Sprintf(`If-Match ("%d") and the body "version" (%d) disagree; send one, or the same value in both`, hv, *bodyVersion)})
 		return 0, false
-	case h != "":
+	}
+	if h != "" {
 		return hv, true
-	case bodyVersion != nil:
+	}
+	if bodyVersion != nil {
 		return *bodyVersion, true
-	case required:
+	}
+	if required {
 		c.JSON(http.StatusPreconditionRequired, errorBody{
 			Error: `this update needs the version it is based on: send an If-Match header with the ETag of your last read (e.g. If-Match: "3") or "version" in the body`,
 			Code:  codeVersionRequired,

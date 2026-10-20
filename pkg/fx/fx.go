@@ -141,12 +141,13 @@ func (c *Client) fetch(ctx context.Context, from, to, requested string) (Quote, 
 	if err != nil {
 		return Quote{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
-	switch {
-	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusUnprocessableEntity:
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusUnprocessableEntity {
 		return Quote{}, ErrUnsupported
-	case resp.StatusCode >= 500:
+	}
+	if resp.StatusCode >= 500 {
 		return Quote{}, fmt.Errorf("%w: HTTP %d", ErrUnavailable, resp.StatusCode)
-	case resp.StatusCode != http.StatusOK:
+	}
+	if resp.StatusCode != http.StatusOK {
 		return Quote{}, fmt.Errorf("%w: HTTP %d", ErrBadUpstream, resp.StatusCode)
 	}
 	var out struct {

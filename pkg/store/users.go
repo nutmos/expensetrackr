@@ -35,12 +35,13 @@ func mapUserErr(err error) error {
 	switch se.Code() {
 	case sqlite3.SQLITE_CONSTRAINT_UNIQUE:
 		msg := se.Error()
-		switch {
-		case strings.Contains(msg, "users.username"):
+		if strings.Contains(msg, "users.username") {
 			return ErrDuplicateUsername
-		case strings.Contains(msg, "users.email"):
+		}
+		if strings.Contains(msg, "users.email") {
 			return ErrDuplicateEmail
-		case strings.Contains(msg, "user_identities.provider"):
+		}
+		if strings.Contains(msg, "user_identities.provider") {
 			return ErrDuplicateIdentity
 		}
 	case sqlite3.SQLITE_CONSTRAINT_FOREIGNKEY:
