@@ -36,7 +36,7 @@ func (in Input) Validate() (Category, error) {
 		fields["type"] = typeErr
 	}
 
-	if descErr := c.inputDescriptionField(in.Type); descErr != "" {
+	if descErr := c.inputDescriptionField(in.Description); descErr != "" {
 		fields["description"] = descErr
 	}
 
