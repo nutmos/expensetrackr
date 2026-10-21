@@ -140,10 +140,9 @@ func (in Input) Validate() (User, error) {
 	var u User
 
 	name := strings.TrimSpace(in.DisplayName)
-	switch {
-	case name == "":
+	if name == "" {
 		fields["display_name"] = "is required"
-	case utf8.RuneCountInString(name) > MaxDisplayNameLen:
+	} else if utf8.RuneCountInString(name) > MaxDisplayNameLen {
 		fields["display_name"] = fmt.Sprintf("must be at most %d characters", MaxDisplayNameLen)
 	}
 	u.DisplayName = name
@@ -291,10 +290,9 @@ func (id Identity) Validate() error {
 		fields["provider"] = "must be one of: apple, google"
 	}
 	sub := strings.TrimSpace(id.ProviderSubject)
-	switch {
-	case sub == "":
+	if sub == "" {
 		fields["provider_subject"] = "is required"
-	case len(sub) > MaxSubjectLen:
+	} else if len(sub) > MaxSubjectLen {
 		fields["provider_subject"] = fmt.Sprintf("must be at most %d characters", MaxSubjectLen)
 	}
 	if len(fields) > 0 {

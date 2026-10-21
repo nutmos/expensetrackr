@@ -401,12 +401,11 @@ func TestConcurrentWritesStayConsistent(t *testing.T) {
 			})
 			mu.Lock()
 			defer mu.Unlock()
-			switch {
-			case err == nil:
+			if err == nil {
 				wins++
-			case errors.Is(err, ErrVersionConflict):
+			} else if errors.Is(err, ErrVersionConflict) {
 				conflicts++
-			default:
+			} else {
 				t.Error(err)
 			}
 		}()

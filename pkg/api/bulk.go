@@ -61,17 +61,16 @@ type bulkResponse struct {
 func bulkError(err error) (bulkItemError, bool) {
 	var ve *validate.ValidationError
 	var re *validate.RequestError
-	switch {
-	case errors.As(err, &ve):
+	if errors.As(err, &ve) {
 		return bulkItemError{Message: "validation failed", Code: "validation_failed", Fields: ve.Fields}, true
-	case errors.As(err, &re):
+	} else if errors.As(err, &re) {
 		return bulkItemError{Message: re.Msg, Code: "invalid_item"}, true
-	case errors.Is(err, fx.ErrUnsupported):
+	} else if errors.Is(err, fx.ErrUnsupported) {
 		return bulkItemError{Message: fxMessage(err), Code: "exchange_rate_unsupported",
 			Fields: map[string]string{"to_amount": "no exchange rate is available for this currency pair; provide to_amount manually"}}, true
-	case errors.Is(err, fx.ErrUnavailable), errors.Is(err, fx.ErrBadUpstream):
+	} else if errors.Is(err, fx.ErrUnavailable) || errors.Is(err, fx.ErrBadUpstream) {
 		return bulkItemError{Message: fxMessage(err), Code: "exchange_rate_unavailable"}, true
-	case errors.Is(err, store.ErrReadOnly):
+	} else if errors.Is(err, store.ErrReadOnly) {
 		return bulkItemError{Message: err.Error(), Code: "balance_adjustment_readonly",
 			Fields: map[string]string{"type": transaction.ErrAdjustmentType}}, true
 	}
@@ -189,16 +188,15 @@ func (s *Server) bulkCreateTransactions(c *gin.Context) {
 	}
 
 	status := http.StatusOK
-	switch {
-	case atomic && resp.Failed > 0 && fxDown:
+	if atomic && resp.Failed > 0 && fxDown {
 		status = http.StatusServiceUnavailable
-	case atomic && resp.Failed > 0 && fxBadUpstream:
+	} else if atomic && resp.Failed > 0 && fxBadUpstream {
 		status = http.StatusBadGateway
-	case atomic && resp.Failed > 0:
+	} else if atomic && resp.Failed > 0 {
 		status = http.StatusUnprocessableEntity
-	case req.DryRun:
+	} else if req.DryRun {
 		status = http.StatusOK
-	case atomic && resp.Created > 0:
+	} else if atomic && resp.Created > 0 {
 		status = http.StatusCreated
 	}
 	c.JSON(status, resp)
