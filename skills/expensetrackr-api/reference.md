@@ -75,7 +75,7 @@ Fields a type doesn't use are `null`.
 | type | input amounts | notes |
 |---|---|---|
 | `payment_account` | `balance` (may be ≤ 0) | can pay expenses, receive income |
-| `other_asset` | `balance` | receives income, asset purchases, transfers |
+| `other_asset` | `balance` | receives income, asset purchases, transfers; linked (not moved) by returns on investment |
 | `credit_card` | `debt`, `limit` (≥ 0) | can pay expenses; can receive income (cash rebate / credit, debt −= amount); `available = limit − debt`, `over_limit` |
 | `other_liability` | `debt`, `limit` | loans; only transfers in/out (not income) |
 
@@ -182,6 +182,7 @@ Balance effects (automatic):
 | income | asset +amount / card debt −amount | – |
 | transfer | asset −amount / liability debt +amount | asset +to_amount / liability debt −to_amount (card payment, loan repayment) |
 | asset_purchase | like expense | `other_asset` +amount (same currency required) |
+| return_on_investment | like income (account +amount / card debt −amount) | linked `other_asset`: unchanged (any currency) |
 | balance_adjustment | none (server-created record of a manual edit) | – |
 
 `adjusts_balances` is `false` for rows created before automatic balances
@@ -192,7 +193,7 @@ existed; editing/deleting those doesn't move balances.
 | param | meaning |
 |---|---|
 | `from`, `to` | RFC 3339 with offset, inclusive; encode `+` as `%2B` (a raw `+` also works) |
-| `type` | `expense`, `income`, `transfer`, `asset_purchase`, `balance_adjustment` |
+| `type` | `expense`, `income`, `transfer`, `asset_purchase`, `return_on_investment`, `balance_adjustment` |
 | `category_uid` | one category |
 | `limit` | 1–5000, default 500 |
 
@@ -224,7 +225,7 @@ Same body rules as POST, plus the version (SKILL.md "Edit"). Notes:
 
 - Omitted optional fields are cleared: `note`, `category_uid`,
   `to_balance_uid`. Omitted `type` means `expense`, so always send `type`.
-- Changing `type` away from transfer/asset_purchase: drop `to_balance_uid`;
+- Changing `type` away from transfer/asset_purchase/return_on_investment: drop `to_balance_uid`;
   to expense/income: drop or replace `category_uid` with one of the new type.
 - Cross-currency transfer: omitting `to_amount` keeps the stored conversion if
   amount, currency, both balances and the `spent_at` date are unchanged;
@@ -303,7 +304,7 @@ Real responses (from a test server):
 ```text
 400 {"error":"unknown field \"amount_minor\""}
 400 {"error":"uid must be a UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)"}
-400 {"error":"invalid query parameters","fields":{"type":"must be one of: expense, income, transfer, asset_purchase, balance_adjustment"}}
+400 {"error":"invalid query parameters","fields":{"type":"must be one of: expense, income, transfer, asset_purchase, return_on_investment, balance_adjustment"}}
 401 {"error":"authentication required","code":"unauthenticated"}
 403 {"error":"cross-origin request rejected","code":"csrf"}
 404 {"error":"transaction not found"}

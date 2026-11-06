@@ -6,12 +6,17 @@
 #   log-tx.sh income   SOURCE_BALANCE AMOUNT CURRENCY [options]
 #   log-tx.sh transfer SOURCE_BALANCE DEST_BALANCE AMOUNT CURRENCY [options]
 #   log-tx.sh asset_purchase SOURCE_BALANCE DEST_BALANCE AMOUNT CURRENCY [options]
+#   log-tx.sh return_on_investment ACCOUNT_OR_CARD ASSET AMOUNT CURRENCY [options]
+#     (dividend/interest received into ACCOUNT_OR_CARD, linked to ASSET,
+#      an other_asset whose value is not changed)
 #
 # Options:
-#   --category NAME       expense/income/asset_purchase category name
+#   --category NAME       category name (expense category for expense and
+#                         asset_purchase; income category for income and
+#                         return_on_investment)
 #   --at RFC3339          spent_at with offset (required)
 #   --note TEXT           optional note
-#   --to-amount AMOUNT    received amount (cross-currency transfer; optional)
+#   --to-amount AMOUNT    received amount (cross-currency transfer only; optional)
 #   --to-currency CODE    must match destination balance currency if set
 #
 # Environment:
@@ -33,6 +38,7 @@ usage() {
 Usage:
   log-tx.sh expense|income SOURCE AMOUNT CURRENCY --at RFC3339 [--category NAME] [--note TEXT]
   log-tx.sh transfer|asset_purchase SOURCE DEST AMOUNT CURRENCY --at RFC3339 [--to-amount A] [--to-currency C] [--category NAME] [--note TEXT]
+  log-tx.sh return_on_investment ACCOUNT_OR_CARD ASSET AMOUNT CURRENCY --at RFC3339 [--category NAME] [--note TEXT]
 EOF
 	exit 2
 }
@@ -44,9 +50,9 @@ command -v curl >/dev/null || die "curl is required"
 TYPE="${1:-}"
 shift || true
 case "$TYPE" in
-expense | income | transfer | asset_purchase) ;;
+expense | income | transfer | asset_purchase | return_on_investment) ;;
 "" | -h | --help) usage ;;
-*) die "unknown type '$TYPE' (expense|income|transfer|asset_purchase)" ;;
+*) die "unknown type '$TYPE' (expense|income|transfer|asset_purchase|return_on_investment)" ;;
 esac
 
 SOURCE=""
@@ -59,7 +65,7 @@ expense | income)
 	SOURCE=$1 AMOUNT=$2 CURRENCY=$3
 	shift 3
 	;;
-transfer | asset_purchase)
+transfer | asset_purchase | return_on_investment)
 	[ $# -ge 4 ] || usage
 	SOURCE=$1 DEST=$2 AMOUNT=$3 CURRENCY=$4
 	shift 4
@@ -108,6 +114,9 @@ transfer)
 	[ -z "$CATEGORY" ] || die "category is not allowed on a transfer"
 	;;
 esac
+if [ "$TYPE" != transfer ]; then
+	[ -z "$TO_AMOUNT$TO_CURRENCY" ] || die "--to-amount/--to-currency are only allowed on a transfer"
+fi
 
 HDR=$(mktemp)
 OUT=$(mktemp)
@@ -191,8 +200,10 @@ fi
 CAT_UID=""
 if [ -n "$CATEGORY" ]; then
 	want=expense
-	[ "$TYPE" = income ] && want=income
-	# asset_purchase uses an expense category
+	# asset_purchase uses an expense category; return_on_investment an income one
+	if [ "$TYPE" = income ] || [ "$TYPE" = return_on_investment ]; then
+		want=income
+	fi
 	CAT_UID=$(resolve_category "$CATEGORY" "$want")
 fi
 
@@ -234,8 +245,11 @@ jq -r --argjson bal "$(cat "$BALANCES")" '
 		 | "\(.name) now \(.balance // .debt) \(.currency)");
 	"logged \(.type) \(.amount) \(.currency)"
 	+ (if .note != "" then " (\(.note))" else "" end)
-	+ " from \(.account)"
-	+ (if .to_account != null then " → \(.to_account)" else "" end)
+	+ (if .type == "return_on_investment"
+	   then " into \(.account) (from investment \(.to_account))"
+	   else " from \(.account)"
+	     + (if .to_account != null then " → \(.to_account)" else "" end)
+	   end)
 	+ " at \(.spent_at)"
 	+ " [uid \(.uid)]",
 	(bal_line(.balance_uid)),

@@ -108,27 +108,41 @@
     income: ["payment_account", "other_asset", "credit_card"],
     transfer: ["payment_account", "credit_card", "other_asset", "other_liability"],
     asset_purchase: ["payment_account", "credit_card"],
+    return_on_investment: ["payment_account", "credit_card"],
   };
   // Which balance types may be the destination (to_balance_uid).
   const DEST_TYPES = {
     transfer: SOURCE_TYPES.transfer,
     asset_purchase: ["other_asset"],
+    // Link only: the investment the return came from; its value does not change.
+    return_on_investment: ["other_asset"],
   };
   const DEST_HINT = {
     transfer: "Any balance (e.g. pay a credit card, save to an asset, repay a loan).",
     asset_purchase: "Other assets only (the asset you bought).",
+    return_on_investment: "Other assets only (the investment this return is tied to).",
   };
-  // Category type used by each transaction type (asset purchases use expense categories).
-  const CATEGORY_TYPE = { expense: "expense", income: "income", asset_purchase: "expense" };
-  const SOURCE_LABEL = { expense: "Payment account", income: "Received into", transfer: "From (source)", asset_purchase: "Paid from" };
+  const DEST_LABEL = { return_on_investment: "Investment" };
+  // Category type used by each transaction type (asset purchases use expense
+  // categories; returns on investment use income categories).
+  const CATEGORY_TYPE = { expense: "expense", income: "income", asset_purchase: "expense", return_on_investment: "income" };
+  const SOURCE_LABEL = { expense: "Payment account", income: "Received into", transfer: "From (source)", asset_purchase: "Paid from", return_on_investment: "Received into" };
   const SOURCE_HINT = {
     expense: "Payment accounts and credit cards.",
     income: "Payment accounts, other assets and credit cards (e.g. cash rebates).",
     transfer: "Any balance.",
     asset_purchase: "Payment accounts and credit cards.",
+    return_on_investment: "Payment accounts and credit cards.",
   };
   // Display names of transaction types (the API uses the lowercase values).
-  const TYPE_LABEL = { expense: "Expense", income: "Income", transfer: "Transfer", asset_purchase: "Asset Purchase", balance_adjustment: "Balance Adjustment" };
+  const TYPE_LABEL = { expense: "Expense", income: "Income", transfer: "Transfer", asset_purchase: "Asset Purchase", return_on_investment: "Return on Investment", balance_adjustment: "Balance Adjustment" };
+  // Account column text: "from → to"; a return on investment flows from the
+  // linked investment into the receiving account.
+  function accountText(e) {
+    if (e.type === "return_on_investment") return `${e.to_account || "?"} → ${e.account || "?"}`;
+    if (DEST_TYPES[e.type]) return `${e.account || "?"} → ${e.to_account || "?"}`;
+    return e.account || "";
+  }
   const LIABILITY = new Set(["credit_card", "other_liability"]);
   // Minor-unit digits per currency code, from GET /api/currencies (scale).
   let currencyScale = new Map();
@@ -334,7 +348,10 @@
     fillSelect($("#balance_uid"), SOURCE_TYPES[t], keepFrom ?? $("#balance_uid").value);
     const dest = DEST_TYPES[t];
     $("#to-field").hidden = !dest;
-    if (dest) $("#to-hint").textContent = DEST_HINT[t];
+    if (dest) {
+      $("#to-label").textContent = DEST_LABEL[t] || "To (destination)";
+      $("#to-hint").textContent = DEST_HINT[t];
+    }
     fillCategories(t);
     fillSelect($("#to_balance_uid"), dest || [], keepTo ?? $("#to_balance_uid").value);
     updateFx();
@@ -531,16 +548,18 @@
   }
 
   // Per-currency totals of the shown rows, exact via BigInt minor units.
-  // Expenses and income are summed separately; transfers and balance
-  // adjustments (manual corrections, not spending or income) are excluded.
+  // Expenses and income are summed separately (returns on investment count as
+  // income); transfers, asset purchases and balance adjustments (manual
+  // corrections, not spending or income) are excluded.
   function renderTotals(items) {
     const sums = new Map(); // currency -> {scale, expense, income}
     for (const e of items) {
       const t = e.type || "expense";
-      if (t !== "expense" && t !== "income") continue;
+      const kind = t === "return_on_investment" ? "income" : t;
+      if (kind !== "expense" && kind !== "income") continue;
       const scale = (e.amount.split(".")[1] || "").length;
       const cur = sums.get(e.currency) || { scale, expense: 0n, income: 0n };
-      cur[t] += BigInt(e.amount_minor);
+      cur[kind] += BigInt(e.amount_minor);
       sums.set(e.currency, cur);
     }
     const parts = [];
@@ -630,7 +649,7 @@
         const t = e.type || "expense";
         const isAdj = t === "balance_adjustment";
         const typeTd = cell(TYPE_LABEL[t] || t, "type type-" + t);
-        const acctTd = cell(DEST_TYPES[t] ? `${e.account || "?"} → ${e.to_account || "?"}` : (e.account || ""));
+        const acctTd = cell(accountText(e));
         // An adjustment shows its direction as a sign: + the edited balance
         // or debt went up, − it went down.
         const fxRow = e.to_amount && e.to_currency;
@@ -704,7 +723,7 @@
   }
 
   async function deleteTransaction(e) {
-    const acct = DEST_TYPES[e.type] ? `${e.account || "?"} → ${e.to_account || "?"}` : e.account || "unknown account";
+    const acct = accountText(e) || "unknown account";
     const fxText = e.to_amount && e.to_currency ? ` → ${e.to_amount} ${e.to_currency}` : "";
     if (!confirm(`Delete ${e.amount} ${e.currency}${fxText} (${acct}) at ${shownTime(e.spent_at)}?`)) return;
     const res = await fetch(`/api/transactions/${e.uid}`, { method: "DELETE", headers: App.ifMatch(e.version) });

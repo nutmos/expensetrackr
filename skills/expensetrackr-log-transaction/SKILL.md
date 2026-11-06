@@ -1,6 +1,6 @@
 ---
 name: expensetrackr-log-transaction
-description: Record a single expense, income, transfer, or asset purchase in expensetrackr with a personal API token. Use when the user asks to log, record, or add an expense, income, transfer, or asset purchase in expensetrackr.
+description: Record a single expense, income, transfer, asset purchase, or return on investment (dividend, interest) in expensetrackr with a personal API token. Use when the user asks to log, record, or add an expense, income, transfer, asset purchase, or investment return in expensetrackr.
 ---
 
 # Log a transaction (expensetrackr)
@@ -125,6 +125,7 @@ Balance types: `payment_account`, `other_asset` (assets, field `balance`);
 | `income` | money in / cash rebate | `payment_account`, `other_asset` or `credit_card` | — | optional, must be `income` |
 | `transfer` | move between own balances (incl. paying a card) | any | any other balance | **not allowed** |
 | `asset_purchase` | buy a tracked asset | `payment_account` or `credit_card` | an `other_asset` | optional, `expense` category |
+| `return_on_investment` | dividend / interest from a tracked investment (works like income) | `payment_account` or `credit_card` (received into) | **required**: the `other_asset` it came from (value **not** changed) | optional, `income` category |
 | `balance_adjustment` | **never** send this | — | — | — |
 
 ### 3. Build the body (exact API rules)
@@ -134,7 +135,7 @@ Balance types: `payment_account`, `other_asset` (assets, field `balance`);
 | `amount` | decimal **string**, > 0, at most the currency's minor decimals (`"120.50"` THB, `"1500"` JPY). Never negative. |
 | `currency` | ISO 4217; **must equal the source balance's currency** (422 otherwise). |
 | `balance_uid` | UUID of the source / paying / receiving balance. |
-| `to_balance_uid` | required for `transfer` and `asset_purchase`; must differ from `balance_uid`. |
+| `to_balance_uid` | required for `transfer`, `asset_purchase` and `return_on_investment`; must differ from `balance_uid`. |
 | `category_uid` | optional UUID; forbidden on transfers; type must match (see table). |
 | `spent_at` | RFC 3339 **with offset**: `2026-10-06T12:30:00+08:00` (no date-only, no naive local time). |
 | `note` | optional, ≤ 1000 characters. |
@@ -247,6 +248,17 @@ curl -sS -H @"$HDR" -H 'Content-Type: application/json' -X POST "$BASE/api/trans
   | jq '{uid, type, amount, account, to_account}'
 ```
 
+Return on investment (dividend from Gold paid into Wallet; Gold's value does
+not change, `to_amount` / `to_currency` are not allowed):
+
+```bash
+curl -sS -H @"$HDR" -H 'Content-Type: application/json' -X POST "$BASE/api/transactions" \
+  --data-binary "$(jq -n --arg b "$WALLET_UID" --arg t "$GOLD_UID" \
+    '{type:"return_on_investment", amount:"250", currency:"THB", balance_uid:$b, to_balance_uid:$t,
+      spent_at:"2026-10-09T10:00:00+08:00", note:"Dividend"}')" \
+  | jq '{uid, type, amount, account, to_account}'
+```
+
 ## Helper script
 
 `scripts/log-tx.sh` reads `EXPENSETRACKR_TOKEN` / `EXPENSETRACKR_URL`, resolves
@@ -257,6 +269,7 @@ scripts/log-tx.sh expense  Wallet 120.50 THB --category Food --at 2026-10-06T12:
 scripts/log-tx.sh income   Wallet 50000 THB --at 2026-10-01T09:00:00+08:00 --note Salary
 scripts/log-tx.sh transfer Wallet "Credit Card" 5000 THB --at 2026-10-07T22:00:00+08:00
 scripts/log-tx.sh transfer "USD Account" Wallet 100 USD --to-amount 3361.50 --at 2026-10-12T10:00:00+08:00
+scripts/log-tx.sh return_on_investment Wallet Gold 250 THB --category Dividends --at 2026-10-09T10:00:00+08:00
 ```
 
 ## More

@@ -214,7 +214,7 @@ func (s *Server) listTransactions(c *gin.Context) {
 		if t, ok := transaction.ParseFilterType(raw); ok {
 			f.Type = t
 		} else {
-			fields["type"] = "must be one of: expense, income, transfer, asset_purchase, balance_adjustment"
+			fields["type"] = "must be one of: expense, income, transfer, asset_purchase, return_on_investment, balance_adjustment"
 		}
 	}
 
