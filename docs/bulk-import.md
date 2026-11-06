@@ -157,6 +157,10 @@ index on `(balance_uid, import_ref) WHERE import_ref IS NOT NULL`.
      destination side of a transfer that may already have been imported from
      the bank statement. Import it once only, from one side.
    - buying something tracked as an `other_asset`: `type: "asset_purchase"`
+   - a dividend or interest from an investment tracked as an `other_asset`:
+     `type: "return_on_investment"`, received into a `payment_account` or
+     `credit_card`, with `to_balance_uid` = that asset (its value is not
+     changed); optional income category.
    - never `balance_adjustment`. It is rejected per item. To reconcile a
      final difference, edit the balance instead.
 4. **`spent_at`** must have an offset. Use the bank's local time zone, e.g.

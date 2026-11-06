@@ -70,6 +70,7 @@
               <option value="income">Income</option>
               <option value="transfer">Transfer</option>
               <option value="asset_purchase">Asset Purchase</option>
+              <option value="return_on_investment">Return on Investment</option>
               <option value="balance_adjustment">Balance Adjustment</option>
             </select>
           </label>
@@ -122,6 +123,7 @@
               <option value="income">Income</option>
               <option value="transfer">Transfer</option>
               <option value="asset_purchase">Asset Purchase</option>
+              <option value="return_on_investment">Return on Investment</option>
             </select>
             <small class="err" data-for="type"></small>
           </label>
@@ -139,7 +141,7 @@
             <small class="muted"><a href="/categories">Manage categories</a></small>
             <small class="err" data-for="category_uid"></small>
           </label>
-          <label id="to-field" hidden>To (destination)
+          <label id="to-field" hidden><span id="to-label">To (destination)</span>
             <select id="to_balance_uid" name="to_balance_uid">
               <option value="">Select a balance…</option>
             </select>

@@ -84,7 +84,7 @@ http://127.0.0.1:8080/api/openapi.json (JSON).
 skill (the `SKILL.md` convention used by Claude Agent Skills, Cursor and
 similar tools) that teaches an LLM agent to use this API: login and CSRF
 rules, looking up balance/category uids, logging expenses, income, transfers
-(incl. cross-currency) and asset purchases, bulk statement imports, editing with `If-Match`, error
+(incl. cross-currency), asset purchases and returns on investment, bulk statement imports, editing with `If-Match`, error
 handling and safety rules. Details are in its
 [`reference.md`](skills/expensetrackr-api/reference.md); the helper
 [`scripts/etr.sh`](skills/expensetrackr-api/scripts/etr.sh) wraps curl with a
@@ -149,12 +149,12 @@ Transactions are stored in the SQLite table **`transactions`**, with index
 | amount        | `amount`       | `amount_minor INTEGER` + `amount_scale INTEGER` (see below)             |
 | amount (raw)  | `amount_minor` | the integer itself, e.g. `12050`                                       |
 | currency      | `currency`     | `TEXT`, ISO 4217 alphabetic code, upper-cased (`THB`, `SGD`, `USD`, …)  |
-| type          | `type`         | `TEXT NOT NULL DEFAULT 'expense'`: `expense`, `income`, `transfer`, `asset_purchase`, or `balance_adjustment` (server-created only; see "Transaction types") |
+| type          | `type`         | `TEXT NOT NULL DEFAULT 'expense'`: `expense`, `income`, `transfer`, `asset_purchase`, `return_on_investment`, or `balance_adjustment` (server-created only; see "Transaction types") |
 | adj. direction | `adjustment_direction` | `TEXT`, `increase` / `decrease` on `balance_adjustment` rows, `NULL` (JSON `null`) otherwise |
-| payment acct  | `balance_uid`  | `TEXT` UUID of the balance paid from (expense), received into (income) or moved from (transfer, asset_purchase); no FK |
-| destination   | `to_balance_uid` | `TEXT`, transfers and asset purchases only (else `null`); UUID of the destination balance; no FK |
-| dest. name    | `to_account`   | denormalized destination name snapshot (transfers and asset purchases only, else `null`)    |
-| category      | `category_uid` | `TEXT`, optional (`null` = none); UUID of a category of the same type (expense categories for asset purchases); never set for transfers; no FK. **The only link to the category**: no name is stored on the transaction |
+| payment acct  | `balance_uid`  | `TEXT` UUID of the balance paid from (expense), received into (income, return_on_investment) or moved from (transfer, asset_purchase); no FK |
+| destination   | `to_balance_uid` | `TEXT`, transfers, asset purchases and returns on investment only (else `null`); UUID of the destination balance (for a return on investment, the linked `other_asset`); no FK |
+| dest. name    | `to_account`   | denormalized destination name snapshot (transfers, asset purchases and returns on investment only, else `null`)    |
+| category      | `category_uid` | `TEXT`, optional (`null` = none); UUID of a category of the same type (expense categories for asset purchases, income categories for returns on investment); never set for transfers; no FK. **The only link to the category**: no name is stored on the transaction |
 | account name  | `account`      | denormalized balance `name` snapshot at write time (read-only in API)   |
 | spend time    | `spent_at`     | `TEXT` RFC 3339 with offset as entered + `spent_at_unix INTEGER`        |
 | note          | `note`         | `TEXT`, optional, up to 1000 chars                                     |
@@ -297,6 +297,7 @@ adjusts its balances automatically:
 | `income` | asset `balance += amount`; card `debt −= amount` (cash rebate / credit; may go negative = in credit) | n/a |
 | `transfer` | source: asset `balance −= amount`, liability `debt += amount` (drawing a loan / cash advance) | destination: asset `balance += amount`, liability `debt −= amount` (card payment / loan repayment) |
 | `asset_purchase` ("Asset Purchase") | like an expense: asset `balance −= amount`; card `debt += amount` | the `other_asset` bought: `balance += amount` |
+| `return_on_investment` ("Return on Investment") | like income: account `balance += amount`; card `debt −= amount` (may go negative = in credit) | the linked `other_asset`: **unchanged** (link only) |
 | `balance_adjustment` ("Balance Adjustment") | none: records a manual balance edit that already set the value | n/a |
 
 **Balance adjustments** are created only by the server, in the same database
@@ -322,6 +323,7 @@ types each transaction type accepts:
 | `income`   | `payment_account`, `other_asset` or `credit_card` (received into / cash rebate) | not allowed (422) |
 | `transfer` | any balance type (source)                     | **required**; any existing balance type, different from `balance_uid` |
 | `asset_purchase` | `payment_account` or `credit_card` (paid from) | **required**; an `other_asset` balance (422 for any other type), different from `balance_uid` |
+| `return_on_investment` | `payment_account` or `credit_card` (received into) | **required**; the `other_asset` the return came from (422 for any other type), different from `balance_uid`; its value is not changed |
 
 - **Asset Purchase** (`asset_purchase`) records buying something you track as
   an `other_asset` (e.g. a laptop, gold): the source is affected like an
@@ -329,6 +331,17 @@ types each transaction type accepts:
   like a transfer, so list totals count it as neither expense nor income. An
   optional **expense** category may be set (e.g. Electronics); income
   categories are rejected (422).
+
+- **Return on Investment** (`return_on_investment`) records investment income
+  such as a dividend or interest payment. It behaves like income: the
+  receiving `payment_account` or `credit_card` goes up (a card's debt goes
+  down, and may go below zero = in credit). It must link the `other_asset`
+  it came from in `to_balance_uid`, but that asset's value is **not**
+  changed: the return is paid out, not withdrawn from the asset, and it is
+  not an unrealized gain. `other_asset` and `other_liability` cannot receive
+  it (422). An optional **income** category may be set (e.g. Dividends);
+  expense categories are rejected (422). `to_amount` / `to_currency` are not
+  allowed. List totals count it as income.
 
 - Omitting `type` on POST or PUT means `expense`, so older clients keep working.
   A PUT is a full replace, so a PUT of a transfer must send `"type":"transfer"`.
@@ -338,7 +351,8 @@ types each transaction type accepts:
   another account is still a transfer. Transfers may also move money into an
   `other_asset` (savings) or draw from a credit card / loan.
 - The transaction's `currency` must equal the currency of its source balance
-  (and, for an asset purchase, of its destination too); 422 otherwise.
+  (and, for an asset purchase, of its destination too; the asset linked by a
+  return on investment may be in any currency, since it is not moved); 422 otherwise.
 - A **transfer** may go between balances in different currencies: `amount` /
   `currency` are the source side; `to_amount` / `to_currency` (destination
   currency), `exchange_rate`, `rate_source` (`frankfurter` | `manual`) and
@@ -346,8 +360,8 @@ types each transaction type accepts:
   omit it and the server converts with the Frankfurter (ECB) rate of the
   `spent_at` date. Same-currency transfers: `to_amount` must be omitted or
   equal `amount`. See [docs/exchange-rates.md](docs/exchange-rates.md).
-- A PUT changing `type` away from `transfer` / `asset_purchase` must omit `to_balance_uid` (or
-  send `""`), else 422; changing to `transfer` / `asset_purchase` requires `to_balance_uid`
+- A PUT changing `type` away from `transfer` / `asset_purchase` / `return_on_investment` must omit `to_balance_uid` (or
+  send `""`), else 422; changing to one of them requires `to_balance_uid`
   (or a 422).
 
 ### Amounts: integer minor units (no floats)
@@ -395,7 +409,9 @@ created by this code is tagged with `PRAGMA application_id = 0x45585452`
 - **New, empty database** (missing or zero-byte file): the baseline is
   created in one SQL transaction together with `user_version = 1` and the
   application id. Logged as `store: migrated schema to version 1`.
-- **Existing database:** pending migrations (v2: `api_tokens`) run in order,
+- **Existing database:** pending migrations (v2: `api_tokens`; v3: per-user
+  balances and transactions; v4: transaction type `return_on_investment`,
+  a rebuild of `transactions` that keeps every row) run in order,
   each in one SQL transaction with its `user_version` bump.
 - **Database from before the baseline reset** (the old `user_version` 1–18
   history, or any non-empty file without the application id) or **from a
@@ -448,7 +464,7 @@ only on validation, conflict and duplicate-name errors.
 |--------|----------------------|---------|-------|
 | POST   | `/api/transactions`      | 201 + transaction, `Location` + `ETag` headers | Moves the balance(s) in the same DB transaction. 422 on validation errors (incl. currency ≠ balance currency, `type` `balance_adjustment`), 400 on malformed JSON or unknown fields. Optional `import_ref` (≤ 200 chars, unique per balance; 409 `duplicate_import_ref`) |
 | POST   | `/api/transactions/bulk` | 201 / 200 `{"created","skipped","failed","valid","dry_run","atomic","written","results":[...],"balances":[...]}` | Up to 500 items with the POST body shape (+ `import_ref`); `atomic` (default true: 422 and nothing written if any item fails), `dry_run`. Duplicate `import_ref` per balance → `skipped`. 413 over 500 items, 2 MiB body. See [docs/bulk-import.md](docs/bulk-import.md) |
-| GET    | `/api/transactions`      | 200 `{"transactions":[...],"count":n}` | Newest first by spend time. Optional `from`, `to` (RFC 3339 with offset, both inclusive), `limit` (1–5000, default 500), `type` (`expense`/`income`/`transfer`/`asset_purchase`/`balance_adjustment`; 400 if invalid), `category_uid` (UUID; 400 if malformed) |
+| GET    | `/api/transactions`      | 200 `{"transactions":[...],"count":n}` | Newest first by spend time. Optional `from`, `to` (RFC 3339 with offset, both inclusive), `limit` (1–5000, default 500), `type` (`expense`/`income`/`transfer`/`asset_purchase`/`return_on_investment`/`balance_adjustment`; 400 if invalid), `category_uid` (UUID; 400 if malformed) |
 | GET    | `/api/transactions/:uid`  | 200 + transaction | `:uid` is the transaction UUID (case-insensitive). **400** if it is not UUID-shaped (including numeric ids such as `/api/transactions/1`), **404** if no such uid. Same for PUT/DELETE |
 | PUT    | `/api/transactions/:uid`  | 200 + updated transaction | Full replace with the same body and rules as POST. An omitted `note` clears it; an omitted `import_ref` is kept (`""` clears it). Requires `If-Match` or `"version"` (428 / 409). Reverses the old balance effect and applies the new one. 409 `balance_adjustment_readonly` on a balance adjustment (also DELETE). 404 if missing, 422 for invalid values, 400 for malformed JSON or unknown fields |
 | DELETE | `/api/transactions/:uid`  | 204 | Reverses the balance effect. Optional `If-Match` (409 if stale). 404 if missing |
@@ -743,23 +759,25 @@ confirmations use human labels instead. For example, an edit page is titled
 
 - The list is newest first, with a date filter (whole days in the device's time
   zone), a Type filter and per-currency totals. Expenses and income are summed
-  separately; transfers, asset purchases and balance adjustments are excluded from both.
+  separately (returns on investment count as income); transfers, asset purchases and
+  balance adjustments are excluded from both.
 - **Balance Adjustment** rows (recorded by manual balance edits) have their
   own style and label, a signed amount (+/−), and "Automatic" instead of
   Edit/Delete; their edit URL shows a read-only message.
 - Columns: time (shown in the device's time zone, with the stored value on
   hover, and an "edited" marker), Type, Amount,
-  Currency, Account ("from → to" for transfers and asset purchases), Category, Note.
+  Currency, Account ("from → to" for transfers and asset purchases, "investment → account" for returns on investment), Category, Note.
 - The category name is looked up client-side from `/api/categories` by
   `category_uid`.
-- The form has a **Type** selector (Expense / Income / Transfer / Asset Purchase; balance
+- The form has a **Type** selector (Expense / Income / Transfer / Asset Purchase / Return on Investment; balance
   adjustments cannot be entered). The source
   dropdown lists only the balance types allowed for that type. Its label
   changes to "Payment account", "Received into", "From (source)" or "Paid from". A **To
   (destination)** dropdown appears only for transfers (any balance) and asset
-  purchases (other assets only).
+  purchases (other assets only); for a return on investment it is labelled
+  **Investment** (other assets only).
 - **Category** lists only categories of the selected type (expense categories for
-  asset purchases) and is hidden for transfers.
+  asset purchases, income categories for returns on investment) and is hidden for transfers.
 - Time is entered in the device's local time zone. A preview shows the exact
   RFC 3339 value that will be saved, with the device's offset for that date.
 - The add page remembers the last expense currency and account. Picking a

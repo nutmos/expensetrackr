@@ -42,7 +42,7 @@ func ParseType(s string) (Type, bool) {
 	switch t := normalizeType(s); t {
 	case "":
 		return Expense, true
-	case Expense, Income, Transfer, AssetPurchase:
+	case Expense, Income, Transfer, AssetPurchase, ReturnOnInvestment:
 		return t, true
 	}
 	return "", false
@@ -52,7 +52,7 @@ func ParseType(s string) (Type, bool) {
 // balance_adjustment. Empty is not valid here (the caller skips the filter).
 func ParseFilterType(s string) (Type, bool) {
 	switch t := normalizeType(s); t {
-	case Expense, Income, Transfer, AssetPurchase, BalanceAdjustment:
+	case Expense, Income, Transfer, AssetPurchase, ReturnOnInvestment, BalanceAdjustment:
 		return t, true
 	}
 	return "", false
@@ -71,8 +71,10 @@ func IsPayableType(t balance.Type) bool {
 //     cash rebate credited back; other_liability stays disallowed)
 //   - transfer: any balance type (source of the move)
 //   - asset_purchase: payment_account, credit_card (money is spent from it)
+//   - return_on_investment: payment_account, credit_card (the return is
+//     received there; the linked other_asset is not a receiver)
 func SourceAllowed(tt Type, bt balance.Type) bool {
-	if tt == Expense || tt == AssetPurchase {
+	if tt == Expense || tt == AssetPurchase || tt == ReturnOnInvestment {
 		return IsPayableType(bt)
 	}
 	if tt == Income {
@@ -95,6 +97,7 @@ const (
 	errSourceExpense       = "must refer to a payment_account or credit_card balance"
 	errSourceIncome        = "must refer to a payment_account, other_asset or credit_card balance (income)"
 	errSourceAssetPurchase = "must refer to a payment_account or credit_card balance (asset purchase source)"
+	errSourceROI           = "must refer to a payment_account or credit_card balance (return on investment)"
 	errSourceGeneric       = "must refer to an existing balance"
 )
 
@@ -108,18 +111,21 @@ func sourceRule(tt Type) string {
 	if tt == AssetPurchase {
 		return errSourceAssetPurchase
 	}
+	if tt == ReturnOnInvestment {
+		return errSourceROI
+	}
 	return errSourceGeneric
 }
 
 // DestinationAllowed reports whether a balance type may be used as
 // to_balance_uid: any type for a transfer (e.g. paying a credit card, saving
 // into an other asset, repaying a loan), only other_asset for an asset
-// purchase.
+// purchase and for the investment a return on investment is tied to.
 func DestinationAllowed(tt Type, bt balance.Type) bool {
 	switch tt {
 	case Transfer:
 		return bt.Valid()
-	case AssetPurchase:
+	case AssetPurchase, ReturnOnInvestment:
 		return bt == balance.TypeOtherAsset
 	}
 	return false
@@ -157,7 +163,7 @@ func (in CreateInput) Validate() (Transaction, error) {
 	if normalizeType(in.Type) == BalanceAdjustment {
 		fields["type"] = ErrAdjustmentType
 	} else if !okType {
-		fields["type"] = "must be one of: expense, income, transfer, asset_purchase"
+		fields["type"] = "must be one of: expense, income, transfer, asset_purchase, return_on_investment"
 	}
 	exp.Type = tt
 
@@ -175,7 +181,7 @@ func (in CreateInput) Validate() (Transaction, error) {
 	if !okType { // Do Nothing
 	} else if !tt.HasDestination() {
 		if to != "" {
-			fields["to_balance_uid"] = "is only allowed when type is transfer or asset_purchase"
+			fields["to_balance_uid"] = "is only allowed when type is transfer, asset_purchase or return_on_investment"
 		}
 	} else if to == "" {
 		fields["to_balance_uid"] = "is required for a " + strings.ReplaceAll(string(tt), "_", " ")
@@ -257,36 +263,62 @@ func (e *Transaction) AttachPaymentBalance(b balance.Balance) error {
 	return nil
 }
 
+const (
+	errDestAssetPurchase = "must refer to an other_asset balance (asset purchase destination)"
+	errDestROI           = "must refer to an other_asset balance (the investment this return is tied to)"
+	errDestGeneric       = "must refer to an existing balance"
+)
+
+// destinationRule is the to_balance_uid message when DestinationAllowed fails.
+func destinationRule(tt Type) string {
+	if tt == AssetPurchase {
+		return errDestAssetPurchase
+	}
+	if tt == ReturnOnInvestment {
+		return errDestROI
+	}
+	return errDestGeneric
+}
+
 // AttachDestinationBalance checks that b is allowed as to_balance_uid for
 // e.Type (see DestinationAllowed) and sets the destination snapshot.
 func (e *Transaction) AttachDestinationBalance(b balance.Balance) error {
 	if !e.Type.HasDestination() || e.ToBalanceUID == nil {
-		return fieldError("to_balance_uid", "is only allowed when type is transfer or asset_purchase")
+		return fieldError("to_balance_uid", "is only allowed when type is transfer, asset_purchase or return_on_investment")
 	}
 	if b.UID == "" || !e.ToBalanceUID.Matches(b.UID.String()) {
 		return fieldError("to_balance_uid", "does not match any balance")
 	}
 	if !DestinationAllowed(e.Type, b.Type) {
-		return fieldError("to_balance_uid", "must refer to an other_asset balance (asset purchase destination)")
+		return fieldError("to_balance_uid", destinationRule(e.Type))
 	}
 	uid, name := b.UID, b.Name
 	e.ToBalanceUID, e.ToAccount = &uid, &name
 	return nil
 }
 
+// categoryType is the category type a transaction type needs: expense for
+// asset purchases, income for returns on investment, else the type itself.
+func categoryType(tt Type) string {
+	if tt == AssetPurchase {
+		return string(Expense)
+	}
+	if tt == ReturnOnInvestment {
+		return string(Income)
+	}
+	return string(tt)
+}
+
 // AttachCategory checks that c is the referenced category and matches the
 // transaction type (expense categories for expenses and asset purchases,
-// income categories for income). Only the uid is stored on the transaction;
+// income categories for income and returns on investment). Only the uid is stored on the transaction;
 // the name is looked up from the categories table (or GET /api/categories)
 // when needed.
 func (e *Transaction) AttachCategory(c category.Category) error {
 	if e.CategoryUID == nil || c.UID == "" || !e.CategoryUID.Matches(c.UID.String()) {
 		return fieldError("category_uid", "does not match any category")
 	}
-	want := string(e.Type)
-	if e.Type == AssetPurchase {
-		want = string(Expense)
-	}
+	want := categoryType(e.Type)
 	if string(c.Type) != want {
 		return fieldError("category_uid", fmt.Sprintf("must be an %s category (this one is %s)", want, c.Type))
 	}

@@ -74,9 +74,11 @@ info:
     | `income` | `payment_account`, `other_asset` or `credit_card` | not allowed | asset balance +amount / card debt −amount (rebate; may go negative = in credit) |
     | `transfer` | any balance | **required**, any balance ≠ source | source −amount, destination +amount (debt moves the other way) |
     | `asset_purchase` | `payment_account` or `credit_card` | **required**, an `other_asset` ≠ source | source like an expense (balance −amount / card debt +amount), destination asset balance +amount |
+    | `return_on_investment` | `payment_account` or `credit_card` | **required**, the `other_asset` it came from ≠ source | like income (balance +amount / card debt −amount, may go negative); the linked asset is **not** changed (dividend / interest) |
     | `balance_adjustment` | the edited balance | — | none (**read-only**, server-created) |
 
-    The transaction `currency` must equal the currency of its balance(s) (422 otherwise).
+    The transaction `currency` must equal the currency of its balance(s) (422 otherwise); the asset
+    linked by a `return_on_investment` is not moved, so it may be in another currency.
     `balance_adjustment` transactions are created automatically when `PUT /api/balances/{uid}`
     changes a balance's `balance` (asset) or `debt` (liability). Their `amount` is the absolute difference and
     `adjustment_direction` is `increase` or `decrease`. They are read-only: `type: balance_adjustment`
@@ -87,7 +89,7 @@ servers:
     description: This server
 tags:
   - name: transactions
-    description: Expenses, income, transfers, asset purchases and (read-only) balance adjustments. Writes move the linked balances in the same database transaction.
+    description: Expenses, income, transfers, asset purchases, returns on investment and (read-only) balance adjustments. Writes move the linked balances in the same database transaction.
   - name: balances
     description: Payment accounts, credit cards, other assets and liabilities. Type is fixed after creation. Manual amount edits record a balance_adjustment transaction.
   - name: categories
@@ -112,7 +114,7 @@ paths:
       operationId: createTransaction
       summary: Create a transaction
       description: |
-        Creates an expense, income, transfer or asset purchase and moves the linked balance(s) in the same
+        Creates an expense, income, transfer, asset purchase or return on investment and moves the linked balance(s) in the same
         database transaction. `type` defaults to `expense`. `type: balance_adjustment` is rejected
         (422). The transaction currency must match the balance currency (422 on `balance_uid` /
         `to_balance_uid`). A `version` in the body is ignored.
@@ -190,7 +192,7 @@ paths:
               example:
                 error: invalid query parameters
                 fields:
-                  type: 'must be one of: expense, income, transfer, asset_purchase, balance_adjustment'
+                  type: 'must be one of: expense, income, transfer, asset_purchase, return_on_investment, balance_adjustment'
                   limit: must be an integer between 1 and 5000
         '500': { $ref: '#/components/responses/InternalError' }
 
@@ -1585,12 +1587,14 @@ components:
       type: string
       description: |
         `expense`, `income`, `transfer`, `asset_purchase` (payment account / credit card → other asset;
-        a value move, not counted as expense or income), or the read-only, server-created `balance_adjustment`.
-      enum: [expense, income, transfer, asset_purchase, balance_adjustment]
+        a value move, not counted as expense or income), `return_on_investment` (income into a payment
+        account / credit card, linked to the other asset it came from, whose value does not change), or the
+        read-only, server-created `balance_adjustment`.
+      enum: [expense, income, transfer, asset_purchase, return_on_investment, balance_adjustment]
     TransactionWriteType:
       type: string
       description: Types a client may write. Empty or omitted means `expense`. `balance_adjustment` is a 422.
-      enum: [expense, income, transfer, asset_purchase]
+      enum: [expense, income, transfer, asset_purchase, return_on_investment]
       default: expense
     AdjustmentDirection:
       type: string
@@ -1619,7 +1623,7 @@ components:
         balance_uid:
           type: string
           format: uuid
-          description: Paying (expense), receiving (income), source (transfer, asset_purchase) or adjusted (balance_adjustment) balance. May point to a deleted balance.
+          description: Paying (expense), receiving (income, return_on_investment), source (transfer, asset_purchase) or adjusted (balance_adjustment) balance. May point to a deleted balance.
           example: 4dc73a4a-a60b-414e-98bc-3c71298a0af5
         account:
           type: string
@@ -1629,12 +1633,12 @@ components:
           type: string
           format: uuid
           nullable: true
-          description: Transfer destination; `null` for other types.
+          description: Transfer or asset_purchase destination, or the other_asset a return_on_investment is tied to (not moved); `null` for other types.
           example: null
         to_account:
           type: string
           nullable: true
-          description: Snapshot of the destination balance's name; `null` unless transfer or asset_purchase.
+          description: Snapshot of the destination balance's name; `null` unless transfer, asset_purchase or return_on_investment.
           example: null
         category_uid:
           type: string
@@ -1662,8 +1666,8 @@ components:
         adjusts_balances:
           type: boolean
           description: |
-            `true` when this transaction moved its balances (every expense, income, transfer and
-            asset purchase). `false` for `balance_adjustment` rows, which never move a balance
+            `true` when this transaction moved its balances (every expense, income, transfer,
+            asset purchase and return on investment). `false` for `balance_adjustment` rows, which never move a balance
             (editing or deleting a row with `false` leaves balances alone).
           example: true
         adjustment_direction:
@@ -1781,7 +1785,7 @@ components:
           type: string
           format: uuid
           nullable: true
-          description: Required for `transfer` (any balance, any currency — see `to_amount`) and `asset_purchase` (must be an `other_asset` in the same currency); ≠ `balance_uid`. Not allowed otherwise.
+          description: Required for `transfer` (any balance, any currency — see `to_amount`) `asset_purchase` (must be an `other_asset` in the same currency) and `return_on_investment` (the `other_asset` the return came from; any currency, its value is not changed); ≠ `balance_uid`. Not allowed otherwise.
         to_amount:
           allOf:
             - $ref: '#/components/schemas/DecimalInput'
@@ -1802,7 +1806,7 @@ components:
           type: string
           format: uuid
           nullable: true
-          description: Optional. Must be an expense category for an expense or asset_purchase and an income category for income. Not allowed for transfers.
+          description: Optional. Must be an expense category for an expense or asset_purchase and an income category for income or return_on_investment. Not allowed for transfers.
         spent_at:
           type: string
           format: date-time

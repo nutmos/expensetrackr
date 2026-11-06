@@ -1,6 +1,6 @@
 ---
 name: expensetrackr-api
-description: Use the expensetrackr HTTP JSON API to log expenses, income, transfers (including cross-currency) and asset purchases, check account balances, list or filter transactions, and manage categories in a running expensetrackr server. Use it whenever the user asks to record, look up, correct or delete their money movements or balances in expensetrackr.
+description: Use the expensetrackr HTTP JSON API to log expenses, income, transfers (including cross-currency), asset purchases and returns on investment (dividends, interest), check account balances, list or filter transactions, and manage categories in a running expensetrackr server. Use it whenever the user asks to record, look up, correct or delete their money movements or balances in expensetrackr.
 ---
 
 # expensetrackr API
@@ -109,12 +109,12 @@ The balances move automatically in the same DB transaction.
 
 | field | rule |
 |---|---|
-| `type` | `expense` (default), `income`, `transfer`, `asset_purchase` |
+| `type` | `expense` (default), `income`, `transfer`, `asset_purchase`, `return_on_investment` |
 | `amount` | decimal **string**, > 0, at most the currency's decimals (`"120.50"` THB, `"1500"` JPY); never negative |
 | `currency` | ISO 4217; **must equal the (source) balance's currency** (422 otherwise) |
-| `balance_uid` | expense / asset_purchase: `payment_account` or `credit_card`; income: `payment_account`, `other_asset` or `credit_card` (cash rebate); transfer: any |
-| `to_balance_uid` | transfer (any other balance) and asset_purchase (an `other_asset`) only |
-| `category_uid` | optional; expense and asset_purchase need an `expense` category, income an `income` one; none on transfers |
+| `balance_uid` | expense / asset_purchase / return_on_investment: `payment_account` or `credit_card`; income: `payment_account`, `other_asset` or `credit_card` (cash rebate); transfer: any |
+| `to_balance_uid` | transfer (any other balance), asset_purchase (an `other_asset`) and return_on_investment (the `other_asset` it came from; not moved) only |
+| `category_uid` | optional; expense and asset_purchase need an `expense` category, income and return_on_investment an `income` one; none on transfers |
 | `spent_at` | RFC 3339 **with offset**: `2026-10-06T21:06:00+08:00` (no date-only, no naive times) |
 | `note` | optional, ≤ 1000 chars |
 
@@ -143,6 +143,13 @@ curl -sS -b "$JAR" -c "$JAR" -X POST "$BASE/api/transactions" -H 'Content-Type: 
 curl -sS -b "$JAR" -c "$JAR" -X POST "$BASE/api/transactions" -H 'Content-Type: application/json' \
   -d "$(jq -n --arg b "$CARD_UID" --arg t "$LAPTOP_UID" \
         '{type:"asset_purchase", amount:"35000", currency:"THB", balance_uid:$b, to_balance_uid:$t, spent_at:"2026-10-08T15:00:00+08:00"}')" \
+  | jq '{uid, type, amount, account, to_account}'
+
+# Return on investment: a dividend from Gold paid into Wallet (like income;
+# Gold's value does not change, it is only linked)
+curl -sS -b "$JAR" -c "$JAR" -X POST "$BASE/api/transactions" -H 'Content-Type: application/json' \
+  -d "$(jq -n --arg b "$WALLET_UID" --arg t "$GOLD_UID" \
+        '{type:"return_on_investment", amount:"250", currency:"THB", balance_uid:$b, to_balance_uid:$t, spent_at:"2026-10-09T10:00:00+08:00"}')" \
   | jq '{uid, type, amount, account, to_account}'
 ```
 
@@ -217,11 +224,12 @@ curl -sS -b "$JAR" -c "$JAR" \
   | jq -r '.count, (.transactions[] | [.spent_at, .type, .amount, .currency, .account, .note] | @tsv)'
 ```
 
-Other filters: `category_uid=<uid>`, `type=income|transfer|asset_purchase|balance_adjustment`.
+Other filters: `category_uid=<uid>`, `type=income|transfer|asset_purchase|return_on_investment|balance_adjustment`.
 `limit` is 1–5000 (default **500**; if `count` equals the limit there may be
 more — narrow the date range). There is no server-side sum: total the
-`amount` strings per currency yourself and exclude transfers, asset purchases
-and balance adjustments from spending/income totals. Category names are not
+`amount` strings per currency yourself, count returns on investment as income,
+and exclude transfers, asset purchases and balance adjustments from
+spending/income totals. Category names are not
 on transactions; join `category_uid` with `GET /api/categories`.
 
 ## Step 4: edit (PUT = full replace + version)

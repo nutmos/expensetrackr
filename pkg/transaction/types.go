@@ -20,10 +20,10 @@ type Transaction struct {
 	Amount       string  `json:"amount"`         // decimal string, e.g. "120.50"
 	AmountMinor  int64   `json:"amount_minor"`   // integer minor units, e.g. 12050
 	Currency     string  `json:"currency"`       // ISO 4217, e.g. "THB"
-	Type         Type    `json:"type"`           // expense | income | transfer | asset_purchase | balance_adjustment
-	BalanceUID   UID     `json:"balance_uid"`    // paying (expense, asset_purchase), receiving (income) or source (transfer) balance
+	Type         Type    `json:"type"`           // expense | income | transfer | asset_purchase | return_on_investment | balance_adjustment
+	BalanceUID   UID     `json:"balance_uid"`    // paying (expense, asset_purchase), receiving (income, return_on_investment) or source (transfer) balance
 	Account      string  `json:"account"`        // denormalized balance name at write time
-	ToBalanceUID *UID    `json:"to_balance_uid"` // transfer / asset_purchase destination; null otherwise
+	ToBalanceUID *UID    `json:"to_balance_uid"` // transfer / asset_purchase destination, return_on_investment linked asset; null otherwise
 	ToAccount    *string `json:"to_account"`     // denormalized destination name; null otherwise
 	CategoryUID  *UID    `json:"category_uid"`   // optional link to categories.uid; null for none / transfers
 	SpentAt      string  `json:"spent_at"`       // RFC 3339 with the offset as entered
@@ -72,7 +72,7 @@ type CreateInput struct {
 	Currency     string       `json:"currency"`
 	Type         string       `json:"type"` // optional on create/PUT; defaults to "expense"
 	BalanceUID   string       `json:"balance_uid"`
-	ToBalanceUID string       `json:"to_balance_uid"` // transfer / asset_purchase only
+	ToBalanceUID string       `json:"to_balance_uid"` // transfer / asset_purchase / return_on_investment only
 	CategoryUID  string       `json:"category_uid"`   // optional; not allowed for a transfer
 	SpentAt      string       `json:"spent_at"`
 	Note         string       `json:"note"`
@@ -128,6 +128,12 @@ const (
 	// balance (to_balance_uid, value up). It may carry an optional expense
 	// category; it is not counted as an expense or income.
 	AssetPurchase Type = "asset_purchase"
+	// ReturnOnInvestment ("Return on Investment") is investment income such
+	// as a dividend or interest payment. It behaves like income: it credits
+	// a payment account or credit card (balance_uid) and may carry an income
+	// category. It must link the other_asset it came from (to_balance_uid);
+	// that asset's value is not changed.
+	ReturnOnInvestment Type = "return_on_investment"
 	// BalanceAdjustment ("Balance Adjustment") is recorded automatically when
 	// a balance's amount is edited by hand (PUT /api/balances/:uid). It
 	// cannot be created, edited or deleted through the transactions API and
@@ -135,9 +141,11 @@ const (
 	BalanceAdjustment Type = "balance_adjustment"
 )
 
-// HasDestination reports whether the type uses to_balance_uid (transfer and
-// asset_purchase).
-func (t Type) HasDestination() bool { return t == Transfer || t == AssetPurchase }
+// HasDestination reports whether the type uses to_balance_uid (transfer,
+// asset_purchase and return_on_investment).
+func (t Type) HasDestination() bool {
+	return t == Transfer || t == AssetPurchase || t == ReturnOnInvestment
+}
 
 // ErrAdjustmentType is the field message for an attempt to use type
 // balance_adjustment in POST/PUT /api/transactions.
@@ -169,6 +177,8 @@ type ConversionRate struct {
 //	                           to_amount in to_currency for a cross-currency transfer)
 //	asset_purchase balance_uid value -= amount  (source account down / card debt up, like an expense)
 //	          to_balance_uid   value += amount  (destination other_asset up)
+//	return_on_investment balance_uid value += amount (like income: account up / card debt down)
+//	          to_balance_uid   none             (linked other_asset; link only, value unchanged)
 //	balance_adjustment         none             (records a manual edit that already set the value)
 type Effect struct {
 	BalanceUID UID

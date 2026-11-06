@@ -115,8 +115,8 @@ func TestFreshDatabaseGetsBaseline(t *testing.T) {
 	}
 	st.Close()
 
-	if SchemaVersion != 3 {
-		t.Errorf("SchemaVersion = %d, want 3 (baseline + api_tokens + per-user data)", SchemaVersion)
+	if SchemaVersion != 4 {
+		t.Errorf("SchemaVersion = %d, want 4 (baseline + api_tokens + per-user data + return_on_investment)", SchemaVersion)
 	}
 	if v := pragmaInt(t, path, "user_version"); v != SchemaVersion {
 		t.Errorf("user_version = %d, want %d", v, SchemaVersion)
@@ -139,7 +139,7 @@ func TestFreshDatabaseGetsBaseline(t *testing.T) {
 			t.Errorf("missing %s", k)
 		}
 	}
-	if ddl := got["table transactions"]; !strings.Contains(ddl, "'asset_purchase', 'balance_adjustment'") || !strings.Contains(ddl, "import_ref") {
+	if ddl := got["table transactions"]; !strings.Contains(ddl, "'asset_purchase', 'return_on_investment', 'balance_adjustment'") || !strings.Contains(ddl, "import_ref") {
 		t.Errorf("transactions DDL: %s", ddl)
 	}
 

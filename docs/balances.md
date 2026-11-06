@@ -28,6 +28,8 @@ is always > 0.
 | `transfer` (destination) | `to_balance_uid` (any type) | `balance += amount` | `debt −= amount` | topping up an account; paying a card; repaying a loan |
 | `asset_purchase` (source) | `balance_uid` (payment_account / credit_card) | `balance −= amount` | `debt += amount` | buying a laptop, gold or a car with a debit or credit card |
 | `asset_purchase` (destination) | `to_balance_uid` (other_asset only) | `balance += amount` | n/a (not allowed) | the asset bought gains its value |
+| `return_on_investment` (receiver) | `balance_uid` (payment_account / credit_card) | `balance += amount` | `debt −= amount` (may go negative = in credit) | a dividend or interest paid into an account or onto a card |
+| `return_on_investment` (linked asset) | `to_balance_uid` (other_asset only) | none (link only) | n/a (not allowed) | the investment the return came from keeps its value |
 | `balance_adjustment` | `balance_uid` (any type) | none | none | recorded by a manual balance edit, which already set the value (§2) |
 
 The code is `transaction.Effects` (signs) and
@@ -37,14 +39,14 @@ The code is `transaction.Effects` (signs) and
 
 - **Update:** the old effect is reversed and the new one applied, in one
   database transaction. This covers changes of amount, type (expense ↔ income
-  ↔ transfer ↔ asset_purchase), source account and transfer destination.
+  ↔ transfer ↔ asset_purchase ↔ return_on_investment), source account and transfer destination.
   - Changes are summed per balance. A balance whose net change is zero (for
     example a note-only edit) is not written, and its version does not change.
 - **Delete:** the effect is reversed.
 - **Balance deleted meanwhile:** if a referenced balance was deleted, its part
   of the reversal is skipped. The other balance is still adjusted.
-- **`adjusts_balances`:** every expense, income, transfer and asset purchase
-  has `"adjusts_balances": true`. Balance Adjustment rows (§2) have `false`:
+- **`adjusts_balances`:** every expense, income, transfer, asset purchase and
+  return on investment has `"adjusts_balances": true`. Balance Adjustment rows (§2) have `false`:
   they record a manual edit and never move a balance themselves.
 
 Cross-currency transfers: the source changes by `amount` (source currency)
@@ -55,7 +57,8 @@ refetched for a reversal.
 ### Currency must match (except cross-currency transfers)
 
 A transaction's `currency` must equal the currency of every balance it moves
-(`balance_uid`, and `to_balance_uid` for asset purchases). A **transfer** is
+(`balance_uid`, and `to_balance_uid` for asset purchases; the asset linked by a
+return on investment is not moved, so its currency may differ). A **transfer** is
 the exception for its destination: if `to_balance_uid` is in another
 currency, the destination moves by `to_amount` in its own currency (see
 [exchange-rates.md](exchange-rates.md)); the source still moves by

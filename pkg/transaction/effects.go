@@ -15,7 +15,7 @@ func (e Transaction) Effects() []Effect {
 	switch e.Type {
 	case BalanceAdjustment:
 		return nil
-	case Income:
+	case Income, ReturnOnInvestment: // ROI: the linked asset is not moved
 		return []Effect{{BalanceUID: e.BalanceUID, Field: "balance_uid", Delta: amt}}
 	case Transfer, AssetPurchase:
 		out := []Effect{{BalanceUID: e.BalanceUID, Field: "balance_uid", Delta: -amt}}
