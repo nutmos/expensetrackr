@@ -112,7 +112,7 @@ The balances move automatically in the same DB transaction.
 | `type` | `expense` (default), `income`, `transfer`, `asset_purchase` |
 | `amount` | decimal **string**, > 0, at most the currency's decimals (`"120.50"` THB, `"1500"` JPY); never negative |
 | `currency` | ISO 4217; **must equal the (source) balance's currency** (422 otherwise) |
-| `balance_uid` | expense / asset_purchase: `payment_account` or `credit_card`; income: `payment_account` or `other_asset`; transfer: any |
+| `balance_uid` | expense / asset_purchase: `payment_account` or `credit_card`; income: `payment_account`, `other_asset` or `credit_card` (cash rebate); transfer: any |
 | `to_balance_uid` | transfer (any other balance) and asset_purchase (an `other_asset`) only |
 | `category_uid` | optional; expense and asset_purchase need an `expense` category, income an `income` one; none on transfers |
 | `spent_at` | RFC 3339 **with offset**: `2026-10-06T21:06:00+08:00` (no date-only, no naive times) |
@@ -202,8 +202,9 @@ curl -sS -b "$JAR" -c "$JAR" -X POST "$BASE/api/transactions/bulk" -H 'Content-T
 ```
 
 Amounts are always positive: purchases and fees are `expense`; refunds and
-credits to a bank account are `income` (a refund on a credit card can't be
-recorded yet, so list those rows for the user); card payments and moves between own accounts are
+credits to a bank account or cash rebates / statement credits on a credit
+card are `income` (card debt goes down; `other_liability` is still rejected);
+card payments and moves between own accounts are
 `transfer` (import them from one side only). Never `balance_adjustment`. Full
 guide: [docs/bulk-import.md](../../docs/bulk-import.md).
 

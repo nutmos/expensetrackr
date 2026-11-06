@@ -122,6 +122,8 @@ func TestBalanceSignRules(t *testing.T) {
 		{"expense on credit_card: debt up", "expense", "30", "card", "", []want{{"card", "130.00", true}}},
 		{"income into payment_account: balance up", "income", "50", "pay", "", []want{{"pay", "1050.00", true}}},
 		{"income into other_asset: balance up", "income", "50", "gold", "", []want{{"gold", "550.00", true}}},
+		{"income into credit_card: debt down", "income", "40", "card", "", []want{{"card", "60.00", true}}},
+		{"income rebate over debt: card in credit", "income", "150", "card", "", []want{{"card", "-50.00", true}}},
 		{"transfer asset->card (card payment): debt down", "transfer", "100", "pay", "card", []want{{"pay", "900.00", true}, {"card", "0.00", true}}},
 		{"transfer overpays card: debt negative", "transfer", "150", "pay", "card", []want{{"pay", "850.00", true}, {"card", "-50.00", true}}},
 		{"transfer card->asset (cash advance): debt up", "transfer", "50", "card", "pay", []want{{"card", "150.00", true}, {"pay", "1050.00", true}}},
@@ -429,4 +431,50 @@ func TestConcurrentWritesStayConsistent(t *testing.T) {
 	if wins != 1 || conflicts != n-1 {
 		t.Errorf("wins %d conflicts %d", wins, conflicts)
 	}
+}
+
+func TestIncomeToCreditCard(t *testing.T) {
+	ctx := context.Background()
+	t.Run("create lowers debt; delete undoes", func(t *testing.T) {
+		f := newFixture(t)
+		e := f.create(f.tx("income", "40", "THB", f.card, nil))
+		f.want(f.card, "60.00", 2)
+		if err := f.st.DeleteWith(ctx, f.userUID, e.ID, WriteOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		f.want(f.card, "100.00", 3)
+	})
+	t.Run("edit amount, type and balance move the effect", func(t *testing.T) {
+		f := newFixture(t)
+		e := f.create(f.tx("income", "40", "THB", f.card, nil))
+		f.want(f.card, "60.00", 2)
+		update := func(next transaction.Transaction) {
+			t.Helper()
+			if _, err := f.st.UpdateWith(ctx, f.userUID, e.ID, WriteOptions{}, func(transaction.Transaction) (transaction.Transaction, error) {
+				return next, nil
+			}); err != nil {
+				t.Fatalf("update: %v", err)
+			}
+		}
+		// Larger rebate: debt 100 - 90 = 10.
+		update(f.tx("income", "90", "THB", f.card, nil))
+		f.want(f.card, "10.00", 3)
+		// Switch type to expense on the same card: undo income (+90 debt) then expense (+50 debt) => 100+50=150.
+		update(f.tx("expense", "50", "THB", f.card, nil))
+		f.want(f.card, "150.00", 4)
+		// Move to income on the payment account: undo expense, then +50 on pay.
+		update(f.tx("income", "50", "THB", f.pay, nil))
+		f.want(f.card, "100.00", 5)
+		f.want(f.pay, "1050.00", 2)
+		// Back to income on the card.
+		update(f.tx("income", "25", "THB", f.card, nil))
+		f.want(f.pay, "1000.00", 3)
+		f.want(f.card, "75.00", 6)
+	})
+	t.Run("currency mismatch rejected", func(t *testing.T) {
+		f := newFixture(t)
+		e := f.tx("income", "10", "USD", f.card, nil)
+		fieldErr(t, f.st.Create(ctx, f.userUID, &e), "balance_uid")
+		f.want(f.card, "100.00", 1)
+	})
 }

@@ -203,7 +203,7 @@ There is **no SQLite foreign key**: deleting a balance leaves the transaction's
 **Balances adjust automatically.** Creating, editing or deleting
 a transaction moves its balances in the same database transaction:
 - an expense lowers an account's balance or raises a card's debt;
-- income raises a balance;
+- income raises a balance or lowers a credit card's debt (cash rebate);
 - a transfer moves value from source to destination.
 
 The transaction currency must match the (source) balance currency (422
@@ -294,7 +294,7 @@ adjusts its balances automatically:
 | `type` | `balance_uid` | `to_balance_uid` |
 |---|---|---|
 | `expense` | asset `balance −= amount`; card `debt += amount` | n/a |
-| `income` | asset `balance += amount` | n/a |
+| `income` | asset `balance += amount`; card `debt −= amount` (cash rebate / credit; may go negative = in credit) | n/a |
 | `transfer` | source: asset `balance −= amount`, liability `debt += amount` (drawing a loan / cash advance) | destination: asset `balance += amount`, liability `debt −= amount` (card payment / loan repayment) |
 | `asset_purchase` ("Asset Purchase") | like an expense: asset `balance −= amount`; card `debt += amount` | the `other_asset` bought: `balance += amount` |
 | `balance_adjustment` ("Balance Adjustment") | none: records a manual balance edit that already set the value | n/a |
@@ -319,7 +319,7 @@ types each transaction type accepts:
 | `type`     | `balance_uid` must be                         | `to_balance_uid` |
 |------------|-----------------------------------------------|------------------|
 | `expense`  | `payment_account` or `credit_card` (spent from) | not allowed (422) |
-| `income`   | `payment_account` or `other_asset` (received into) | not allowed (422) |
+| `income`   | `payment_account`, `other_asset` or `credit_card` (received into / cash rebate) | not allowed (422) |
 | `transfer` | any balance type (source)                     | **required**; any existing balance type, different from `balance_uid` |
 | `asset_purchase` | `payment_account` or `credit_card` (paid from) | **required**; an `other_asset` balance (422 for any other type), different from `balance_uid` |
 
@@ -332,9 +332,10 @@ types each transaction type accepts:
 
 - Omitting `type` on POST or PUT means `expense`, so older clients keep working.
   A PUT is a full replace, so a PUT of a transfer must send `"type":"transfer"`.
-- Why: income lands in a spendable account or an asset (salary, dividends);
-  a credit card or loan receiving money is modelled as a transfer (card
-  payment, loan repayment). Transfers may also move money into an
+- Why: income lands in a spendable account, an asset (salary, dividends), or
+  a credit card as a cash rebate / statement credit (which lowers its debt;
+  `other_liability` stays disallowed for income). Paying a card or loan from
+  another account is still a transfer. Transfers may also move money into an
   `other_asset` (savings) or draw from a credit card / loan.
 - The transaction's `currency` must equal the currency of its source balance
   (and, for an asset purchase, of its destination too); 422 otherwise.

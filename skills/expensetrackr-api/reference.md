@@ -76,8 +76,8 @@ Fields a type doesn't use are `null`.
 |---|---|---|
 | `payment_account` | `balance` (may be ≤ 0) | can pay expenses, receive income |
 | `other_asset` | `balance` | receives income, asset purchases, transfers |
-| `credit_card` | `debt`, `limit` (≥ 0) | can pay expenses; `available = limit − debt`, `over_limit` |
-| `other_liability` | `debt`, `limit` | loans; only transfers in/out |
+| `credit_card` | `debt`, `limit` (≥ 0) | can pay expenses; can receive income (cash rebate / credit, debt −= amount); `available = limit − debt`, `over_limit` |
+| `other_liability` | `debt`, `limit` | loans; only transfers in/out (not income) |
 
 ```bash
 # List (grouped by type, then name) + per-currency totals
@@ -179,7 +179,7 @@ Balance effects (automatic):
 | type | source (`balance_uid`) | destination (`to_balance_uid`) |
 |---|---|---|
 | expense | asset −amount / card debt +amount | – |
-| income | asset +amount | – |
+| income | asset +amount / card debt −amount | – |
 | transfer | asset −amount / liability debt +amount | asset +to_amount / liability debt −to_amount (card payment, loan repayment) |
 | asset_purchase | like expense | `other_asset` +amount (same currency required) |
 | balance_adjustment | none (server-created record of a manual edit) | – |

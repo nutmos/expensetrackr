@@ -34,12 +34,15 @@ func TestTransactionTypes(t *testing.T) {
 	if rec.Code != 201 || e["type"] != "expense" || e["to_balance_uid"] != nil || e["to_account"] != nil {
 		t.Fatalf("default expense: %d %v", rec.Code, e)
 	}
-	// Income into other_asset ok; into credit card rejected.
+	// Income into other_asset and credit card (cash rebate) ok; other_liability rejected.
 	if rec, b := do(t, h, "POST", "/api/transactions", tx(`,"type":"income","balance_uid":"`+gold+`"`)); rec.Code != 201 || b["type"] != "income" {
-		t.Errorf("income: %d %v", rec.Code, b)
+		t.Errorf("income to asset: %d %v", rec.Code, b)
+	}
+	if rec, b := do(t, h, "POST", "/api/transactions", tx(`,"type":"income","balance_uid":"`+card+`"`)); rec.Code != 201 || b["type"] != "income" {
+		t.Errorf("income to card: %d %v", rec.Code, b)
 	}
 	cases := []struct{ name, body, field string }{
-		{"income to card", tx(`,"type":"income","balance_uid":"` + card + `"`), "balance_uid"},
+		{"income to other_liability", tx(`,"type":"income","balance_uid":"` + loan + `"`), "balance_uid"},
 		{"expense from other_asset", tx(`,"type":"expense","balance_uid":"` + gold + `"`), "balance_uid"},
 		{"bad type", tx(`,"type":"refund","balance_uid":"` + pay + `"`), "type"},
 		{"to on expense", tx(`,"balance_uid":"` + pay + `","to_balance_uid":"` + card + `"`), "to_balance_uid"},

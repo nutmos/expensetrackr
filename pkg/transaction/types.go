@@ -162,7 +162,8 @@ type ConversionRate struct {
 // Sign rules (amount is always > 0):
 //
 //	expense   balance_uid      value -= amount  (asset balance down / card debt up)
-//	income    balance_uid      value += amount  (asset balance up)
+//	income    balance_uid      value += amount  (asset balance up / card debt down;
+//	                           a rebate larger than the debt leaves the card in credit)
 //	transfer  balance_uid      value -= amount  (source: asset down / liability debt up)
 //	          to_balance_uid   value += amount  (destination: asset up / liability debt down;
 //	                           to_amount in to_currency for a cross-currency transfer)

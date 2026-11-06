@@ -122,7 +122,7 @@ Balance types: `payment_account`, `other_asset` (assets, field `balance`);
 | type | when | source `balance_uid` | `to_balance_uid` | category |
 |---|---|---|---|---|
 | `expense` (default if omitted) | spending | `payment_account` or `credit_card` | — | optional, must be `expense` |
-| `income` | money in | `payment_account` or `other_asset` | — | optional, must be `income` |
+| `income` | money in / cash rebate | `payment_account`, `other_asset` or `credit_card` | — | optional, must be `income` |
 | `transfer` | move between own balances (incl. paying a card) | any | any other balance | **not allowed** |
 | `asset_purchase` | buy a tracked asset | `payment_account` or `credit_card` | an `other_asset` | optional, `expense` category |
 | `balance_adjustment` | **never** send this | — | — | — |

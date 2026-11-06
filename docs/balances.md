@@ -23,7 +23,7 @@ is always > 0.
 | Transaction | Balance | Asset (`balance`) | Liability (`debt`) | Example |
 |---|---|---|---|---|
 | `expense` | `balance_uid` (payment_account / credit_card) | `balance −= amount` | `debt += amount` | lunch paid by debit card / credit card |
-| `income` | `balance_uid` (payment_account / other_asset) | `balance += amount` | n/a (not allowed) | salary into a bank account |
+| `income` | `balance_uid` (payment_account / other_asset / credit_card) | `balance += amount` | `debt −= amount` (may go negative = in credit) | salary into a bank account; cash rebate on a card |
 | `transfer` (source) | `balance_uid` (any type) | `balance −= amount` | `debt += amount` | moving savings out; drawing a loan; cash advance |
 | `transfer` (destination) | `to_balance_uid` (any type) | `balance += amount` | `debt −= amount` | topping up an account; paying a card; repaying a loan |
 | `asset_purchase` (source) | `balance_uid` (payment_account / credit_card) | `balance −= amount` | `debt += amount` | buying a laptop, gold or a car with a debit or credit card |

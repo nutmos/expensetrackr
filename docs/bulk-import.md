@@ -147,11 +147,10 @@ index on `(balance_uid, import_ref) WHERE import_ref IS NOT NULL`.
    - money out for a purchase or fee: `type: "expense"`
    - money in (salary, interest) and **refunds, reversals and cashback
      credits** to a bank account: `type: "income"`. Income can only go to a
-     `payment_account` or `other_asset`. A **refund or credit on a credit
-     card statement** cannot be recorded yet, because negative amounts and
-     income to a card are rejected (see "Not supported yet" in the README).
-     Leave those rows out, list them for the user, and suggest a manual edit
-     of the card's debt, which records a balance adjustment.
+     `payment_account`, `other_asset` or `credit_card` (a cash rebate /
+     statement credit on a card lowers its debt; a rebate larger than the
+     debt leaves the card in credit, same as an overpaying transfer).
+     `other_liability` is still rejected for income.
    - **credit card payments** and moves between your own accounts:
      `type: "transfer"`, from the paying account to the card or other
      account. On a card statement, the "PAYMENT – THANK YOU" line is the

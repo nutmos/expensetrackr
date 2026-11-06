@@ -71,7 +71,7 @@ info:
     | type | `balance_uid` | `to_balance_uid` | balance effect |
     |---|---|---|---|
     | `expense` (default) | `payment_account` or `credit_card` | not allowed | asset balance −amount / card debt +amount |
-    | `income` | `payment_account` or `other_asset` | not allowed | asset balance +amount |
+    | `income` | `payment_account`, `other_asset` or `credit_card` | not allowed | asset balance +amount / card debt −amount (rebate; may go negative = in credit) |
     | `transfer` | any balance | **required**, any balance ≠ source | source −amount, destination +amount (debt moves the other way) |
     | `asset_purchase` | `payment_account` or `credit_card` | **required**, an `other_asset` ≠ source | source like an expense (balance −amount / card debt +amount), destination asset balance +amount |
     | `balance_adjustment` | the edited balance | — | none (**read-only**, server-created) |

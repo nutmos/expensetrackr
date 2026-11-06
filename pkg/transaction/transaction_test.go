@@ -113,3 +113,76 @@ func TestIsPayableType(t *testing.T) {
 		t.Fatal("expected not payable")
 	}
 }
+
+func TestSourceAllowed(t *testing.T) {
+	cases := []struct {
+		name string
+		tt   Type
+		bt   balance.Type
+		want bool
+	}{
+		{"expense payment_account", Expense, balance.TypePaymentAccount, true},
+		{"expense credit_card", Expense, balance.TypeCreditCard, true},
+		{"expense other_asset", Expense, balance.TypeOtherAsset, false},
+		{"expense other_liability", Expense, balance.TypeOtherLiability, false},
+		{"income payment_account", Income, balance.TypePaymentAccount, true},
+		{"income other_asset", Income, balance.TypeOtherAsset, true},
+		{"income credit_card", Income, balance.TypeCreditCard, true},
+		{"income other_liability", Income, balance.TypeOtherLiability, false},
+		{"asset_purchase credit_card", AssetPurchase, balance.TypeCreditCard, true},
+		{"asset_purchase other_asset", AssetPurchase, balance.TypeOtherAsset, false},
+		{"transfer other_liability", Transfer, balance.TypeOtherLiability, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := SourceAllowed(c.tt, c.bt); got != c.want {
+				t.Fatalf("SourceAllowed(%s, %s) = %v, want %v", c.tt, c.bt, got, c.want)
+			}
+		})
+	}
+}
+
+func TestAttachPaymentBalanceIncome(t *testing.T) {
+	mk := func(t *testing.T) Transaction {
+		t.Helper()
+		e, err := CreateInput{
+			Type: "income", Amount: "10", Currency: "THB",
+			BalanceUID: "11111111-1111-4111-8111-111111111111",
+			SpentAt:    "2026-10-06T21:06:00+08:00",
+		}.Validate()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return e
+	}
+	cases := []struct {
+		name    string
+		bt      balance.Type
+		wantErr bool
+	}{
+		{"payment_account", balance.TypePaymentAccount, false},
+		{"other_asset", balance.TypeOtherAsset, false},
+		{"credit_card", balance.TypeCreditCard, false},
+		{"other_liability", balance.TypeOtherLiability, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e := mk(t)
+			b := balance.Balance{UID: "11111111-1111-4111-8111-111111111111", Name: c.name, Type: c.bt}
+			err := e.AttachPaymentBalance(b)
+			if c.wantErr {
+				var ve *ValidationError
+				if !errors.As(err, &ve) || ve.Fields["balance_uid"] == "" {
+					t.Fatalf("want balance_uid error, got %v", err)
+				}
+				if got := ve.Fields["balance_uid"]; got != errSourceIncome {
+					t.Fatalf("message = %q, want %q", got, errSourceIncome)
+				}
+				return
+			}
+			if err != nil || e.Account != c.name {
+				t.Fatalf("attach: account=%q err=%v", e.Account, err)
+			}
+		})
+	}
+}

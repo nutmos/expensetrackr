@@ -67,31 +67,48 @@ func IsPayableType(t balance.Type) bool {
 // SourceAllowed reports whether a balance type may be used as balance_uid for
 // a transaction type:
 //   - expense:  payment_account, credit_card (money is spent from it)
-//   - income:   payment_account, other_asset (money is received into it)
+//   - income:   payment_account, other_asset, credit_card (money received /
+//     cash rebate credited back; other_liability stays disallowed)
 //   - transfer: any balance type (source of the move)
 //   - asset_purchase: payment_account, credit_card (money is spent from it)
 func SourceAllowed(tt Type, bt balance.Type) bool {
-	switch tt {
-	case Expense, AssetPurchase:
+	if tt == Expense || tt == AssetPurchase {
 		return IsPayableType(bt)
-	case Income:
-		return bt == balance.TypePaymentAccount || bt == balance.TypeOtherAsset
-	case Transfer:
+	}
+	if tt == Income {
+		return IsIncomeSourceType(bt)
+	}
+	if tt == Transfer {
 		return bt.Valid()
 	}
 	return false
 }
 
+// IsIncomeSourceType reports whether a balance type may receive income
+// (payment accounts, other assets, and credit cards for cash rebates/credits).
+// other_liability is not allowed.
+func IsIncomeSourceType(bt balance.Type) bool {
+	return bt == balance.TypePaymentAccount || bt == balance.TypeOtherAsset || bt == balance.TypeCreditCard
+}
+
+const (
+	errSourceExpense       = "must refer to a payment_account or credit_card balance"
+	errSourceIncome        = "must refer to a payment_account, other_asset or credit_card balance (income)"
+	errSourceAssetPurchase = "must refer to a payment_account or credit_card balance (asset purchase source)"
+	errSourceGeneric       = "must refer to an existing balance"
+)
+
 func sourceRule(tt Type) string {
-	switch tt {
-	case Expense:
-		return "must refer to a payment_account or credit_card balance"
-	case Income:
-		return "must refer to a payment_account or other_asset balance (income)"
-	case AssetPurchase:
-		return "must refer to a payment_account or credit_card balance (asset purchase source)"
+	if tt == Expense {
+		return errSourceExpense
 	}
-	return "must refer to an existing balance"
+	if tt == Income {
+		return errSourceIncome
+	}
+	if tt == AssetPurchase {
+		return errSourceAssetPurchase
+	}
+	return errSourceGeneric
 }
 
 // DestinationAllowed reports whether a balance type may be used as
