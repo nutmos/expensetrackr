@@ -157,8 +157,18 @@
     if (Number.isInteger(scale)) { opts.minimumFractionDigits = scale; opts.maximumFractionDigits = scale; }
     try { return new Intl.NumberFormat(undefined, opts).format(v); } catch (_) { return v; }
   }
-  // "Wallet · $50.00": name and current amount only (no uid, code or kind).
-  function balanceLabel(b) { return `${b.name} · ${balanceAmountText(b)}`; }
+  // Display names of balance types, singular (issue #93).
+  const BALANCE_TYPE_LABEL = { payment_account: "Payment account", credit_card: "Credit card", other_asset: "Other asset", other_liability: "Other liability" };
+  // "Wallet · Payment account · $50.00": name, balance type and current
+  // amount (no uid or currency code). The type also makes the searchable
+  // dropdown match on it, e.g. typing "card" lists the credit cards.
+  function balanceLabel(b) {
+    const parts = [b.name];
+    const type = BALANCE_TYPE_LABEL[b.type];
+    if (type) parts.push(type);
+    parts.push(balanceAmountText(b));
+    return parts.join(" · ");
+  }
 
   function fillSelect(sel, types, keep) {
     sel.replaceChildren(Object.assign(document.createElement("option"), { value: "", textContent: "Select a balance…" }));
