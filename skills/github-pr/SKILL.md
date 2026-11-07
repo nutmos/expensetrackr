@@ -38,7 +38,7 @@ Fixes #1234
 - [ ] Change: Changes on the code that may affect the existing functionalities
 - [ ] Bugfix: Fix bug and security issues
 - [ ] Document: Update documents only
-- [ ] Development Tools: 
+- [ ] Tools: Related to tools like CI/CD or Deployment Script
 
 ## Test
 
