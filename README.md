@@ -10,8 +10,10 @@ requires a username/password login (server-side sessions); see
 
 ## Requirements
 
-- Go 1.24+ (`go.mod` targets go 1.24 / toolchain go1.24.4, and every dependency
-  is pinned to a version that builds with the locally installed Go 1.24.4)
+- Go 1.26+ (`go.mod` sets the minimum `go 1.26.0` and the toolchain
+  `go1.27.3`, which CI installs through `actions/setup-go`). Keep your local Go on the latest patch release:
+  `make vulncheck` reports standard-library vulnerabilities of the Go you build
+  with
 - No CGO (`CGO_ENABLED=0` works)
 - GNU make (optional; the targets are thin wrappers around `go` commands)
 
@@ -123,6 +125,8 @@ make test         # go test ./...
 | `build`     | `go build -o bin/expense-server ./cmd/server`               |
 | `run`       | `build`, then `./bin/expense-server -addr $(ADDR) -db $(DB)` (defaults `127.0.0.1:8080`, `data/expenses.db`) |
 | `test`      | `go test ./...`                                             |
+| `test-race` | `go test -race ./...` with `CGO_ENABLED=1` (needs a C compiler) |
+| `vulncheck` | `govulncheck ./...`: known vulnerabilities your code can reach |
 | `vet`       | `go vet ./...`                                              |
 | `fmt`       | `gofmt -s -w cmd pkg`                                       |
 | `fmt-check` | fails if any file needs gofmt                               |
