@@ -119,26 +119,23 @@ func (s *Store) modifyCategories(ctx context.Context, userUID string, fn func(tx
 }
 
 func (s *Store) modifyCategoriesOnce(ctx context.Context, userUID string, fn func(tx *sql.Tx, cats []category.Category) ([]category.Category, error)) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("categories: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	cats, version, err := readUserCategories(ctx, tx, userUID)
-	if err != nil {
-		return err
-	}
-	if testHookCategoryRead != nil {
-		testHookCategoryRead(tx, userUID)
-	}
-	next, err := fn(tx, cats)
-	if err != nil {
-		return err
-	}
-	if err := writeUserCategories(ctx, tx, userUID, next, version); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return s.inTx(ctx, "categories", func(tx *sql.Tx) error {
+		cats, version, err := readUserCategories(ctx, tx, userUID)
+		if err != nil {
+			return err
+		}
+		if testHookCategoryRead != nil {
+			testHookCategoryRead(tx, userUID)
+		}
+		next, err := fn(tx, cats)
+		if err != nil {
+			return err
+		}
+		if err := writeUserCategories(ctx, tx, userUID, next, version); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 // nameTaken reports whether another category (uid != skipUID) of the same

@@ -8,6 +8,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -86,6 +87,32 @@ func Open(path string) (*Store, error) {
 
 // Close closes the database.
 func (s *Store) Close() error { return s.db.Close() }
+
+// errRollback, returned by an inTx callback, rolls the transaction back
+// without failing: inTx then returns nil (dry runs, failed atomic batches).
+var errRollback = errors.New("rollback requested")
+
+// inTx runs fn in one database transaction: it commits if fn returns nil and
+// rolls back otherwise. fn's error is returned unchanged (sentinels such as
+// ErrNotFound stay comparable with errors.Is and keep their text); begin and
+// commit failures are wrapped as "op: ...". A panic in fn rolls back too.
+func (s *Store) inTx(ctx context.Context, op string, fn func(tx *sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
+	if err := fn(tx); err != nil {
+		if errors.Is(err, errRollback) {
+			return nil
+		}
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	return nil
+}
 
 // scanner is a *sql.Row or *sql.Rows; the scan helpers of every table take it.
 type scanner interface{ Scan(dest ...any) error }

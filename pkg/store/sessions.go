@@ -55,37 +55,33 @@ func (s *Store) RegisterUser(ctx context.Context, u *user.User, hash string, fir
 	if err != nil {
 		return err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("register: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	if firstRun {
-		var n int
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE password_hash IS NOT NULL)`).Scan(&n); err != nil {
+	now := ts(time.Now())
+	var id int64
+	err = s.inTx(ctx, "register", func(tx *sql.Tx) error {
+		if firstRun {
+			var n int
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE password_hash IS NOT NULL)`).Scan(&n); err != nil {
+				return fmt.Errorf("register: %w", err)
+			}
+			if n == 1 {
+				return ErrRegistrationClosed
+			}
+		}
+		res, err := tx.ExecContext(ctx,
+			`INSERT INTO users (uid, username, email, display_name, preferences, password_hash, password_updated_at, status, created_at)
+		 VALUES (?, ?, NULL, ?, ?, ?, ?, 'active', ?)`,
+			uid, nullStr(u.Username), u.DisplayName, u.Preferences.StoredJSON(), hash, now, now)
+		if err != nil {
+			if m := mapUserErr(err); m != err {
+				return m
+			}
 			return fmt.Errorf("register: %w", err)
 		}
-		if n == 1 {
-			return ErrRegistrationClosed
-		}
-	}
-	now := ts(time.Now())
-	res, err := tx.ExecContext(ctx,
-		`INSERT INTO users (uid, username, email, display_name, preferences, password_hash, password_updated_at, status, created_at)
-		 VALUES (?, ?, NULL, ?, ?, ?, ?, 'active', ?)`,
-		uid, nullStr(u.Username), u.DisplayName, u.Preferences.StoredJSON(), hash, now, now)
-	if err != nil {
-		if m := mapUserErr(err); m != err {
-			return m
-		}
-		return fmt.Errorf("register: %w", err)
-	}
-	id, err := res.LastInsertId()
+		id, err = res.LastInsertId()
+		return err
+	})
 	if err != nil {
 		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("register: %w", err)
 	}
 	u.ID, u.UID, u.CreatedAt, u.Status = id, uid.String(), now, user.StatusActive
 	u.PasswordHash, u.PasswordUpdated, u.HasPassword = &hash, &now, true
@@ -160,21 +156,18 @@ func (s *Store) DeleteExpiredSessions(ctx context.Context, now time.Time) error 
 // ChangePassword sets a new hash and deletes all of the user's sessions
 // except keepTokenHash, in one transaction.
 func (s *Store) ChangePassword(ctx context.Context, uid, hash, keepTokenHash string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("change password: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	now := ts(time.Now())
-	res, err := tx.ExecContext(ctx, `UPDATE users SET password_hash = ?, password_updated_at = ?, updated_at = ? WHERE uid = ?`, hash, now, now, uid)
-	if err != nil {
-		return fmt.Errorf("change password: %w", err)
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrNotFound
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_uid = ? AND token_hash <> ?`, uid, keepTokenHash); err != nil {
-		return fmt.Errorf("change password: %w", err)
-	}
-	return tx.Commit()
+	return s.inTx(ctx, "change password", func(tx *sql.Tx) error {
+		now := ts(time.Now())
+		res, err := tx.ExecContext(ctx, `UPDATE users SET password_hash = ?, password_updated_at = ?, updated_at = ? WHERE uid = ?`, hash, now, now, uid)
+		if err != nil {
+			return fmt.Errorf("change password: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return ErrNotFound
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_uid = ? AND token_hash <> ?`, uid, keepTokenHash); err != nil {
+			return fmt.Errorf("change password: %w", err)
+		}
+		return nil
+	})
 }
