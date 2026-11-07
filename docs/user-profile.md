@@ -33,7 +33,7 @@ allows repeated NULLs.
 |--------------------|------|
 | `id`               | internal |
 | `uid`              | UUID v4, unique |
-| `user_uid`         | `NOT NULL REFERENCES users (uid) ON DELETE CASCADE` (the store opens SQLite with `foreign_keys(1)`) |
+| `user_uid`         | `uuid NOT NULL REFERENCES users (uid) ON DELETE CASCADE` |
 | `provider`         | lowercase identifier. The DB checks only the format; the allowed list is in Go (`user.Providers`: `apple`, `google`), so adding a provider needs no migration |
 | `provider_subject` | the provider's stable user id (OIDC `sub`), 1–255 chars |
 | `email`            | nullable; the email the provider reported (Apple may give a private relay address). Informational only: never used to match accounts |

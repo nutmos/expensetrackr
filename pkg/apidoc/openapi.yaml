@@ -11,7 +11,7 @@ info:
   title: expense-service API
   version: "1.0.0"
   description: |
-    JSON API of **expense-service**, a small expense-logging service (Go + Gin + SQLite).
+    JSON API of **expense-service**, a small expense-logging service (Go + Gin + Postgres).
     **Authentication:** username + password login with a server-side session in the
     `session` cookie (HttpOnly, SameSite=Lax), or a personal API token
     (`Authorization: Bearer ext_…`). Every `/api` route needs a valid session or token

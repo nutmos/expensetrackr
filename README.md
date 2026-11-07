@@ -1,8 +1,9 @@
 # expense-service
 
 A small expense-logging web service in Go (Gin) with a plain HTML + vanilla JS
-web page and a JSON API. Data is stored in SQLite through the pure-Go
-`modernc.org/sqlite` driver, so no CGO or C toolchain is needed.
+web page and a JSON API. Data is stored in **Postgres** through the pure-Go
+`pgx` driver, so no CGO or C toolchain is needed. A local Postgres runs in
+Docker (`make db-up`).
 
 Status: prototype for local use. It listens on 127.0.0.1 by default and
 requires a username/password login (server-side sessions); see
@@ -16,8 +17,8 @@ requires a username/password login (server-side sessions); see
   with
 - No CGO (`CGO_ENABLED=0` works)
 - GNU make (optional; the targets are thin wrappers around `go` commands)
-- Docker with Compose v2, for the local Postgres (see [Local Postgres](#local-postgres)).
-  The app is moving from SQLite to Postgres; until that lands it still uses SQLite
+- Postgres 18 (16+ should work). For development, Docker with Compose v2 runs
+  it for you (see [Local Postgres](#local-postgres))
 
 ## Repository layout
 
@@ -47,24 +48,27 @@ so all Go code other than `cmd/` lives under `pkg/`.
 
 ```bash
 cd /workspace/expense-service    # repo root
-make run                         # build bin/expense-server, serve http://127.0.0.1:8080 with data/expenses.db
+make db-up                       # start the local Postgres (Docker) and wait until ready
+make run                         # build bin/expense-server, serve http://127.0.0.1:8080
 
 # the same without make
+export EXPENSE_DATABASE_URL='postgres://expense:expense@127.0.0.1:5432/expense?sslmode=disable'
 CGO_ENABLED=0 go build -o bin/expense-server ./cmd/server
-./bin/expense-server -addr 127.0.0.1:8080 -db data/expenses.db
+./bin/expense-server -addr 127.0.0.1:8080
 
-# or straight from source
-go run ./cmd/server              # defaults: 127.0.0.1:8080, data/expenses.db
+# or straight from source (EXPENSE_DATABASE_URL set as above)
+go run ./cmd/server
 ```
 
-`make run` takes overrides: `make run ADDR=127.0.0.1:9090 DB=/tmp/test.db`.
-The default `-db data/expenses.db` is relative to the current directory, so
-run from the repo root.
+`make run` takes overrides: `make run ADDR=127.0.0.1:9090`, and uses the
+local development database unless `EXPENSE_DATABASE_URL` is already set.
+On start the server creates or upgrades the schema (see
+[Database schema](#database-schema)).
 
 | Flag    | Env var        | Default            | Notes                                       |
 |---------|----------------|--------------------|---------------------------------------------|
-| `-addr` | `EXPENSE_ADDR` | `127.0.0.1:8080`   | Keep on 127.0.0.1: there is no auth (`:8080` would expose it on all interfaces) |
-| `-db`   | `EXPENSE_DB`   | `data/expenses.db` | Created automatically (directory included)  |
+| `-addr` | `EXPENSE_ADDR` | `127.0.0.1:8080`   | Keep on 127.0.0.1 unless it is behind TLS (`:8080` would expose it on all interfaces) |
+| `-database-url` | `EXPENSE_DATABASE_URL` | none (required) | Postgres URL (`postgres://user:pass@host:5432/db?sslmode=…`) or key=value string. The server exits with a clear message if it is missing or unreachable; the password is never logged |
 | `-fx-url` | `EXPENSE_FX_URL` | `https://api.frankfurter.dev/v1` | Frankfurter exchange-rate API for cross-currency transfers ([docs/exchange-rates.md](docs/exchange-rates.md)) |
 
 Set `GIN_MODE=release` to silence Gin's debug output.
@@ -73,7 +77,7 @@ Run in the background (from the repo root):
 
 ```bash
 make build
-nohup ./bin/expense-server -db data/expenses.db > server.log 2>&1 &
+EXPENSE_DATABASE_URL='postgres://…' nohup ./bin/expense-server > server.log 2>&1 &
 ```
 
 Open http://127.0.0.1:8080/ for the web page, and
@@ -125,7 +129,7 @@ make test         # go test ./...
 | Target      | Does                                                        |
 |-------------|-------------------------------------------------------------|
 | `build`     | `go build -o bin/expense-server ./cmd/server`               |
-| `run`       | `build`, then `./bin/expense-server -addr $(ADDR) -db $(DB)` (defaults `127.0.0.1:8080`, `data/expenses.db`) |
+| `run`       | `build`, then `./bin/expense-server -addr $(ADDR)` against `EXPENSE_DATABASE_URL` (default: the local Postgres) |
 | `test`      | `go test ./...`                                             |
 | `test-race` | `go test -race ./...` with `CGO_ENABLED=1` (needs a C compiler) |
 | `vulncheck` | `govulncheck ./...`: known vulnerabilities your code can reach |
@@ -137,18 +141,21 @@ make test         # go test ./...
 | `db-down`   | stop it; the data is kept                                   |
 | `db-reset`  | stop it and **delete** its data volume                      |
 | `db-psql`   | `psql` on the local development database                    |
-| `clean`     | `rm -rf bin` (never touches `data/`)                        |
+| `clean`     | `rm -rf bin` (never touches the database)                   |
 | `help`      | lists targets (default)                                     |
 
 The Makefile exports `GOTOOLCHAIN=local` and `CGO_ENABLED=0` unless already set.
 
-Handler tests use a throwaway SQLite file under `t.TempDir()`, so they never
-touch the real database.
+Store and handler tests need Postgres: `make db-up`, then `make test`. Each
+test gets its **own empty schema** in the `expense_test` database
+(`pkg/store/storetest`), dropped when the test ends, so tests run in parallel
+and never touch the development data. Without `EXPENSE_TEST_DATABASE_URL`
+(e.g. plain `go test` without the Makefile) those tests are **skipped** with a
+message; in CI (`CI=true`) a missing URL is a failure instead.
 
 ### Local Postgres
 
-The app is moving from SQLite to Postgres. `compose.yaml` runs
-Postgres 18 for development and tests:
+`compose.yaml` runs Postgres 18 for development and tests:
 
 ```bash
 make db-up        # start it (needs Docker running) and wait until ready
@@ -171,33 +178,33 @@ set the two URLs yourself to use another Postgres server. CI runs the same
 
 ## Data model
 
-Transactions are stored in the SQLite table **`transactions`**, with index
-`idx_transactions_spent_at_unix` on `(spent_at_unix DESC, id DESC)` (see
+Transactions are stored in the Postgres table **`transactions`**, with index
+`transactions_user_spent_idx` on `(user_uid, spent_at_utc DESC, id DESC)` (see
 "Database schema"). The HTTP API uses `/api/transactions` and the list key
 `transactions` (the old `/api/transactions` paths were removed, no alias).
 
 | Field         | JSON           | Stored as                                                              |
 |---------------|----------------|------------------------------------------------------------------------|
-| id            | (not exposed)  | `INTEGER PRIMARY KEY AUTOINCREMENT`, internal only; the API uses `uid`  |
-| uid           | `uid`          | `TEXT NOT NULL UNIQUE`, server-assigned UUID v4 (lowercase), immutable; a `uid` in PUT bodies is ignored |
-| amount        | `amount`       | `amount_minor INTEGER` + `amount_scale INTEGER` (see below)             |
+| id            | (not exposed)  | `bigint` identity, internal only; the API uses `uid`                    |
+| uid           | `uid`          | `uuid NOT NULL UNIQUE`, server-assigned UUID v4 (lowercase), immutable; a `uid` in PUT bodies is ignored |
+| amount        | `amount`       | `amount_minor bigint` + `amount_scale smallint` (see below)             |
 | amount (raw)  | `amount_minor` | the integer itself, e.g. `12050`                                       |
-| currency      | `currency`     | `TEXT`, ISO 4217 alphabetic code, upper-cased (`THB`, `SGD`, `USD`, …)  |
-| type          | `type`         | `TEXT NOT NULL DEFAULT 'expense'`: `expense`, `income`, `transfer`, `asset_purchase`, `return_on_investment`, or `balance_adjustment` (server-created only; see "Transaction types") |
-| adj. direction | `adjustment_direction` | `TEXT`, `increase` / `decrease` on `balance_adjustment` rows, `NULL` (JSON `null`) otherwise |
-| payment acct  | `balance_uid`  | `TEXT` UUID of the balance paid from (expense), received into (income, return_on_investment) or moved from (transfer, asset_purchase); no FK |
-| destination   | `to_balance_uid` | `TEXT`, transfers, asset purchases and returns on investment only (else `null`); UUID of the destination balance (for a return on investment, the linked `other_asset`); no FK |
+| currency      | `currency`     | `char(3)`, ISO 4217 alphabetic code, upper-cased (`THB`, `SGD`, `USD`, …) |
+| type          | `type`         | `text NOT NULL DEFAULT 'expense'`: `expense`, `income`, `transfer`, `asset_purchase`, `return_on_investment`, or `balance_adjustment` (server-created only; see "Transaction types") |
+| adj. direction | `adjustment_direction` | `text`, `increase` / `decrease` on `balance_adjustment` rows, `NULL` (JSON `null`) otherwise |
+| payment acct  | `balance_uid`  | `uuid` of of the balance paid from (expense), received into (income, return_on_investment) or moved from (transfer, asset_purchase); no FK |
+| destination   | `to_balance_uid` | `uuid`, transfers, asset purchases and returns on investment only (else `null`); UUID of the destination balance (for a return on investment, the linked `other_asset`); no FK |
 | dest. name    | `to_account`   | denormalized destination name snapshot (transfers, asset purchases and returns on investment only, else `null`)    |
-| category      | `category_uid` | `TEXT`, optional (`null` = none); UUID of a category of the same type (expense categories for asset purchases, income categories for returns on investment); never set for transfers; no FK. **The only link to the category**: no name is stored on the transaction |
+| category      | `category_uid` | `uuid`, optional (`null` = none); UUID of a category of the same type (expense categories for asset purchases, income categories for returns on investment); never set for transfers; no FK. **The only link to the category**: no name is stored on the transaction |
 | account name  | `account`      | denormalized balance `name` snapshot at write time (read-only in API)   |
-| spend time    | `spent_at`     | `TEXT` RFC 3339 with offset as entered + `spent_at_unix INTEGER`        |
-| note          | `note`         | `TEXT`, optional, up to 1000 chars                                     |
-| created       | `created_at`   | `TEXT` RFC 3339 in UTC (server clock)                                  |
-| received amt  | `to_amount`, `to_amount_minor` | `to_amount_minor INTEGER` + `to_amount_scale INTEGER`; cross-currency transfers only (else `NULL`/`null`) |
-| dest. currency | `to_currency` | `TEXT`, the destination balance's currency; cross-currency transfers only |
-| rate          | `exchange_rate`, `rate_source`, `rate_date` | `TEXT`: destination units per 1 source unit (≤ 10 significant digits), `frankfurter`/`manual`, `YYYY-MM-DD` of the ECB rate (Frankfurter only). Immutable history |
+| spend time    | `spent_at`     | `text` RFC 3339 with offset as entered + `spent_at_utc timestamptz` (same instant) |
+| note          | `note`         | `text`, optional, up to 1000 chars                                     |
+| created       | `created_at`   | `timestamptz` (server clock); JSON RFC 3339 in UTC                     |
+| received amt  | `to_amount`, `to_amount_minor` | `to_amount_minor bigint` + `to_amount_scale smallint`; cross-currency transfers only (else `NULL`/`null`) |
+| dest. currency | `to_currency` | `char(3)`, the destination balance's currency; cross-currency transfers only |
+| rate          | `exchange_rate`, `rate_source`, `rate_date` | `text` (exact decimal, never a float): destination units per 1 source unit (≤ 10 significant digits); `text` `frankfurter`/`manual`; `date` of the ECB rate (`YYYY-MM-DD` in JSON) (Frankfurter only). Immutable history |
 | conversion    | `conversion_rates` | **not stored**: computed on every response for cross-currency transfers (both directions, from `amount` and `to_amount`); `null` otherwise. Read-only. See [docs/exchange-rates.md](docs/exchange-rates.md) |
-| last edited   | `updated_at`   | `TEXT` RFC 3339 in UTC, `NULL` (JSON `null`) until the transaction is edited |
+| last edited   | `updated_at`   | `timestamptz`, `NULL` (JSON `null`) until the transaction is edited; JSON RFC 3339 in UTC |
 
 ### Balances (table `balances`)
 
@@ -231,7 +238,7 @@ Every balance also has:
 
 The name is a short label like "Wallet". Transactions identify the payment
 account by the balance's immutable **`uid`** (`balance_uid` on the transaction).
-There is **no SQLite foreign key**: deleting a balance leaves the transaction's
+There is **no foreign key**: deleting a balance leaves the transaction's
 `balance_uid` and the denormalized `account` name snapshot intact.
 
 **Balances adjust automatically.** Creating, editing or deleting
@@ -258,8 +265,9 @@ overrides and versioning are covered in [docs/balances.md](docs/balances.md).
 - Liabilities also return the derived `available` = `limit − debt` (negative
   when over the limit) and `over_limit`.
 - A CHECK constraint enforces the per-type columns in the database too.
-- Uniqueness uses SQLite `NOCASE`, which ignores case for ASCII letters only.
-  Thai names have no case, so this is enough.
+- Names are unique per user **case-insensitively** (a unique index on
+  `lower(name)`, which folds every script that has case, not only ASCII;
+  Thai has no case).
 
 ### Categories (per user, table `user_categories`)
 
@@ -303,8 +311,8 @@ Rules linking transactions and categories:
 
 User profiles. Each has a `uid`, a required
 `display_name` and an optional `username` and `email`, both unique and
-case-insensitive. `preferences` is one **JSON object** per user (checked by SQLite with
-`json_valid`, `json_type = 'object'`), modelled as a typed struct in Go. For
+case-insensitive. `preferences` is one **JSON object** per user (a `jsonb`
+column checked with `jsonb_typeof = 'object'`), modelled as a typed struct in Go. For
 now it has one key, `base_currency` (default `USD`); see
 [docs/user-profile.md](docs/user-profile.md#preferences). Each user edits
 their own on the **Settings** page.
@@ -418,9 +426,9 @@ A number is read as its literal text, never as a float. Responses return both
 e.g. `2026-10-06T21:06:00+08:00` or `2026-10-06T13:06:00Z`. Values without an
 offset, date-only values and other formats are rejected. The value is stored at
 second precision with the **original offset kept** (so you can still see that a
-Bangkok transaction was entered at +07:00). The derived `spent_at_unix` column holds
-the absolute instant and is used for ordering and filtering, so rows entered with
-different offsets compare correctly.
+Bangkok transaction was entered at +07:00). The derived `spent_at_utc`
+(`timestamptz`) column holds the absolute instant and is used for ordering,
+filtering and paging, so rows entered with different offsets compare correctly.
 
 The web form has only a date-time field: it always uses the **device's current
 time zone**. On create and edit the entered wall-clock time is sent with the
@@ -434,35 +442,35 @@ accepts any RFC 3339 offset.
 
 ### Database schema
 
-The whole schema is one **baseline (version 1)**, defined in
-`pkg/store/schema.go`; versioning lives in `pkg/store/migrate.go`. The
-version is tracked in SQLite's `PRAGMA user_version`, and every database
-created by this code is tagged with `PRAGMA application_id = 0x45585452`
-("EXTR").
+The app uses **Postgres** (since the move from SQLite; see below). The whole
+schema is one **baseline (version 1)**, defined in `pkg/store/schema.go`;
+versioning lives in `pkg/store/migrate.go`.
 
-- **New, empty database** (missing or zero-byte file): the baseline is
-  created in one SQL transaction together with `user_version = 1` and the
-  application id. Logged as `store: migrated schema to version 1`.
-- **Existing database:** pending migrations (v2: `api_tokens`; v3: per-user
-  balances and transactions; v4: transaction type `return_on_investment`,
-  a rebuild of `transactions` that keeps every row; v5: drops two redundant
-  uid indexes) run in order,
-  each in one SQL transaction with its `user_version` bump.
-- **Database from before the baseline reset** (the old `user_version` 1–18
-  history, or any non-empty file without the application id) or **from a
-  newer build:** startup fails with `unsupported database schema` and a
-  message to delete the file; the file is not modified. Old databases are
-  **not upgraded**: stop the server, delete (or move away)
-  `data/expenses.db` together with `expenses.db-wal` / `expenses.db-shm`, and
-  start again to get a fresh one.
+- **Types:** `uuid` uids, `timestamptz` times (shown as RFC 3339 UTC in JSON),
+  `jsonb` for preferences and the per-user category list, `boolean`, `date`,
+  `char(3)` currencies and `bigint` identity ids. Amounts are `bigint` minor
+  units; rates are exact decimal `text`. Case-insensitive uniqueness uses
+  `lower(...)` indexes, and every unique constraint is named (the store maps
+  violations to errors by name).
+- **Versions** are recorded in the table `schema_migrations`. On start the
+  server applies every pending step in **one SQL transaction** under an
+  advisory lock, so servers starting together migrate once and a failed
+  upgrade changes nothing. Logged as `store: migrated schema from version N to M`.
+- **Database from a newer build:** startup fails with `unsupported database
+  schema` and the database is not modified.
+- **Concurrency:** writes run on a small connection pool. Writes that read and
+  then change the same rows lock them (`SELECT … FOR UPDATE`; balances are
+  locked in a fixed order, so concurrent transfers can't deadlock), and
+  category writes are serialized per user.
 
 | Version | Change |
 |---------|--------|
-| 1       | baseline: `transactions`, `balances`, `users`, `user_identities`, `sessions`, `user_categories`, `meta`, `fx_rates`, `fx_rate_lookups` and their indexes |
-| 2       | `api_tokens` (personal API tokens, hash only) and `idx_api_tokens_user_uid` |
-| 3       | per-user `balances` and `transactions` (`user_uid` columns, `idx_balances_user_uid`, `idx_transactions_user_uid`) |
-| 4       | transaction type `return_on_investment` (rebuild of `transactions`, rows kept) |
-| 5       | drops `idx_transactions_uid` and `idx_balances_uid`, which duplicated the indexes behind the `uid UNIQUE` constraints |
+| 1       | baseline: `users`, `user_identities`, `sessions`, `api_tokens`, `user_categories`, `balances`, `transactions`, `fx_rates`, `fx_rate_lookups` and their indexes |
+
+**Coming from SQLite?** Earlier versions stored everything in
+`data/expenses.db`. That data is **not migrated**: the Postgres version starts
+fresh. The old file is simply no longer read; keep it as a backup or delete it
+(with `expenses.db-wal` / `expenses.db-shm`).
 
 To change the schema, append a migration to `migrations` in
 `pkg/store/migrate.go` (it becomes v2, then v3, ...) instead of editing the
@@ -690,7 +698,7 @@ pkg/category/                      category domain model (Type expense|income, I
 pkg/user/                          user profile model: Input, Validate, ApplyPatch, Preferences (typed JSON settings), Identity
 pkg/balance/                       balance domain model + per-type validation (no I/O)
   balance.go                       Type, Balance, Input, Validate, ComputeTotals
-pkg/store/                         persistence (modernc.org/sqlite)
+pkg/store/                         persistence (Postgres via pgx, database/sql)
   store.go                         Store, Open, Close; errors shared by every table (ErrNotFound, ErrVersionConflict, ...), WriteOptions
   transactions.go                  table "transactions": Create, List, Get(ByUID), UpdateWith, DeleteWith
   effects.go                       applyBalanceEffects: move balances for a transaction write (same DB transaction)
@@ -699,8 +707,10 @@ pkg/store/                         persistence (modernc.org/sqlite)
   categories.go                    table "user_categories" (one JSON row per user): CreateCategory, ListCategories, GetCategoryByUID, UpdateCategory, DeleteCategory
   users.go                         tables "users", "user_identities": CreateUser, ListUsers, GetUserByUID, UpdateUser, DeleteUser, SetPasswordHash, CreateIdentity, ListIdentities, FindUserByIdentity
   schema.go                        baseline schema (v1): every table and index
-  migrate.go                       schema versioning (user_version + application_id), migration list, how to add one
-  store_test.go                    fresh DB gets the baseline; old/foreign/newer databases are refused untouched
+  migrate.go                       schema versioning (schema_migrations + advisory lock), migration list, how to add one
+  pgerr.go                         Postgres error codes and constraint names -> store errors
+  storetest/                       per-test Postgres schema for tests (storetest.Open / URL)
+  store_test.go                    fresh DB gets the baseline; reopen is a no-op; newer databases are refused untouched
 pkg/api/                           Gin routes and handlers
   api.go                           router setup + shared helpers
   transactions.go                  /api/transactions routes (parseListFilter for the list query)
@@ -873,7 +883,7 @@ User data is only inserted with `textContent` / input `.value` (never
   `other_liability` really require a `limit`?
 - Naming: the API, JSON, Go package (`pkg/transaction`) and UI now say
   "transactions". Still unchanged: the module name `expense-service`, the
-  `EXPENSE_*` env vars and the default DB file `data/expenses.db`. Does
+  `EXPENSE_*` env vars and the `expense` database name. Does
   "transactions" mean income/transfers will be recorded too, which would need
   a type/sign field?
 - Refunds or negative amounts (currently rejected; amounts must be > 0).

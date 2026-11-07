@@ -5,7 +5,7 @@ description: Use the expensetrackr HTTP JSON API to log expenses, income, transf
 
 # expensetrackr API
 
-expensetrackr is a small personal-finance server (Go + SQLite). Everything an
+expensetrackr is a small personal-finance server (Go + Postgres). Everything an
 agent needs is a JSON API under `/api`. Field-level details, every query
 parameter and more examples are in [reference.md](reference.md); the live,
 authoritative spec is `GET /api/openapi.yaml` (no login needed).

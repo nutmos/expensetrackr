@@ -105,9 +105,11 @@ Status codes:
 3. **Finish.** Dry run, or atomic with any failure: roll back. Otherwise
    commit.
 
-The server keeps one SQLite connection, so a batch is serialised with other
-writes. 500 items take about 0.1 s on a laptop (`TestBulk500Performance`
-requires under 3 s).
+The batch runs in one Postgres transaction. Each item locks the balances it
+moves (`SELECT … FOR UPDATE`, in a fixed order), so concurrent writes to the
+same balances wait for the batch instead of losing updates, and nothing
+deadlocks. 500 items take about 1.5 s against a local Postgres in Docker
+(`TestBulk500Performance` requires under 3 s).
 
 ## Idempotency: `import_ref`
 

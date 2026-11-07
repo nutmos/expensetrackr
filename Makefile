@@ -79,5 +79,5 @@ db-psql: ## Open psql on the local development database.
 	docker compose exec db psql -U expense expense
 
 .PHONY: clean
-clean: ## Remove build output (bin/). Never touches data/.
+clean: ## Remove build output (bin/). Never touches the database.
 	rm -rf bin
