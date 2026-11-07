@@ -340,7 +340,9 @@ func TestBulk500Performance(t *testing.T) {
 		t.Fatalf("500 items: %d created=%v", rec.Code, b["created"])
 	}
 	t.Logf("500 items in %v", elapsed)
-	if elapsed > 3*time.Second {
+	// The time limit only means something without the race detector, which
+	// slows this request down several times (make test-race).
+	if elapsed > 3*time.Second && !raceEnabled {
 		t.Errorf("500 items took %v (want < 3s)", elapsed)
 	}
 	if balanceOf(t, h, pay) != "9687.50" || cardDebt(t, h, card) != "312.50" {
