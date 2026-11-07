@@ -31,16 +31,16 @@ func ts(t time.Time) string { return t.UTC().Format(time.RFC3339) }
 // HasPasswordUser reports whether any user has a password set (i.e. the
 // first-run setup is done).
 func (s *Store) HasPasswordUser(ctx context.Context) (bool, error) {
-	var n int
-	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE password_hash IS NOT NULL)`).Scan(&n); err != nil {
+	var has bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE password_hash IS NOT NULL)`).Scan(&has); err != nil {
 		return false, fmt.Errorf("check users: %w", err)
 	}
-	return n == 1, nil
+	return has, nil
 }
 
 // GetUserByUsername looks a user up by (already lowercased) username.
 func (s *Store) GetUserByUsername(ctx context.Context, username string) (user.User, error) {
-	u, err := scanUser(s.db.QueryRowContext(ctx, `SELECT `+userCols+` FROM users WHERE username = ? COLLATE NOCASE`, username))
+	u, err := scanUser(s.db.QueryRowContext(ctx, `SELECT `+userCols+` FROM users WHERE lower(username) = lower($1)`, username))
 	if errors.Is(err, sql.ErrNoRows) {
 		return user.User{}, ErrNotFound
 	}
@@ -59,26 +59,30 @@ func (s *Store) RegisterUser(ctx context.Context, u *user.User, hash string, fir
 	var id int64
 	err = s.inTx(ctx, "register", func(tx *sql.Tx) error {
 		if firstRun {
-			var n int
-			if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE password_hash IS NOT NULL)`).Scan(&n); err != nil {
+			// Serialized with other changes to who can log in (see
+			// lockLoginUsers), so two first-run registrations can't both pass.
+			if err := lockLoginUsers(ctx, tx); err != nil {
 				return fmt.Errorf("register: %w", err)
 			}
-			if n == 1 {
+			var has bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE password_hash IS NOT NULL)`).Scan(&has); err != nil {
+				return fmt.Errorf("register: %w", err)
+			}
+			if has {
 				return ErrRegistrationClosed
 			}
 		}
-		res, err := tx.ExecContext(ctx,
+		err := tx.QueryRowContext(ctx,
 			`INSERT INTO users (uid, username, email, display_name, preferences, password_hash, password_updated_at, status, created_at)
-		 VALUES (?, ?, NULL, ?, ?, ?, ?, 'active', ?)`,
-			uid, nullStr(u.Username), u.DisplayName, u.Preferences.StoredJSON(), hash, now, now)
+			 VALUES ($1, $2, NULL, $3, $4, $5, $6, 'active', $7) RETURNING id`,
+			uid, nullStr(u.Username), u.DisplayName, u.Preferences.StoredJSON(), hash, now, now).Scan(&id)
 		if err != nil {
 			if m := mapUserErr(err); m != err {
 				return m
 			}
 			return fmt.Errorf("register: %w", err)
 		}
-		id, err = res.LastInsertId()
-		return err
+		return nil
 	})
 	if err != nil {
 		return err
@@ -90,20 +94,19 @@ func (s *Store) RegisterUser(ctx context.Context, u *user.User, hash string, fir
 
 // RecordLogin stamps users.last_login_at.
 func (s *Store) RecordLogin(ctx context.Context, uid string, at time.Time) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE users SET last_login_at = ? WHERE uid = ?`, ts(at), uid)
+	_, err := s.db.ExecContext(ctx, `UPDATE users SET last_login_at = $1 WHERE uid = $2`, ts(at), uid)
 	return err
 }
 
 // CreateSession stores a new session.
 func (s *Store) CreateSession(ctx context.Context, se *Session) error {
-	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO sessions (token_hash, user_uid, created_at, expires_at, last_seen_at, user_agent) VALUES (?, ?, ?, ?, ?, ?)`,
-		se.TokenHash, se.UserUID, ts(se.CreatedAt), ts(se.ExpiresAt), ts(se.LastSeenAt), nullIfEmpty(se.UserAgent))
+	err := s.db.QueryRowContext(ctx,
+		`INSERT INTO sessions (token_hash, user_uid, created_at, expires_at, last_seen_at, user_agent) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+		se.TokenHash, se.UserUID, ts(se.CreatedAt), ts(se.ExpiresAt), ts(se.LastSeenAt), nullIfEmpty(se.UserAgent)).Scan(&se.ID)
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
 	}
-	se.ID, err = res.LastInsertId()
-	return err
+	return nil
 }
 
 func nullIfEmpty(s string) any {
@@ -117,39 +120,45 @@ func nullIfEmpty(s string) any {
 // Expired sessions are returned too; the caller checks ExpiresAt.
 func (s *Store) GetSession(ctx context.Context, tokenHash string) (Session, error) {
 	var se Session
-	var c, e, l string
 	var ua sql.NullString
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, token_hash, user_uid, created_at, expires_at, last_seen_at, user_agent FROM sessions WHERE token_hash = ?`, tokenHash).
-		Scan(&se.ID, &se.TokenHash, &se.UserUID, &c, &e, &l, &ua)
+		`SELECT id, token_hash, user_uid, created_at, expires_at, last_seen_at, user_agent FROM sessions WHERE token_hash = $1`, tokenHash).
+		Scan(&se.ID, &se.TokenHash, &se.UserUID, &se.CreatedAt, &se.ExpiresAt, &se.LastSeenAt, &ua)
 	if errors.Is(err, sql.ErrNoRows) {
 		return se, ErrNotFound
 	}
 	if err != nil {
 		return se, fmt.Errorf("get session: %w", err)
 	}
-	se.CreatedAt, _ = time.Parse(time.RFC3339, c)
-	se.ExpiresAt, _ = time.Parse(time.RFC3339, e)
-	se.LastSeenAt, _ = time.Parse(time.RFC3339, l)
+	se.CreatedAt, se.ExpiresAt, se.LastSeenAt = se.CreatedAt.UTC(), se.ExpiresAt.UTC(), se.LastSeenAt.UTC()
 	se.UserAgent = ua.String
 	return se, nil
 }
 
 // TouchSession slides a session's expiry.
 func (s *Store) TouchSession(ctx context.Context, id int64, seen, expires time.Time) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET last_seen_at = ?, expires_at = ? WHERE id = ?`, ts(seen), ts(expires), id)
+	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET last_seen_at = $1, expires_at = $2 WHERE id = $3`, ts(seen), ts(expires), id)
 	return err
 }
 
 // DeleteSession removes the session with this token hash (no error if none).
 func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE token_hash = ?`, tokenHash)
+	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE token_hash = $1`, tokenHash)
 	return err
 }
 
 // DeleteExpiredSessions removes sessions that expired before now.
 func (s *Store) DeleteExpiredSessions(ctx context.Context, now time.Time) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at < ?`, ts(now))
+	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at < $1`, ts(now))
+	return err
+}
+
+// lockLoginUsers serializes, across connections and servers, the
+// transactions that change whether anyone can log in: first-run
+// registration, and removing a user or password (the last-login-user rule,
+// issue #77). Held until the transaction ends.
+func lockLoginUsers(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext('expensetrackr.login-users'))`)
 	return err
 }
 
@@ -158,14 +167,14 @@ func (s *Store) DeleteExpiredSessions(ctx context.Context, now time.Time) error 
 func (s *Store) ChangePassword(ctx context.Context, uid, hash, keepTokenHash string) error {
 	return s.inTx(ctx, "change password", func(tx *sql.Tx) error {
 		now := ts(time.Now())
-		res, err := tx.ExecContext(ctx, `UPDATE users SET password_hash = ?, password_updated_at = ?, updated_at = ? WHERE uid = ?`, hash, now, now, uid)
+		res, err := tx.ExecContext(ctx, `UPDATE users SET password_hash = $1, password_updated_at = $2, updated_at = $3 WHERE uid = $4`, hash, now, now, uid)
 		if err != nil {
 			return fmt.Errorf("change password: %w", err)
 		}
 		if n, _ := res.RowsAffected(); n == 0 {
 			return ErrNotFound
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_uid = ? AND token_hash <> ?`, uid, keepTokenHash); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_uid = $1 AND token_hash <> $2`, uid, keepTokenHash); err != nil {
 			return fmt.Errorf("change password: %w", err)
 		}
 		return nil

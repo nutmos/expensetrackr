@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,11 +14,7 @@ func strp(s string) *string { return &s }
 
 func TestRegisterAndSessions(t *testing.T) {
 	ctx := context.Background()
-	st, err := Open(filepath.Join(t.TempDir(), "s.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
+	st := openTestStore(t)
 	if ok, _ := st.HasPasswordUser(ctx); ok {
 		t.Fatal("fresh db has password user")
 	}

@@ -2,9 +2,8 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -25,8 +24,8 @@ func dec(s string) *money.DecimalInput { d := money.DecimalInput(s); return &d }
 
 func TestBalanceCRUDAndConstraints(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "b.db")
-	st, err := Open(path)
+	url := testURL(t)
+	st, err := Open(url)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,32 +93,27 @@ func TestBalanceCRUDAndConstraints(t *testing.T) {
 	}
 
 	// The CHECK constraints are a backstop below validation.
-	db, _ := sql.Open("sqlite", "file:"+path)
-	defer db.Close()
+	db := rawDB(t, url)
 	for name, q := range map[string]string{
-		"asset with debt":    `INSERT INTO balances (uid,user_uid,name,type,currency,amount_scale,balance_minor,debt_minor,created_at) VALUES ('aaaaaaaa-0000-4000-8000-000000000001','` + owner + `','x','payment_account','THB',2,1,1,'t')`,
-		"liability no limit": `INSERT INTO balances (uid,user_uid,name,type,currency,amount_scale,debt_minor,created_at) VALUES ('aaaaaaaa-0000-4000-8000-000000000002','` + owner + `','y','credit_card','THB',2,1,'t')`,
-		"negative limit":     `INSERT INTO balances (uid,user_uid,name,type,currency,amount_scale,debt_minor,limit_minor,created_at) VALUES ('aaaaaaaa-0000-4000-8000-000000000003','` + owner + `','z','credit_card','THB',2,1,-5,'t')`,
-		"bad type":           `INSERT INTO balances (uid,user_uid,name,type,currency,amount_scale,balance_minor,created_at) VALUES ('aaaaaaaa-0000-4000-8000-000000000004','` + owner + `','w','wallet','THB',2,1,'t')`,
-		"version 0":          `INSERT INTO balances (uid,user_uid,name,type,currency,amount_scale,balance_minor,created_at,version) VALUES ('aaaaaaaa-0000-4000-8000-000000000005','` + owner + `','v','payment_account','THB',2,1,'t',0)`,
+		"asset with debt":    `INSERT INTO balances (uid,user_uid,name,type,currency,amount_scale,balance_minor,debt_minor,created_at) VALUES ('aaaaaaaa-0000-4000-8000-000000000001','` + owner + `','x','payment_account','THB',2,1,1,'2026-01-01T00:00:00Z')`,
+		"liability no limit": `INSERT INTO balances (uid,user_uid,name,type,currency,amount_scale,debt_minor,created_at) VALUES ('aaaaaaaa-0000-4000-8000-000000000002','` + owner + `','y','credit_card','THB',2,1,'2026-01-01T00:00:00Z')`,
+		"negative limit":     `INSERT INTO balances (uid,user_uid,name,type,currency,amount_scale,debt_minor,limit_minor,created_at) VALUES ('aaaaaaaa-0000-4000-8000-000000000003','` + owner + `','z','credit_card','THB',2,1,-5,'2026-01-01T00:00:00Z')`,
+		"bad type":           `INSERT INTO balances (uid,user_uid,name,type,currency,amount_scale,balance_minor,created_at) VALUES ('aaaaaaaa-0000-4000-8000-000000000004','` + owner + `','w','wallet','THB',2,1,'2026-01-01T00:00:00Z')`,
+		"version 0":          `INSERT INTO balances (uid,user_uid,name,type,currency,amount_scale,balance_minor,created_at,version) VALUES ('aaaaaaaa-0000-4000-8000-000000000005','` + owner + `','v','payment_account','THB',2,1,'2026-01-01T00:00:00Z',0)`,
 	} {
-		if _, err := db.Exec(q); err == nil {
-			t.Errorf("CHECK constraint did not reject %s", name)
+		if _, err := db.Exec(q); err == nil || !strings.Contains(err.Error(), "check constraint") {
+			t.Errorf("CHECK constraint did not reject %s: %v", name, err)
 		}
 	}
 	// A negative debt (overpaid card, in credit) is allowed.
-	if _, err := db.Exec(`INSERT INTO balances (uid,user_uid,name,type,currency,amount_scale,debt_minor,limit_minor,created_at) VALUES ('aaaaaaaa-0000-4000-8000-000000000006','` + owner + `','neg','credit_card','THB',2,-100,500,'t')`); err != nil {
+	if _, err := db.Exec(`INSERT INTO balances (uid,user_uid,name,type,currency,amount_scale,debt_minor,limit_minor,created_at) VALUES ('aaaaaaaa-0000-4000-8000-000000000006','` + owner + `','neg','credit_card','THB',2,-100,500,'2026-01-01T00:00:00Z')`); err != nil {
 		t.Errorf("negative debt rejected: %v", err)
 	}
 }
 
 func TestBalanceUIDAssignedAndImmutable(t *testing.T) {
 	ctx := context.Background()
-	st, err := Open(filepath.Join(t.TempDir(), "uid.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
+	st := openTestStore(t)
 
 	owner := seedOwner(t, st)
 	b := mustBalance(t, balance.Input{Name: "Cash", Type: "payment_account", Currency: "THB", Balance: dec("10")})

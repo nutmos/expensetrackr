@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/nutmos/expensetrackr/pkg/balance"
 	"github.com/nutmos/expensetrackr/pkg/transaction"
@@ -28,7 +27,7 @@ func existingImportRef(ctx context.Context, q interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }, balanceUID, importRef string) (string, error) {
 	var uid string
-	err := q.QueryRowContext(ctx, `SELECT uid FROM transactions WHERE balance_uid = ? AND import_ref = ?`, balanceUID, importRef).Scan(&uid)
+	err := q.QueryRowContext(ctx, `SELECT uid FROM transactions WHERE balance_uid = $1 AND import_ref = $2`, balanceUID, importRef).Scan(&uid)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -38,17 +37,44 @@ func existingImportRef(ctx context.Context, q interface {
 	return uid, nil
 }
 
-// mapImportRefErr turns a unique-index violation on import_ref into a
-// *DuplicateImportRefError; other errors are returned unchanged.
-func mapImportRefErr(ctx context.Context, tx *sql.Tx, e transaction.Transaction, err error) error {
-	if e.ImportRef == nil || !strings.Contains(err.Error(), "transactions.import_ref") {
-		return err
+// writeChecked runs write, an INSERT or UPDATE of transaction e inside tx,
+// and turns a violation of the unique (balance_uid, import_ref) index into a
+// *DuplicateImportRefError naming the existing transaction. Other errors are
+// wrapped as "op: ...".
+//
+// In Postgres a failed statement aborts the whole transaction, so when e has
+// an import_ref the write runs inside a savepoint: on a violation the
+// transaction is rolled back to it and stays usable for the lookup (and for
+// the caller, e.g. the next item of a bulk import).
+func writeChecked(ctx context.Context, tx *sql.Tx, e transaction.Transaction, op string, write func() error) error {
+	if e.ImportRef == nil {
+		if err := write(); err != nil {
+			return fmt.Errorf("%s: %w", op, err)
+		}
+		return nil
 	}
-	uid, lerr := existingImportRef(ctx, tx, string(e.BalanceUID), *e.ImportRef)
-	if lerr != nil || uid == "" {
-		return err
+	if _, err := tx.ExecContext(ctx, `SAVEPOINT import_ref`); err != nil {
+		return fmt.Errorf("%s: %w", op, err)
 	}
-	return &DuplicateImportRefError{ImportRef: *e.ImportRef, ExistingUID: uid}
+	werr := write()
+	if werr != nil {
+		if _, err := tx.ExecContext(ctx, `ROLLBACK TO SAVEPOINT import_ref`); err != nil {
+			return fmt.Errorf("%s: %w", op, err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `RELEASE SAVEPOINT import_ref`); err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	if werr == nil {
+		return nil
+	}
+	if isUniqueViolation(werr, "transactions_import_ref_uq") {
+		uid, lerr := existingImportRef(ctx, tx, string(e.BalanceUID), *e.ImportRef)
+		if lerr == nil && uid != "" {
+			return &DuplicateImportRefError{ImportRef: *e.ImportRef, ExistingUID: uid}
+		}
+	}
+	return fmt.Errorf("%s: %w", op, werr)
 }
 
 // BulkOptions controls CreateBulk.

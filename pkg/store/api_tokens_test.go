@@ -2,75 +2,13 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"fmt"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/nutmos/expensetrackr/pkg/user"
 )
-
-// openV1 creates a database at the v1 baseline only (as an older build
-// would have left it).
-func openV1(t *testing.T, path string) {
-	t.Helper()
-	db, err := sql.Open("sqlite", "file:"+path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	tx, err := db.Begin()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := createBaseline(tx); err != nil {
-		t.Fatal(err)
-	}
-	if err := setVersion(tx, 1); err != nil {
-		t.Fatal(err)
-	}
-	if err := tx.Commit(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// TestMigrationV2 upgrades a v1 database and checks it matches a fresh one.
-func TestMigrationV2(t *testing.T) {
-	dir := t.TempDir()
-	oldPath, freshPath := filepath.Join(dir, "v1.db"), filepath.Join(dir, "fresh.db")
-	openV1(t, oldPath)
-	if v := pragmaInt(t, oldPath, "user_version"); v != 1 {
-		t.Fatalf("setup: user_version = %d", v)
-	}
-	if _, ok := schemaObjects(t, oldPath)["table api_tokens"]; ok {
-		t.Fatal("setup: v1 already has api_tokens")
-	}
-	st, err := Open(oldPath)
-	if err != nil {
-		t.Fatalf("upgrade: %v", err)
-	}
-	st.Close()
-	fresh, err := Open(freshPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fresh.Close()
-	if v := pragmaInt(t, oldPath, "user_version"); v != SchemaVersion {
-		t.Errorf("upgraded user_version = %d, want %d", v, SchemaVersion)
-	}
-	up, fr := schemaObjects(t, oldPath), schemaObjects(t, freshPath)
-	if fmt.Sprint(up) != fmt.Sprint(fr) {
-		t.Errorf("upgraded schema differs from fresh:\n got %v\nwant %v", up, fr)
-	}
-	for _, k := range v2Objects {
-		if _, ok := up[k]; !ok {
-			t.Errorf("upgraded db missing %s", k)
-		}
-	}
-}
 
 func seedTokenUser(t *testing.T, st *Store, name string) user.User {
 	t.Helper()
@@ -83,11 +21,7 @@ func seedTokenUser(t *testing.T, st *Store, name string) user.User {
 
 func TestAPITokenLifecycle(t *testing.T) {
 	ctx := context.Background()
-	st, err := Open(filepath.Join(t.TempDir(), "tok.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
+	st := openTestStore(t)
 	fixed := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 	st.now = func() time.Time { return fixed }
 	alice, bob := seedTokenUser(t, st, "alice"), seedTokenUser(t, st, "bob")

@@ -74,10 +74,10 @@ func recordBalanceAdjustment(ctx context.Context, tx *sql.Tx, userUID string, cu
 	note := fmt.Sprintf("Manual edit of %s: %s → %s", a.field,
 		money.FormatAmount(a.old, next.Scale), money.FormatAmount(a.new, next.Scale))
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO transactions (uid, user_uid, type, amount_minor, amount_scale, currency, balance_uid, account, spent_at, spent_at_unix, note, created_at, version, balance_applied, adjustment_direction)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?)`,
+		`INSERT INTO transactions (uid, user_uid, type, amount_minor, amount_scale, currency, balance_uid, account, spent_at, spent_at_utc, note, created_at, version, balance_applied, adjustment_direction)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 1, false, $13)`,
 		uid, userUID, string(transaction.BalanceAdjustment), a.amount, next.Scale, next.Currency, cur.UID, next.Name,
-		at.Format(time.RFC3339), at.Unix(), note, createdAt, string(a.direction)); err != nil {
+		at.Format(time.RFC3339), at.UTC(), note, createdAt, string(a.direction)); err != nil {
 		return fmt.Errorf("record balance adjustment: %w", err)
 	}
 	return nil

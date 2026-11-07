@@ -190,18 +190,18 @@ func TestAdjustmentIsReadOnly(t *testing.T) {
 	// carry a destination/category, and a direction on other types.
 	uid := f.userUID
 	for _, q := range []string{
-		`INSERT INTO transactions (uid, user_uid, type, amount_minor, amount_scale, currency, balance_uid, account, spent_at, spent_at_unix, created_at, balance_applied, adjustment_direction)
-		 VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', '` + uid + `', 'balance_adjustment', 1, 2, 'THB', '` + string(f.pay.UID) + `', 'pay', 'x', 0, 'x', 1, 'increase')`,
-		`INSERT INTO transactions (uid, user_uid, type, amount_minor, amount_scale, currency, balance_uid, account, spent_at, spent_at_unix, created_at, adjustment_direction)
-		 VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2', '` + uid + `', 'balance_adjustment', 1, 2, 'THB', '` + string(f.pay.UID) + `', 'pay', 'x', 0, 'x', NULL)`,
-		`INSERT INTO transactions (uid, user_uid, type, amount_minor, amount_scale, currency, balance_uid, account, spent_at, spent_at_unix, created_at, adjustment_direction)
-		 VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3', '` + uid + `', 'expense', 1, 2, 'THB', '` + string(f.pay.UID) + `', 'pay', 'x', 0, 'x', 'increase')`,
-		`INSERT INTO transactions (uid, user_uid, type, amount_minor, amount_scale, currency, balance_uid, account, spent_at, spent_at_unix, created_at, adjustment_direction, to_balance_uid)
-		 VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4', '` + uid + `', 'balance_adjustment', 1, 2, 'THB', '` + string(f.pay.UID) + `', 'pay', 'x', 0, 'x', 'increase', '` + string(f.card.UID) + `')`,
-		`INSERT INTO transactions (uid, user_uid, type, amount_minor, amount_scale, currency, balance_uid, account, spent_at, spent_at_unix, created_at, adjustment_direction)
-		 VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5', '` + uid + `', 'balance_adjustment', 1, 2, 'THB', '` + string(f.pay.UID) + `', 'pay', 'x', 0, 'x', 'sideways')`,
+		`INSERT INTO transactions (uid, user_uid, type, amount_minor, amount_scale, currency, balance_uid, account, spent_at, spent_at_utc, created_at, balance_applied, adjustment_direction)
+		 VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', '` + uid + `', 'balance_adjustment', 1, 2, 'THB', '` + string(f.pay.UID) + `', 'pay', 'x', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', true, 'increase')`,
+		`INSERT INTO transactions (uid, user_uid, type, amount_minor, amount_scale, currency, balance_uid, account, spent_at, spent_at_utc, created_at, adjustment_direction)
+		 VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2', '` + uid + `', 'balance_adjustment', 1, 2, 'THB', '` + string(f.pay.UID) + `', 'pay', 'x', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', NULL)`,
+		`INSERT INTO transactions (uid, user_uid, type, amount_minor, amount_scale, currency, balance_uid, account, spent_at, spent_at_utc, created_at, adjustment_direction)
+		 VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3', '` + uid + `', 'expense', 1, 2, 'THB', '` + string(f.pay.UID) + `', 'pay', 'x', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 'increase')`,
+		`INSERT INTO transactions (uid, user_uid, type, amount_minor, amount_scale, currency, balance_uid, account, spent_at, spent_at_utc, created_at, adjustment_direction, to_balance_uid)
+		 VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4', '` + uid + `', 'balance_adjustment', 1, 2, 'THB', '` + string(f.pay.UID) + `', 'pay', 'x', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 'increase', '` + string(f.card.UID) + `')`,
+		`INSERT INTO transactions (uid, user_uid, type, amount_minor, amount_scale, currency, balance_uid, account, spent_at, spent_at_utc, created_at, adjustment_direction)
+		 VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5', '` + uid + `', 'balance_adjustment', 1, 2, 'THB', '` + string(f.pay.UID) + `', 'pay', 'x', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 'sideways')`,
 	} {
-		if _, err := f.st.db.Exec(q); err == nil || !strings.Contains(err.Error(), "CHECK") {
+		if _, err := f.st.db.Exec(q); err == nil || !strings.Contains(err.Error(), "check constraint") {
 			t.Errorf("CHECK did not reject: %v\n%s", err, q)
 		}
 	}

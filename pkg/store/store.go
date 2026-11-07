@@ -1,7 +1,7 @@
 // Package store persists the app's data (transactions, balances, users,
-// categories, sessions, API tokens and the exchange-rate cache) in SQLite,
-// using the pure-Go modernc.org/sqlite driver (no CGO required). This file
-// holds the Store itself and the errors shared by every table; each table's
+// categories, sessions, API tokens and the exchange-rate cache) in Postgres,
+// through database/sql and the pgx driver (pure Go, no CGO). This file holds
+// the Store itself and the errors shared by every table; each table's
 // queries live in their own file (transactions.go, balances.go, users.go,
 // ...). The schema is in schema.go; versioning and migrations live in
 // migrate.go.
@@ -9,15 +9,15 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
-	"net/url"
-	"os"
-	"path/filepath"
 	"time"
 
-	_ "modernc.org/sqlite" // registers the "sqlite" driver
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
 // ErrNotFound is returned when the requested row does not exist (or belongs
@@ -44,45 +44,109 @@ type WriteOptions struct {
 	Version int64
 }
 
-// Store wraps the SQLite database.
+// Store wraps the Postgres connection pool.
 type Store struct {
 	db  *sql.DB
 	now func() time.Time // clock for created_at/updated_at; tests may override
 }
 
-// busyTimeoutMS is how long SQLite waits on a locked database before failing.
-const busyTimeoutMS = 5000
+// Connection pool limits. The app is small; a handful of connections serve
+// concurrent requests while writes that touch the same rows serialize on
+// row locks (SELECT ... FOR UPDATE).
+const (
+	maxOpenConns    = 10
+	maxIdleConns    = 5
+	connMaxIdleTime = 5 * time.Minute
+	openTimeout     = 10 * time.Second
+)
 
 // nowRFC3339 is the current time from s.now, in UTC, formatted for storage.
 func (s *Store) nowRFC3339() string { return ts(s.now()) }
 
-// Open opens (creating if needed) the SQLite database at path and brings its
-// schema up to date (see migrate). A database created before the schema
-// baseline reset, or by a newer build, fails with ErrUnsupportedSchema and is
-// not modified.
-func Open(path string) (*Store, error) {
-	if dir := filepath.Dir(path); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return nil, fmt.Errorf("create db directory: %w", err)
-		}
-	}
-	q := url.Values{}
-	q.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", busyTimeoutMS))
-	q.Add("_pragma", "journal_mode(WAL)")
-	q.Add("_pragma", "foreign_keys(1)")
-	dsn := "file:" + path + "?" + q.Encode()
-
-	db, err := sql.Open("sqlite", dsn)
+// Open connects to the Postgres database at url (a postgres:// URL or a
+// key=value connection string), checks it is reachable and brings its schema
+// up to date (see migrate). A database from a newer build fails with
+// ErrUnsupportedSchema and is not modified. A search_path in url selects the
+// schema (tests use one schema each).
+func Open(url string) (*Store, error) {
+	cfg, err := pgx.ParseConfig(url)
 	if err != nil {
-		return nil, fmt.Errorf("open sqlite: %w", err)
+		return nil, fmt.Errorf("database url: %w", err)
 	}
-	// A single connection keeps SQLite writes simple and safe for a small service.
-	db.SetMaxOpenConns(1)
-	if err := migrate(db); err != nil {
+	db := stdlib.OpenDB(*cfg)
+	db.SetMaxOpenConns(maxOpenConns)
+	db.SetMaxIdleConns(maxIdleConns)
+	db.SetConnMaxIdleTime(connMaxIdleTime)
+	ctx, cancel := context.WithTimeout(context.Background(), openTimeout)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("database %s: %w", path, err)
+		return nil, fmt.Errorf("connect to %s: %w", describe(cfg), err)
+	}
+	if err := migrate(ctx, db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("database %s: %w", describe(cfg), err)
 	}
 	return &Store{db: db, now: time.Now}, nil
+}
+
+// describe names a database for error messages without its password.
+func describe(cfg *pgx.ConnConfig) string {
+	return fmt.Sprintf("%s@%s:%d/%s", cfg.User, cfg.Host, cfg.Port, cfg.Database)
+}
+
+// CreateTestSchema creates an empty, uniquely named schema in the database
+// at url and returns a URL whose connections use it (search_path), plus a
+// function that drops it with everything in it. Tests use it to get a
+// private, throwaway database; see pkg/store/storetest.
+func CreateTestSchema(url string) (schemaURL string, drop func() error, err error) {
+	cfg, err := pgx.ParseConfig(url)
+	if err != nil {
+		return "", nil, fmt.Errorf("test database url: %w", err)
+	}
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return "", nil, err
+	}
+	schema := "test_" + hex.EncodeToString(b)
+	ctx, cancel := context.WithTimeout(context.Background(), openTimeout)
+	defer cancel()
+	conn, err := pgx.ConnectConfig(ctx, cfg)
+	if err != nil {
+		return "", nil, fmt.Errorf("connect to test database %s: %w", describe(cfg), err)
+	}
+	defer conn.Close(ctx)
+	if _, err := conn.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
+		return "", nil, fmt.Errorf("create test schema: %w", err)
+	}
+	drop = func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), openTimeout)
+		defer cancel()
+		c, err := pgx.ConnectConfig(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		defer c.Close(ctx)
+		_, err = c.Exec(ctx, "DROP SCHEMA "+schema+" CASCADE")
+		return err
+	}
+	return withSearchPath(url, schema), drop, nil
+}
+
+// withSearchPath adds search_path=schema to a postgres URL or key=value
+// connection string.
+func withSearchPath(url, schema string) string {
+	if len(url) > 11 && (url[:11] == "postgres://" || (len(url) > 13 && url[:13] == "postgresql://")) {
+		sep := "?"
+		for _, r := range url {
+			if r == '?' {
+				sep = "&"
+				break
+			}
+		}
+		return url + sep + "search_path=" + schema
+	}
+	return url + " search_path=" + schema
 }
 
 // Close closes the database.
