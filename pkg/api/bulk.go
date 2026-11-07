@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -113,7 +114,13 @@ func (s *Server) bulkCreateTransactions(c *gin.Context) {
 
 	// Phase 1: validate and resolve balances, categories and FX rates. Any
 	// network access happens here, before the write transaction opens.
-	c.Set(fxMemoKey, map[string]fxMemoEntry{})
+	fxTimeout := s.BulkFXTimeout
+	if fxTimeout <= 0 {
+		fxTimeout = DefaultBulkFXTimeout
+	}
+	fxCtx, cancel := context.WithTimeout(c.Request.Context(), fxTimeout)
+	defer cancel()
+	c.Set(fxMemoKey, newFXMemo(fxCtx))
 	items := make([]store.BulkItem, len(req.Transactions))
 	for i, raw := range req.Transactions {
 		if strings.TrimSpace(string(raw)) == "null" {

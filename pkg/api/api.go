@@ -36,6 +36,8 @@ type Server struct {
 	Throttle *auth.Throttle
 	// Now overrides the clock for session expiry (tests); nil = time.Now.
 	Now func() time.Time
+	// BulkFXTimeout overrides DefaultBulkFXTimeout (tests); 0 = default.
+	BulkFXTimeout time.Duration
 
 	auth authState
 }

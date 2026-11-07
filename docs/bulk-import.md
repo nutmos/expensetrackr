@@ -89,8 +89,12 @@ Status codes:
    validated, and its balances and category are resolved. A cross-currency
    transfer without `to_amount` gets its Frankfurter rate here: from the
    `fx_rates` cache, or else fetched and cached. Within one request each
-   (pair, date) is looked up at most once, failures included, so an outage
-   costs one attempt and not 500. **No network call happens inside the
+   (pair, date) is looked up at most once, failures included. Once
+   Frankfurter is unreachable or answers badly, later lookups in the same
+   request use only the cache and fail at once on a miss, so an outage
+   costs one attempt per request. All fetches of one request share a
+   30-second budget; lookups still pending after it fail as
+   `exchange_rate_unavailable`. **No network call happens inside the
    database transaction.**
 2. **Write phase.** One SQL transaction for the whole batch. Each item runs
    inside a `SAVEPOINT`: duplicate check → insert → balance adjustment. If
@@ -187,7 +191,7 @@ index on `(balance_uid, import_ref) WHERE import_ref IS NOT NULL`.
 | Frankfurter outcome | atomic | `atomic: false` |
 |---|---|---|
 | pair unsupported (e.g. VND) | item `failed` `exchange_rate_unsupported`; 422 | that item fails |
-| unreachable / timeout | item `failed` `exchange_rate_unavailable`; **503**, nothing written | that item fails, others are created |
+| unreachable / timeout (including the 30 s per-request budget) | item `failed` `exchange_rate_unavailable`; **503**, nothing written | that item fails, others are created; items whose rate is already cached still succeed |
 | bad upstream response | as above but **502** | that item fails |
 
 Sending `to_amount` avoids the rate lookup entirely. See
