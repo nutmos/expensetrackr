@@ -18,7 +18,7 @@ table rebuild.
 | `email_verified_at`   | nullable RFC 3339; set by a future verification flow; **cleared when the email changes** | read-only |
 | `display_name`        | `NOT NULL`, 1–100 chars                                           | `display_name` (required) |
 | `preferences`         | `TEXT NOT NULL DEFAULT '{}'`, `CHECK (json_valid(preferences) AND json_type(preferences) = 'object')`; one JSON object per user holding only the keys the user set (see [Preferences](#preferences)) | `preferences` (object, defaults filled in) |
-| `password_hash`       | nullable; a PHC-format hash string (argon2id recommended, bcrypt acceptable) | **never exposed**; `has_password` (bool) instead |
+| `password_hash`       | nullable; a bcrypt hash written by the auth endpoints (`pkg/auth`) | **never exposed**; `has_password` (bool) instead |
 | `password_updated_at` | nullable RFC 3339                                                 | read-only |
 | `status`              | `active` \| `disabled` (`CHECK`), default `active`                | read-only for now |
 | `last_login_at`       | nullable RFC 3339; set by future login                            | read-only |
@@ -120,9 +120,9 @@ PUT /api/users/<uid>/preferences {"base_currency":"XYZ"} → 400 {"error":"inval
 ## Auth-readiness decisions
 
 - **Passwords:**
-  - Only a hash is stored, in `password_hash`. The future login code must hash
-    with argon2id (or bcrypt) and call `Store.SetPasswordHash`. That method
-    also stamps `password_updated_at` and is not exposed over HTTP.
+  - Only a bcrypt hash is stored, in `password_hash`, written by the auth
+    endpoints (`POST /api/auth/register`, `PUT /api/auth/password`; see
+    [auth.md](auth.md)), which also stamp `password_updated_at`.
   - The API exposes only `has_password`. Hashes never appear in JSON
     (`json:"-"`), and the API tests check this for every response.
 - **Login identifier:** `username` or `email`, both normalized to lowercase

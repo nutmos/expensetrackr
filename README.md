@@ -411,7 +411,8 @@ created by this code is tagged with `PRAGMA application_id = 0x45585452`
   application id. Logged as `store: migrated schema to version 1`.
 - **Existing database:** pending migrations (v2: `api_tokens`; v3: per-user
   balances and transactions; v4: transaction type `return_on_investment`,
-  a rebuild of `transactions` that keeps every row) run in order,
+  a rebuild of `transactions` that keeps every row; v5: drops two redundant
+  uid indexes) run in order,
   each in one SQL transaction with its `user_version` bump.
 - **Database from before the baseline reset** (the old `user_version` 1–18
   history, or any non-empty file without the application id) or **from a
@@ -425,6 +426,9 @@ created by this code is tagged with `PRAGMA application_id = 0x45585452`
 |---------|--------|
 | 1       | baseline: `transactions`, `balances`, `users`, `user_identities`, `sessions`, `user_categories`, `meta`, `fx_rates`, `fx_rate_lookups` and their indexes |
 | 2       | `api_tokens` (personal API tokens, hash only) and `idx_api_tokens_user_uid` |
+| 3       | per-user `balances` and `transactions` (`user_uid` columns, `idx_balances_user_uid`, `idx_transactions_user_uid`) |
+| 4       | transaction type `return_on_investment` (rebuild of `transactions`, rows kept) |
+| 5       | drops `idx_transactions_uid` and `idx_balances_uid`, which duplicated the indexes behind the `uid UNIQUE` constraints |
 
 To change the schema, append a migration to `migrations` in
 `pkg/store/migrate.go` (it becomes v2, then v3, ...) instead of editing the

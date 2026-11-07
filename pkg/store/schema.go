@@ -56,7 +56,7 @@ package store
 //     many times).
 //   - preferences: JSON object (json_valid + json_type = 'object'), '{}'
 //     default.
-//   - password_hash: PHC string (argon2id). NULL = no password. Never
+//   - password_hash: bcrypt hash (pkg/auth). NULL = no password. Never
 //     returned by the API.
 //   - status: active | disabled (reserved for blocking sign-in).
 //   - email_verified_at, password_updated_at, last_login_at: set by auth
