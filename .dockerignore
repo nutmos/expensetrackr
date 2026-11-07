@@ -1,0 +1,12 @@
+# Only go.mod, go.sum, cmd/ and pkg/ are needed to build the image.
+.git
+.github
+bin
+data
+dev
+docs
+skills
+*.db
+*.db-wal
+*.db-shm
+server.log

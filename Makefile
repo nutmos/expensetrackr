@@ -62,6 +62,18 @@ lint: ## Run golangci-lint (config in .golangci.yml).
 .PHONY: check
 check: fmt-check vet lint test ## fmt-check + vet + lint + test.
 
+.PHONY: up
+up: ## Build and start the server + Postgres in Docker (compose.yaml); wait until healthy.
+	docker compose up -d --build --wait
+
+.PHONY: down
+down: ## Stop the Docker server and Postgres; data is kept.
+	docker compose down
+
+.PHONY: logs
+logs: ## Follow the Docker server's logs.
+	docker compose logs -f app
+
 .PHONY: db-up
 db-up: ## Start the local Postgres (compose.yaml) and wait until it is ready.
 	docker compose up -d --wait db

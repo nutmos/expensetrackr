@@ -27,6 +27,17 @@ jobs:
           go-version-file: go.mod
       - run: make build
 
+  docker:
+    name: Docker image
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Builds the server image from the Dockerfile (what `make up` and the
+      # expensetrackr-run-server skill use), so a broken Dockerfile fails CI.
+      - run: docker build --pull -t expensetrackr:ci .
+      - run: docker run --rm --entrypoint /usr/local/bin/expense-server expensetrackr:ci -h 2>&1 | grep -q database-url
+
   fmt-check:
     name: Format check
     needs: build

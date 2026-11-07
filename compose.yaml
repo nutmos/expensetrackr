@@ -1,11 +1,15 @@
-# Postgres for local development and tests (README "Local Postgres").
+# Local stack: Postgres ("db") and the expensetrackr server ("app", built from
+# the Dockerfile). README "Run with Docker Compose" and "Local Postgres".
 #
-#   make db-up      start it and wait until it accepts connections
-#   make db-down    stop it (the data stays in the "pgdata" volume)
-#   make db-reset   stop it and delete the volume (all local data)
+#   make up         build and start both; wait until the server is healthy
+#                   (http://127.0.0.1:8080, EXPENSE_PORT to change it)
+#   make down       stop both (data stays in the "pgdata" volume)
+#   make logs       follow the server's logs
+#   make db-up      start only Postgres (for `make run` / `make test`)
+#   make db-reset   stop everything and delete the volume (all local data)
 #   make db-psql    open psql on the development database
 #
-# Credentials are for local use only; the port is bound to 127.0.0.1.
+# Credentials are for local use only; ports are bound to 127.0.0.1.
 name: expensetrackr
 
 services:
@@ -27,6 +31,21 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+
+  app:
+    build: .
+    image: expensetrackr:local
+    environment:
+      # "db" is the Postgres service above, on the compose network.
+      EXPENSE_DATABASE_URL: postgres://expense:expense@db:5432/expense?sslmode=disable
+      EXPENSE_FX_URL: ${EXPENSE_FX_URL:-https://api.frankfurter.dev/v1}
+    ports:
+      - "127.0.0.1:${EXPENSE_PORT:-8080}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    # Health check: the Dockerfile's HEALTHCHECK (GET /api/healthz).
 
 volumes:
   pgdata:

@@ -16,3 +16,18 @@ updates:
     groups:
       github-actions:
         patterns: ["*"]
+  # Base images in the Dockerfile (golang, alpine) and compose.yaml (postgres).
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      docker-images:
+        patterns: ["*"]
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      compose-images:
+        patterns: ["*"]
