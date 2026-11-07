@@ -1,9 +1,9 @@
 # User profiles
 
-Status: **profiles only**. Login, sessions and endpoint protection are not
-implemented yet. The schema has fields ready for basic username/password
-login and SSO (Sign in with Apple, Google), so adding those later needs no
-table rebuild.
+Status: login, sessions and endpoint protection have shipped (see
+[auth.md](auth.md)). The first registration creates the owner; afterwards
+only a logged-in user can register more accounts. The schema also has
+fields for SSO (Sign in with Apple, Google), which is not implemented yet.
 
 ## Tables
 
@@ -21,7 +21,7 @@ table rebuild.
 | `password_hash`       | nullable; a bcrypt hash written by the auth endpoints (`pkg/auth`) | **never exposed**; `has_password` (bool) instead |
 | `password_updated_at` | nullable RFC 3339                                                 | read-only |
 | `status`              | `active` \| `disabled` (`CHECK`), default `active`                | read-only for now |
-| `last_login_at`       | nullable RFC 3339; set by future login                            | read-only |
+| `last_login_at`       | nullable RFC 3339; stamped by `Store.RecordLogin` on sign-in (`POST /api/auth/login` and first-run registration) | read-only |
 | `created_at`, `updated_at` | RFC 3339 UTC                                                 | read-only |
 
 Usernames and emails may be NULL for any number of users. A unique index
@@ -45,8 +45,10 @@ only one user. One user can have several identities (e.g. Apple and Google).
 ## Schema
 
 Both tables and their indexes are part of the baseline schema
-(`pkg/store/schema.go`). Transactions and balances are not tied to a user
-yet.
+(`pkg/store/schema.go`). Transactions and balances belong to a user via
+`user_uid` (issue #62): another user's records return 404, so nobody can
+tell they exist. Categories live in `user_categories`, one jsonb document
+per user.
 
 ## API
 
@@ -145,12 +147,7 @@ PUT /api/users/<uid>/preferences {"base_currency":"XYZ"} → 400 {"error":"inval
 
 ## Follow-ups (not done)
 
-- Login endpoints, password hashing and policy, and rate limiting.
 - The SSO flows: OIDC with Google, and Sign in with Apple (including the Apple
   client-secret JWT and private relay emails).
-- Sessions (a `sessions` table or signed cookies), CSRF protection, logout.
-- Requiring auth on existing endpoints.
-- Multi-user scoping: add `user_uid` to `transactions`, `balances` and
-  `categories`, backfill existing rows to one owner, and filter every query.
 - Status management (disable/enable) and email verification.
 - A web UI for the rest of the profile (display name, username, email).
