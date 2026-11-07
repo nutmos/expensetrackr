@@ -1,5 +1,6 @@
 # Local stack: Postgres ("db") and the expensetrackr server ("app", built from
-# the Dockerfile). README "Run with Docker Compose" and "Local Postgres".
+# the Dockerfile). docs/getting-started.md: "Run with Docker Compose" and
+# "Local Postgres".
 #
 #   make up         build and start both; wait until the server is healthy
 #                   (http://127.0.0.1:8080, EXPENSE_PORT to change it)

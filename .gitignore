@@ -1,4 +1,4 @@
-# Local runtime files (repo root; see README "Layout").
+# Local runtime files (repo root; see docs/development.md "Repository layout").
 /bin/
 server.log
 # SQLite files from before the move to Postgres (no longer used; never commit them).

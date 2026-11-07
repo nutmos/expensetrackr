@@ -31,8 +31,8 @@ import (
 //     all later migrations, exactly like an upgraded one.
 //  3. Add a test that builds a database at the previous version and checks
 //     the upgrade (and that a fresh database matches an upgraded one).
-//  4. Add a row to the version list above and to the README section
-//     "Database schema".
+//  4. Add a row to the version list above and to the "Database schema"
+//     section of docs/data-model.md.
 //
 // Opening a database whose version is newer than SchemaVersion fails with
 // ErrUnsupportedSchema and leaves it untouched.

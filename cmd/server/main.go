@@ -63,7 +63,7 @@ func main() {
 	flag.Parse()
 
 	if *dbURL == "" {
-		log.Fatal("no database: set -database-url or EXPENSE_DATABASE_URL (make db-up starts a local Postgres; see README)")
+		log.Fatal("no database: set -database-url or EXPENSE_DATABASE_URL (make db-up starts a local Postgres; see docs/getting-started.md)")
 	}
 	st, err := store.Open(*dbURL)
 	if err != nil {

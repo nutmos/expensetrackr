@@ -1,4 +1,4 @@
-# expensetrackr server image (README "Run with Docker Compose").
+# expensetrackr server image (docs/getting-started.md "Run with Docker Compose").
 #
 #   docker compose up -d --build --wait     server + Postgres (compose.yaml)
 #   docker build -t expensetrackr .         just the image

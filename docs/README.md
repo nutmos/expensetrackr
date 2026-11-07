@@ -2,9 +2,9 @@
 
 Project documentation that is not code (design notes, decisions, guides).
 
-The code lives at the repo root (`go.mod`, [`cmd/`](../cmd), [`pkg/`](../pkg));
-see the [top-level README](../README.md) for how to build, run and test it
-(`make help`).
+The code lives at the repo root (`go.mod`, [`cmd/`](../cmd), [`pkg/`](../pkg)).
+Start with [Getting started](getting-started.md) to run it and
+[Development](development.md) to build and test it (`make help`).
 
 ## API documentation
 
@@ -25,6 +25,17 @@ match the Go JSON shapes.
 
 ## Pages
 
+- [Getting started](getting-started.md): requirements, running with Docker
+  Compose or from source, flags and the local Postgres.
+- [Development](development.md): repository and code layout, tests and make
+  targets.
+- [Data model](data-model.md): transactions and their fields, transaction
+  types, balances, categories, users, amounts, dates and the database schema.
+- [API](api.md): every `/api` endpoint and worked `curl` examples.
+- [Web page](web.md): how the built-in web page works.
+- [AI agents](agents.md): the agent skills in `skills/` and API tokens for
+  agents.
+- [Open questions](open-questions.md): ideas and decisions still open.
 - [User profiles](user-profile.md): the `users` and `user_identities` tables,
   the `/api/users` API, and the auth-readiness decisions.
 - [Categories](categories.md): per-user categories stored as one JSON
