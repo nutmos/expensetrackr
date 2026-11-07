@@ -306,3 +306,29 @@ func TestCSRFGuard(t *testing.T) {
 		t.Errorf("cross-site GET: %d", rec.Code)
 	}
 }
+
+func TestAuthRegisterDisplayNameCountsRunes(t *testing.T) {
+	srv, _ := newAuthServer(t, &Server{})
+	h := srv.Router()
+	c := &authClient{t: t, h: h}
+
+	// 34 Thai characters are 102 UTF-8 bytes: registration must accept them
+	// because the display_name limit counts characters (runes), matching
+	// user.Input.Validate and PUT /api/users/:uid (issue #88).
+	name := strings.Repeat("ก", 34) // 34 characters, 102 bytes
+	rec := c.req("POST", "/api/auth/register",
+		`{"username":"thai","password":"pw-12345","display_name":"`+name+`"}`, nil)
+	if rec.Code != 201 {
+		t.Fatalf("register with 102-byte display_name: %d %s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), `"display_name":"`+name+`"`) {
+		t.Fatalf("register body: %s", rec.Body)
+	}
+
+	// Truly too long (over 100 characters) is still rejected.
+	rec = c.req("POST", "/api/auth/register",
+		`{"username":"thai2","password":"pw-12345","display_name":"`+strings.Repeat("ก", 101)+`"}`, nil)
+	if rec.Code != 422 || !strings.Contains(rec.Body.String(), `"display_name"`) {
+		t.Fatalf("register with 101-character display_name: %d %s", rec.Code, rec.Body)
+	}
+}

@@ -2,7 +2,6 @@ package api
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -272,8 +271,8 @@ func (s *Server) register(c *gin.Context) {
 	if in.DisplayName != nil && strings.TrimSpace(*in.DisplayName) != "" {
 		display = strings.TrimSpace(*in.DisplayName)
 	}
-	if len(display) > user.MaxDisplayNameLen {
-		fields["display_name"] = fmt.Sprintf("must be at most %d characters", user.MaxDisplayNameLen)
+	if msg := user.CheckDisplayName(display); msg != "" {
+		fields["display_name"] = msg
 	}
 	_, loggedIn := currentUser(c)
 	s.auth.regMu.Lock()
