@@ -54,6 +54,14 @@ jobs:
           # exactly the commit CI tested.
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
+      # The commit actually checked out. For workflow_run, github.sha is main's
+      # latest commit, not necessarily the one CI tested, so tags and labels
+      # use this instead.
+      - id: commit
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "short=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+
       # QEMU only runs the small final stage for arm64 (apk, adduser); Go
       # cross-compiles natively (see the Dockerfile).
       - uses: docker/setup-qemu-action@v4
@@ -73,13 +81,13 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE }}
-          # Tags and labels from the checked-out commit (correct for
-          # workflow_run, whose event context is not the tested commit).
-          context: git
+          # The sha tag and revision label come from the checked-out commit
+          # (steps.commit), not from the event context.
           tags: |
             type=raw,value=latest,enable=${{ github.event_name != 'pull_request' }}
-            type=sha,format=short,prefix=sha-
+            type=raw,value=sha-${{ steps.commit.outputs.short }}
           labels: |
+            org.opencontainers.image.revision=${{ steps.commit.outputs.sha }}
             org.opencontainers.image.title=expensetrackr
             org.opencontainers.image.description=Small personal-finance server (Go + Postgres)
             org.opencontainers.image.licenses=MIT
