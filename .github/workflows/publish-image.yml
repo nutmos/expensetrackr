@@ -1,0 +1,116 @@
+name: Publish image
+
+# Builds the server image (Dockerfile) for linux/amd64 and linux/arm64 and
+# pushes it to GitHub Packages: ghcr.io/<owner>/<repo>, tagged `latest` and
+# `sha-<commit>`.
+#
+# - main: runs after the CI workflow succeeded on a push to main, so only
+#   tested commits are published (a failed CI publishes nothing).
+# - Pull requests that touch the image: build both platforms, push nothing.
+# - Manual: "Run workflow" in the Actions tab publishes the current main.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - go.mod
+      - go.sum
+      - .github/workflows/publish-image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # One publish at a time; a newer main waits instead of cancelling a push
+  # half way. PR builds of the same PR replace each other.
+  group: publish-image-${{ github.event.pull_request.number || 'main' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  image:
+    name: Build and push image
+    runs-on: ubuntu-latest
+    # workflow_run fires for every finished CI run; only publish successful
+    # runs of pushes to main (not CI runs of pull requests).
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    permissions:
+      contents: read
+      packages: write # push to ghcr.io with GITHUB_TOKEN
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # workflow_run runs in the context of main's latest commit; build
+          # exactly the commit CI tested.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      # The commit actually checked out. For workflow_run, github.sha is main's
+      # latest commit, not necessarily the one CI tested, so tags and labels
+      # use this instead.
+      - id: commit
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "short=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+
+      # QEMU only runs the small final stage for arm64 (apk, adduser); Go
+      # cross-compiles natively (see the Dockerfile).
+      - uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Packages
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          # The sha tag and revision label come from the checked-out commit
+          # (steps.commit), not from the event context.
+          tags: |
+            type=raw,value=latest,enable=${{ github.event_name != 'pull_request' }}
+            type=raw,value=sha-${{ steps.commit.outputs.short }}
+          labels: |
+            org.opencontainers.image.revision=${{ steps.commit.outputs.sha }}
+            org.opencontainers.image.title=expensetrackr
+            org.opencontainers.image.description=Small personal-finance server (Go + Postgres)
+            org.opencontainers.image.licenses=MIT
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        if: github.event_name != 'pull_request'
+        run: |
+          {
+            echo "### Published ${IMAGE}"
+            echo
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+            echo
+            echo "Run it: \`docker pull ${IMAGE}:latest\` (see docs/getting-started.md)."
+          } >> "$GITHUB_STEP_SUMMARY"

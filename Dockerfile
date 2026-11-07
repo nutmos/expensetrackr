@@ -7,7 +7,12 @@
 # it. Pure Go (CGO off), so the final image is a small Alpine with only the
 # binary, CA certificates (Frankfurter is HTTPS) and wget for the health check.
 
-FROM golang:1.27.3-alpine AS build
+# The build stage runs on the build machine's own platform and cross-compiles
+# for the target (TARGETOS/TARGETARCH, set by BuildKit), so a multi-platform
+# build (.github/workflows/publish-image.yml: linux/amd64 + linux/arm64)
+# compiles natively instead of under emulation.
+FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine AS build
+ARG TARGETOS TARGETARCH
 WORKDIR /src
 ENV CGO_ENABLED=0 GOTOOLCHAIN=local
 # Dependencies first, so code changes don't re-download modules.
@@ -15,7 +20,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
 COPY pkg ./pkg
-RUN go build -trimpath -ldflags="-s -w" -o /out/expense-server ./cmd/server
+RUN GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/expense-server ./cmd/server
 
 FROM alpine:3.22
 RUN apk add --no-cache ca-certificates \

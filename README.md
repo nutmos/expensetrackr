@@ -34,6 +34,9 @@ Open http://127.0.0.1:8080/ and create the first account; the API docs are at
 http://127.0.0.1:8080/swagger/. `make down` stops everything (your data is
 kept); `make logs` shows the server log.
 
+A ready-made image of the latest `main` is published as
+`ghcr.io/nutmos/expensetrackr` (amd64 and arm64).
+
 To run from source instead: `make db-up` (Postgres only), then `make run`.
 Run the tests with `make test`. Details, flags and requirements:
 [Getting started](docs/getting-started.md).
@@ -43,7 +46,7 @@ Run the tests with `make test`. Details, flags and requirements:
 | Read this | For |
 |---|---|
 | [Getting started](docs/getting-started.md) | Requirements, running with Docker or from source, flags, local Postgres |
-| [Development](docs/development.md) | Repository and code layout, tests, make targets |
+| [Development](docs/development.md) | Repository and code layout, tests, make targets, the published container image |
 | [Data model](docs/data-model.md) | Transactions, types, balances, categories, users, amounts, dates, database schema |
 | [API](docs/api.md) | Every endpoint and `curl` examples (live spec at `/swagger/`) |
 | [Web page](docs/web.md) | How the built-in web page works |
