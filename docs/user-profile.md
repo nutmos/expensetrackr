@@ -55,9 +55,9 @@ yet.
 | POST   | `/api/users` | 201 + user, `Location: /api/users/<uid>`. Body: `display_name` (required), `username`, `email`, `preferences` (all optional) |
 | GET    | `/api/users` | 200 `{"users":[...],"count":n}`, oldest first |
 | GET    | `/api/users/:uid` | 200 + user |
-| PUT    | `/api/users/:uid` | Full replace of the profile fields. Omitted `username`/`email` are removed; omitted `preferences` resets every preference to its default |
-| PATCH  | `/api/users/:uid` | Only the fields present change. **`preferences` replaces the whole object** (no deep merge); `null` resets every preference to its default. `username`/`email`: `null` or `""` removes |
-| DELETE | `/api/users/:uid` | 204; linked identities are deleted too |
+| PUT    | `/api/users/:uid` | Full replace of the profile fields. Omitted `username`/`email` are removed; omitted `preferences` resets every preference to its default. A user with a password must keep a username: 422 `username_required` |
+| PATCH  | `/api/users/:uid` | Only the fields present change. **`preferences` replaces the whole object** (no deep merge); `null` resets every preference to its default. `username`/`email`: `null` or `""` removes (not the username of a user with a password: 422 `username_required`) |
+| DELETE | `/api/users/:uid` | 204; linked identities, sessions, tokens and data are deleted too. 409 `last_login_user` for the last user with a password |
 | GET    | `/api/users/:uid/identities` | 200 `{"identities":[...],"count":n}`. Read-only; empty until SSO exists |
 | GET    | `/api/users/:uid/preferences` | 200 + preferences (defaults filled in). Own uid only (403 otherwise) |
 | PUT    | `/api/users/:uid/preferences` | Replace the whole preferences object; omitted keys go back to their defaults. Own uid only; any invalid preference is a **400** with `fields` |

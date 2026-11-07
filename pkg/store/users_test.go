@@ -90,6 +90,18 @@ func TestUserStore(t *testing.T) {
 	if err != nil || upd.EmailVerifiedAt != nil || !upd.HasPassword {
 		t.Fatalf("email change clears verification: %+v %v", upd, err)
 	}
+	// The only user with a password keeps it (issue #77); once another
+	// user has one, it can be removed.
+	if err := st.SetPasswordHash(ctx, a.UID, nil); !errors.Is(err, ErrLastPasswordUser) {
+		t.Fatalf("remove last password: %v, want ErrLastPasswordUser", err)
+	}
+	if got, _ := st.GetUserByUID(ctx, a.UID); !got.HasPassword {
+		t.Errorf("last password was removed: %+v", got)
+	}
+	admin2 := user.User{Username: sp("other-admin"), DisplayName: "Other"}
+	if err := st.RegisterUser(ctx, &admin2, "$2a$04$abcdefghijklmnopqrstuuJ3nL0bS6xkBVb0iH8B3lXz9P2vS5V3a", false); err != nil {
+		t.Fatal(err)
+	}
 	if err := st.SetPasswordHash(ctx, a.UID, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +155,7 @@ func TestUserStore(t *testing.T) {
 	if err := st.DeleteUser(ctx, a.ID); !errors.Is(err, ErrNotFound) {
 		t.Errorf("delete twice: %v", err)
 	}
-	if us, _ := st.ListUsers(ctx); len(us) != 3 {
+	if us, _ := st.ListUsers(ctx); len(us) != 4 { // incl. admin2, the remaining login user
 		t.Errorf("remaining users: %d", len(us))
 	}
 }

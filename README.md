@@ -497,9 +497,9 @@ only on validation, conflict and duplicate-name errors.
 | POST   | `/api/users`           | 201 + user, `Location: /api/users/<uid>` | `display_name` required; `username`, `email`, `preferences` (object, see below) optional. 422 invalid, 409 duplicate username/email, 400 unknown fields (incl. `password`, `password_hash`) |
 | GET    | `/api/users`           | 200 `{"users":[...],"count":n}` | Oldest first |
 | GET    | `/api/users/:uid`      | 200 + user | Never includes `password_hash`; `has_password` instead |
-| PUT    | `/api/users/:uid`      | 200 + updated user | Full replace of profile fields (omitted username/email removed, preferences → defaults). Read-only fields in the body are ignored |
-| PATCH  | `/api/users/:uid`      | 200 + updated user | Partial; `preferences` **replaces** the whole object (`null` → defaults); `username`/`email` `null` removes |
-| DELETE | `/api/users/:uid`      | 204 | Also deletes linked identities |
+| PUT    | `/api/users/:uid`      | 200 + updated user | Full replace of profile fields (omitted username/email removed, preferences → defaults). Read-only fields in the body are ignored. A user with a password keeps their username: 422 `username_required` |
+| PATCH  | `/api/users/:uid`      | 200 + updated user | Partial; `preferences` **replaces** the whole object (`null` → defaults); `username`/`email` `null` removes (422 `username_required` for the username of a user with a password) |
+| DELETE | `/api/users/:uid`      | 204 | Also deletes linked identities. 409 `last_login_user` for the last user with a password, so first-run registration never reopens |
 | GET    | `/api/users/:uid/identities` | 200 `{"identities":[...],"count":n}` | Read-only SSO links (empty until SSO exists) |
 | GET    | `/api/users/:uid/preferences` | 200 `{"base_currency":"USD"}` | Your own preferences (defaults filled in); another user's uid is 403 |
 | PUT    | `/api/users/:uid/preferences` | 200 + preferences | Replaces the whole object (omitted keys → defaults). Own uid only; unsupported `base_currency` or unknown key is a 400 |

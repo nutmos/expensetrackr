@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -142,8 +143,13 @@ func TestUsersCRUD(t *testing.T) {
 	if rec.Code != 200 || got["username"] != "guest-taken" || got["has_password"] != true {
 		t.Errorf("PUT round-trip: %d %v", rec.Code, got)
 	}
+	// A user with a password keeps their username, the login name (#77).
 	rec, got = do(t, h, "PUT", path, `{"display_name":"Nat E."}`)
-	if rec.Code != 200 || got["username"] != nil || got["email"] != nil || got["preferences"].(map[string]any)["base_currency"] != user.DefaultBaseCurrency || got["has_password"] != true {
+	if rec.Code != 422 || got["code"] != "username_required" || fieldsOf(got)["username"] == nil {
+		t.Errorf("PUT without username: %d %v", rec.Code, got)
+	}
+	rec, got = do(t, h, "PUT", path, `{"display_name":"Nat E.","username":"guest-taken"}`)
+	if rec.Code != 200 || got["username"] != "guest-taken" || got["email"] != nil || got["preferences"].(map[string]any)["base_currency"] != user.DefaultBaseCurrency || got["has_password"] != true {
 		t.Errorf("PUT minimal clears profile fields only: %d %v", rec.Code, got)
 	}
 	noSecrets(t, "put", rec.Body.String())
@@ -203,4 +209,66 @@ func mustJSON(t *testing.T, v any) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+// TestAccountLockoutGuards (issue #77): the profile API can neither strand a
+// password account without its login name nor delete the last account that
+// can log in, which would reopen first-run registration to anyone.
+func TestAccountLockoutGuards(t *testing.T) {
+	h, st := newTestServerWithStore(t) // logged in as "tester", the only password user
+	_, me := do(t, h, "GET", "/api/auth/me", "")
+	mePath := "/api/users/" + me["uid"].(string)
+
+	for _, c := range []struct{ method, body string }{
+		{"PATCH", `{"username":null}`},
+		{"PATCH", `{"username":""}`},
+		{"PUT", `{"display_name":"Tester"}`},
+	} {
+		rec, b := do(t, h, c.method, mePath, c.body)
+		if rec.Code != 422 || b["code"] != "username_required" {
+			t.Errorf("%s %s: %d %v, want 422 username_required", c.method, c.body, rec.Code, b)
+		}
+	}
+	if _, got := do(t, h, "GET", mePath, ""); got["username"] != "tester" {
+		t.Errorf("username after refused updates: %v", got["username"])
+	}
+
+	// Users without a password may still drop their username.
+	rec, guest := do(t, h, "POST", "/api/users", `{"display_name":"Guest","username":"guest"}`)
+	if rec.Code != 201 {
+		t.Fatalf("create guest: %d %v", rec.Code, guest)
+	}
+	guestPath := "/api/users/" + guest["uid"].(string)
+	if rec, b := do(t, h, "PATCH", guestPath, `{"username":null}`); rec.Code != 200 || b["username"] != nil {
+		t.Errorf("guest clears username: %d %v", rec.Code, b)
+	}
+
+	// The last password user cannot be deleted; deleting a password-less
+	// user is fine.
+	if rec, b := do(t, h, "DELETE", mePath, ""); rec.Code != 409 || b["code"] != "last_login_user" {
+		t.Errorf("delete last login user: %d %v, want 409 last_login_user", rec.Code, b)
+	}
+	if rec, b := do(t, h, "DELETE", guestPath, ""); rec.Code != 204 {
+		t.Errorf("delete guest: %d %v", rec.Code, b)
+	}
+	// Registration stays closed to anonymous visitors.
+	anon := (&Server{Store: st, Static: fstest.MapFS{"index.html": {}}}).Router()
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/auth/register", strings.NewReader(`{"username":"intruder","password":"pw-12345678"}`))
+	req.Header.Set("Content-Type", "application/json")
+	anon.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "registration_closed") {
+		t.Errorf("anonymous register: %d %s", rec.Code, rec.Body)
+	}
+
+	// With a second password user, the first can be deleted.
+	if rec, b := do(t, h, "POST", "/api/auth/register", `{"username":"admin2","password":"pw-12345678"}`); rec.Code != 201 {
+		t.Fatalf("register second user: %d %v", rec.Code, b)
+	}
+	if rec, b := do(t, h, "DELETE", mePath, ""); rec.Code != 204 {
+		t.Errorf("delete with another login user left: %d %v", rec.Code, b)
+	}
+	if has, err := st.HasPasswordUser(context.Background()); err != nil || !has {
+		t.Errorf("a password user must remain: %v %v", has, err)
+	}
 }
