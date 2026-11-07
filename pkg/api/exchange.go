@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -29,9 +30,31 @@ func fxMessage(err error) string {
 
 const fxMemoKey = "fx_memo"
 
+// DefaultBulkFXTimeout bounds the time one bulk request spends fetching
+// exchange rates (Server.BulkFXTimeout overrides it). Lookups still pending
+// when it runs out fail as exchange_rate_unavailable. The HTTP server's
+// WriteTimeout must stay well above it (cmd/server).
+const DefaultBulkFXTimeout = 30 * time.Second
+
 type fxMemoEntry struct {
 	q   fx.Quote
 	err error
+}
+
+// fxMemo is the per-request rate memo of a bulk import (issue #83).
+type fxMemo struct {
+	// ctx bounds the Frankfurter fetches of the whole request
+	// (DefaultBulkFXTimeout); cache lookups use the request context.
+	ctx     context.Context
+	entries map[string]fxMemoEntry
+	// down is the first "service down" error (ErrUnavailable or
+	// ErrBadUpstream). After it, uncached lookups fail at once with it
+	// instead of trying Frankfurter again for every new pair or date.
+	down error
+}
+
+func newFXMemo(ctx context.Context) *fxMemo {
+	return &fxMemo{ctx: ctx, entries: map[string]fxMemoEntry{}}
 }
 
 // rate looks up a Frankfurter rate (cached).
@@ -39,16 +62,30 @@ func (s *Server) rate(c *gin.Context, from, to, date string, loc *time.Location)
 	if s.FX == nil {
 		return fx.Quote{}, errNoFX
 	}
-	// A bulk request memoizes lookups (including failures) so an upstream
-	// outage costs one attempt per currency pair and date, not one per item.
+	// A bulk request memoizes lookups (including failures), and once
+	// Frankfurter is found to be down it stops calling it: an outage costs
+	// one attempt per request, not one per currency pair and date. Rates
+	// already in the cache keep working.
 	if v, ok := c.Get(fxMemoKey); ok {
-		memo := v.(map[string]fxMemoEntry)
+		memo := v.(*fxMemo)
 		key := from + "/" + to + "/" + date
-		if m, ok := memo[key]; ok {
+		if m, ok := memo.entries[key]; ok {
 			return m.q, m.err
 		}
-		q, err := s.FX.Rate(c.Request.Context(), from, to, date, loc)
-		memo[key] = fxMemoEntry{q, err}
+		var q fx.Quote
+		var err error
+		if memo.down != nil {
+			var cached bool
+			if q, cached = s.FX.Cached(c.Request.Context(), from, to, date, loc); !cached {
+				err = memo.down
+			}
+		} else {
+			q, err = s.FX.Rate(memo.ctx, from, to, date, loc)
+			if errors.Is(err, fx.ErrUnavailable) || errors.Is(err, fx.ErrBadUpstream) {
+				memo.down = err
+			}
+		}
+		memo.entries[key] = fxMemoEntry{q, err}
 		return q, err
 	}
 	return s.FX.Rate(c.Request.Context(), from, to, date, loc)

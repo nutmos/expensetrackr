@@ -28,6 +28,34 @@ func envOr(key, def string) string {
 // shutdownTimeout bounds how long in-flight requests get to finish on SIGINT/SIGTERM.
 const shutdownTimeout = 5 * time.Second
 
+// HTTP server timeouts (issue #83), so slow or idle clients can't hold
+// connections and goroutines forever.
+const (
+	// readHeaderTimeout: time to send the request headers.
+	readHeaderTimeout = 10 * time.Second
+	// readTimeout: time to send the whole request, including a bulk import
+	// body (up to 2 MiB).
+	readTimeout = time.Minute
+	// writeTimeout: time from the end of the request headers to the end of
+	// the response. It must stay well above api.DefaultBulkFXTimeout, since a
+	// bulk import first fetches rates and then writes up to 500 rows.
+	writeTimeout = 2 * time.Minute
+	// idleTimeout: how long a keep-alive connection may wait for its next request.
+	idleTimeout = 2 * time.Minute
+)
+
+// newHTTPServer returns the server for addr with the timeouts above.
+func newHTTPServer(addr string, h http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           h,
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
+	}
+}
+
 func main() {
 	addr := flag.String("addr", envOr("EXPENSE_ADDR", "127.0.0.1:8080"), "listen address (env EXPENSE_ADDR); use :8080 to listen on all interfaces")
 	dbPath := flag.String("db", envOr("EXPENSE_DB", "data/expenses.db"), "SQLite database file (env EXPENSE_DB)")
@@ -40,11 +68,7 @@ func main() {
 	}
 	defer st.Close()
 
-	srv := &http.Server{
-		Addr:              *addr,
-		Handler:           (&api.Server{Store: st, Static: web.Static(), FX: &fx.Client{BaseURL: *fxURL, Cache: st}}).Router(),
-		ReadHeaderTimeout: 10 * time.Second,
-	}
+	srv := newHTTPServer(*addr, (&api.Server{Store: st, Static: web.Static(), FX: &fx.Client{BaseURL: *fxURL, Cache: st}}).Router())
 
 	go func() {
 		log.Printf("expense-service listening on http://%s (db: %s)", *addr, *dbPath)

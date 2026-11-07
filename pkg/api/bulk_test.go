@@ -1,11 +1,13 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -453,5 +455,116 @@ func TestBulkAuthAndCSRF(t *testing.T) {
 	// Same-origin with a session passes the guard (then fails validation: unknown balance).
 	if rec, _ := doH(t, h, "POST", "/api/transactions/bulk", body, map[string]string{"Sec-Fetch-Site": "same-origin"}); rec.Code != 422 {
 		t.Errorf("same-origin: %d", rec.Code)
+	}
+}
+
+// flakyFrankfurter answers 2026-10-05 USD->THB with a rate and every other
+// request with 503 (or, with hang, by waiting until the client gives up).
+func flakyFrankfurter(t *testing.T, hang bool) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var n atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n.Add(1)
+		if r.URL.Path == "/2026-10-05" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"amount": 1.0, "base": "USD", "date": "2026-10-05", "rates": map[string]float64{"THB": 33.5}})
+			return
+		}
+		if hang {
+			select {
+			case <-r.Context().Done():
+			case <-time.After(10 * time.Second):
+			}
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &n
+}
+
+func newBulkFXServer(t *testing.T, fxURL string, bulkFXTimeout time.Duration) http.Handler {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	st, err := store.Open(filepath.Join(t.TempDir(), "fx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	client := &fx.Client{BaseURL: fxURL, Cache: st, HTTP: &http.Client{Timeout: 5 * time.Second},
+		Now: func() time.Time { return time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC) }}
+	srv := &Server{Store: st, Static: fstest.MapFS{"index.html": {}}, FX: client, BulkFXTimeout: bulkFXTimeout}
+	return loggedIn(t, srv.Router(), st)
+}
+
+// TestBulkFXOutageFailsFast (issue #83): after the first "service down"
+// answer, a bulk request stops calling Frankfurter for other pairs and
+// dates, but rates already in the cache still work.
+func TestBulkFXOutageFailsFast(t *testing.T) {
+	fake, hits := flakyFrankfurter(t, false)
+	h := newBulkFXServer(t, fake.URL, 0)
+	usd := seedPayable(t, h, "Dollars", "USD")
+	thb := seedPayable(t, h, "Baht", "THB")
+	// Warm the cache for 2026-10-05.
+	if rec, b := do(t, h, "POST", "/api/transactions", transferBody(usd, thb, "1", "USD", "2026-10-05T10:00:00Z", "")); rec.Code != 201 {
+		t.Fatalf("warm cache: %d %v", rec.Code, b)
+	}
+	hits.Store(0)
+
+	rec, b := do(t, h, "POST", "/api/transactions/bulk", bulkBody(`"atomic":false`,
+		transferBody(usd, thb, "10", "USD", "2026-10-06T10:00:00Z", ""), // 503: Frankfurter is down
+		transferBody(usd, thb, "10", "USD", "2026-10-05T10:00:00Z", ""), // cached: still converted
+		transferBody(usd, thb, "10", "USD", "2026-10-07T10:00:00Z", ""), // not cached: fails without a call
+		transferBody(usd, thb, "10", "USD", "2026-10-08T10:00:00Z", ""),
+	))
+	if rec.Code != 200 || statuses(t, b) != "failed,created,failed,failed" {
+		t.Fatalf("bulk: %d %s", rec.Code, rec.Body)
+	}
+	if got := hits.Load(); got != 1 {
+		t.Errorf("frankfurter hits %d, want 1 (no retries once it is down)", got)
+	}
+	rs := results(t, b)
+	for _, i := range []int{0, 2, 3} {
+		if code := rs[i]["error"].(map[string]any)["code"]; code != "exchange_rate_unavailable" {
+			t.Errorf("item %d code %v", i, code)
+		}
+	}
+	if tr := rs[1]["transaction"].(map[string]any); tr["to_amount"] != "335.00" || tr["rate_date"] != "2026-10-05" {
+		t.Errorf("cached item %v", tr)
+	}
+
+	// Atomic mode reports the outage as 503 and writes nothing.
+	before := txCount(t, h)
+	rec, _ = do(t, h, "POST", "/api/transactions/bulk", bulkBody("",
+		transferBody(usd, thb, "10", "USD", "2026-10-06T10:00:00Z", ""),
+		transferBody(usd, thb, "10", "USD", "2026-10-07T10:00:00Z", "")))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("atomic: %d %s", rec.Code, rec.Body)
+	}
+	if n := txCount(t, h); n != before {
+		t.Errorf("atomic wrote %d rows", n-before)
+	}
+}
+
+// TestBulkFXTimeout (issue #83): a hanging Frankfurter costs one request at
+// most the bulk FX budget, not one client timeout per pair and date.
+func TestBulkFXTimeout(t *testing.T) {
+	fake, hits := flakyFrankfurter(t, true)
+	h := newBulkFXServer(t, fake.URL, 200*time.Millisecond)
+	usd := seedPayable(t, h, "Dollars", "USD")
+	thb := seedPayable(t, h, "Baht", "THB")
+	var items []string
+	for _, d := range []string{"06", "07", "08", "09"} {
+		items = append(items, transferBody(usd, thb, "10", "USD", "2026-10-"+d+"T10:00:00Z", ""))
+	}
+	start := time.Now()
+	rec, b := do(t, h, "POST", "/api/transactions/bulk", bulkBody("", items...))
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Errorf("bulk took %v; the 200ms FX budget was not enforced", elapsed)
+	}
+	if rec.Code != http.StatusServiceUnavailable || statuses(t, b) != "failed,failed,failed,failed" {
+		t.Fatalf("bulk: %d %s", rec.Code, rec.Body)
+	}
+	if got := hits.Load(); got != 1 {
+		t.Errorf("frankfurter hits %d, want 1", got)
 	}
 }

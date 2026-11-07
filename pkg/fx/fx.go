@@ -78,19 +78,10 @@ func (c *Client) now() time.Time {
 // weekend or holiday with the previous working day; Quote.Date tells which.
 func (c *Client) Rate(ctx context.Context, from, to, date string, loc *time.Location) (Quote, error) {
 	from, to = strings.ToUpper(from), strings.ToUpper(to)
-	if loc == nil {
-		loc = time.UTC
-	}
 	now := c.now()
-	requested := "latest"
-	if date != "" && date < now.In(loc).Format(time.DateOnly) {
-		requested = date
-	}
-	if c.Cache != nil {
-		rate, rd, at, ok, err := c.Cache.FXLookup(ctx, from, to, requested)
-		if err == nil && ok && c.fresh(requested, rd, at, now) {
-			return Quote{From: from, To: to, Rate: rate, Date: rd, Source: Source}, nil
-		}
+	requested := requestedDate(date, loc, now)
+	if q, ok := c.cached(ctx, from, to, requested, now); ok {
+		return q, nil
 	}
 	q, err := c.fetch(ctx, from, to, requested)
 	if err != nil {
@@ -100,6 +91,39 @@ func (c *Client) Rate(ctx context.Context, from, to, date string, loc *time.Loca
 		_ = c.Cache.FXStore(ctx, from, to, requested, q.Date, q.Rate, now) // best effort
 	}
 	return q, nil
+}
+
+// Cached is Rate without the network: it returns the cached rate for the
+// same lookup if one is still fresh, and ok=false otherwise (no cache, a
+// miss, a stale entry or a cache error). Callers use it to keep serving known
+// rates once Frankfurter is known to be down.
+func (c *Client) Cached(ctx context.Context, from, to, date string, loc *time.Location) (Quote, bool) {
+	from, to = strings.ToUpper(from), strings.ToUpper(to)
+	now := c.now()
+	return c.cached(ctx, from, to, requestedDate(date, loc, now), now)
+}
+
+// requestedDate is the Frankfurter date path for date: the date itself if
+// it is before today in loc (UTC if nil), else "latest".
+func requestedDate(date string, loc *time.Location, now time.Time) string {
+	if loc == nil {
+		loc = time.UTC
+	}
+	if date != "" && date < now.In(loc).Format(time.DateOnly) {
+		return date
+	}
+	return "latest"
+}
+
+func (c *Client) cached(ctx context.Context, from, to, requested string, now time.Time) (Quote, bool) {
+	if c.Cache == nil {
+		return Quote{}, false
+	}
+	rate, rd, at, ok, err := c.Cache.FXLookup(ctx, from, to, requested)
+	if err != nil || !ok || !c.fresh(requested, rd, at, now) {
+		return Quote{}, false
+	}
+	return Quote{From: from, To: to, Rate: rate, Date: rd, Source: Source}, true
 }
 
 // fresh reports whether a cached lookup can be reused: an old requested date
