@@ -29,15 +29,18 @@ runs from the repo root; no `cd` needed.
 
 ```
 go.mod, go.sum   module github.com/nutmos/expensetrackr
-Makefile         build / run / test / vet / fmt / clean
+Makefile         build / run / test / vet / fmt / clean, up / down (Docker)
+Dockerfile       server image (multi-stage: Go build -> small Alpine, non-root)
+compose.yaml     local stack: Postgres ("db") + the server ("app")
+dev/             files for the local stack (Postgres init script)
 cmd/server/      the expense-server binary (main package)
 pkg/             library packages (api, store, transaction, balance, category, user,
                  money, validate), pkg/web (embedded web page) and pkg/apidoc
                  (embedded OpenAPI spec + offline Swagger UI)
 docs/            project documentation (non-code)
-skills/          AI-agent skill (SKILL.md) for using the HTTP API
+skills/          AI-agent skills (SKILL.md): run the server, use the API, log a transaction, raise a PR
 README.md
-bin/, data/, server.log   local runtime files (git-ignored)
+bin/, server.log local runtime files (git-ignored)
 ```
 
 Import packages as `github.com/nutmos/expensetrackr/pkg/<name>`. The web page
@@ -45,6 +48,30 @@ lives in `pkg/web` (an embed package like any other), not a root `web/` folder,
 so all Go code other than `cmd/` lives under `pkg/`.
 
 ## Run
+
+### Run with Docker Compose (everything in containers)
+
+The quickest way to run it locally: the server is built from the
+`Dockerfile` and started with Postgres by `compose.yaml`. Only Docker (with
+Compose v2) is needed; no local Go.
+
+```bash
+make up                          # build + start server and Postgres, wait until healthy
+                                 # -> http://127.0.0.1:8080 (EXPENSE_PORT=18080 make up for another port)
+make logs                        # follow the server's logs
+make down                        # stop both; data is kept in the "pgdata" volume
+make db-reset                    # stop both and DELETE all local data
+```
+
+(`docker compose up -d --build --wait` and `docker compose down` do the same.)
+Run `make up` again after changing code: it rebuilds the image and replaces
+the server container. Both ports are published on `127.0.0.1` only. The
+image runs the server as a non-root user, health-checks `GET /api/healthz`
+and creates or upgrades the schema on start. For agents, the
+[expensetrackr-run-server](skills/expensetrackr-run-server/SKILL.md) skill
+wraps these steps with checks.
+
+### Run from source
 
 ```bash
 cd /workspace/expense-service    # repo root
@@ -100,8 +127,14 @@ cookie jar, auto-login from `EXPENSETRACKR_USERNAME` / `EXPENSETRACKR_PASSWORD`
 and GET → PUT edits with conflict retry. For recording a single expense,
 income, transfer or asset purchase with a Bearer API token, see the focused
 [`skills/expensetrackr-log-transaction/`](skills/expensetrackr-log-transaction/SKILL.md)
-skill. Copy or symlink the folder into your
-agent's skills directory (e.g. `~/.claude/skills/` or `.cursor/skills/`).
+skill. To start a local server first,
+[`skills/expensetrackr-run-server/`](skills/expensetrackr-run-server/SKILL.md)
+runs it from the `Dockerfile` with Docker Compose; its
+[`scripts/run-server.sh`](skills/expensetrackr-run-server/scripts/run-server.sh)
+checks Docker and the port, waits until the server is healthy and reports
+whether an account exists (`up`, `status`, `logs`, `down`, `reset --yes`).
+Copy or symlink the folders into your agent's skills directory (e.g.
+`~/.claude/skills/` or `.cursor/skills/`).
 
 **API tokens** are the simpler option for agents: create one in
 **Settings → API tokens** (e.g. named "Expense agent", scope `read` or
@@ -137,6 +170,9 @@ make test         # go test ./...
 | `fmt`       | `gofmt -s -w cmd pkg`                                       |
 | `fmt-check` | fails if any file needs gofmt                               |
 | `check`     | `fmt-check` + `vet` + `test`                                |
+| `up`        | build the image and start server + Postgres in Docker (`compose.yaml`); wait until healthy |
+| `down`      | stop the Docker server and Postgres; data is kept           |
+| `logs`      | follow the Docker server's logs                             |
 | `db-up`     | start the local Postgres (`compose.yaml`) and wait until it is ready |
 | `db-down`   | stop it; the data is kept                                   |
 | `db-reset`  | stop it and **delete** its data volume                      |
