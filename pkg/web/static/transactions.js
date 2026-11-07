@@ -157,27 +157,35 @@
     if (Number.isInteger(scale)) { opts.minimumFractionDigits = scale; opts.maximumFractionDigits = scale; }
     try { return new Intl.NumberFormat(undefined, opts).format(v); } catch (_) { return v; }
   }
-  // Display names of balance types, singular (issue #93).
-  const BALANCE_TYPE_LABEL = { payment_account: "Payment account", credit_card: "Credit card", other_asset: "Other asset", other_liability: "Other liability" };
-  // "Wallet · Payment account · $50.00": name, balance type and current
-  // amount (no uid or currency code). The type also makes the searchable
-  // dropdown match on it, e.g. typing "card" lists the credit cards.
+  // Plural headings for <optgroup>s in the balance dropdowns, matching
+  // the Balances list page. Empty types are omitted.
+  const BALANCE_TYPE_GROUP = {
+    payment_account: "Payment accounts",
+    credit_card: "Credit cards",
+    other_asset: "Other assets",
+    other_liability: "Other liabilities",
+  };
+  // "Wallet · $50.00": name and current amount (no uid, code or type).
+  // The type is the optgroup heading; typing a group name (e.g. "card")
+  // still lists that group because the combobox matches against it.
   function balanceLabel(b) {
-    const parts = [b.name];
-    const type = BALANCE_TYPE_LABEL[b.type];
-    if (type) parts.push(type);
-    parts.push(balanceAmountText(b));
-    return parts.join(" · ");
+    return `${b.name} · ${balanceAmountText(b)}`;
   }
 
   function fillSelect(sel, types, keep) {
     sel.replaceChildren(Object.assign(document.createElement("option"), { value: "", textContent: "Select a balance…" }));
-    for (const b of allBalances) {
-      if (!types.includes(b.type)) continue;
-      const opt = document.createElement("option");
-      opt.value = b.uid;
-      opt.textContent = balanceLabel(b);
-      sel.append(opt);
+    for (const type of types) {
+      const rows = allBalances.filter((b) => b.type === type);
+      if (!rows.length) continue;
+      const group = document.createElement("optgroup");
+      group.label = BALANCE_TYPE_GROUP[type] || type;
+      for (const b of rows) {
+        const opt = document.createElement("option");
+        opt.value = b.uid;
+        opt.textContent = balanceLabel(b);
+        group.append(opt);
+      }
+      sel.append(group);
     }
     if (keep && [...sel.options].some((o) => o.value === keep)) sel.value = keep;
   }

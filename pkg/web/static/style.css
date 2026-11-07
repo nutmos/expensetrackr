@@ -87,6 +87,8 @@ tr.just-saved td { background: #ecfdf5; transition: background 2s; }
 .combo-option.active, .combo-option:hover { background: #eff4ff; color: var(--accent); }
 .combo-none { color: var(--muted); font-style: italic; }
 .combo-empty { padding: 6px 10px; color: var(--muted); font-style: italic; }
+.combo-group { padding: 8px 10px 2px; font-weight: 600; color: var(--muted); cursor: default; }
+.combo-option.combo-grouped { padding-left: 20px; }
 /* Header with the signed-in user (issue #30). */
 .app-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
 .app-header h1 { margin: 0; }

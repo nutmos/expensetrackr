@@ -80,21 +80,51 @@
       } else input.removeAttribute("aria-activedescendant");
     }
 
+    function optionMatches(o, q) {
+      if (!q) return true;
+      if (o.textContent.toLowerCase().includes(q)) return true;
+      const g = o.parentElement;
+      return !!(g && g.tagName === "OPTGROUP" && (g.label || "").toLowerCase().includes(q));
+    }
+
+    function addOption(o, idx) {
+      const li = document.createElement("li");
+      li.id = `${id}-opt-${idx}`;
+      li.className = "combo-option" + (o.value === "" ? " combo-none" : "");
+      if (o.parentElement && o.parentElement.tagName === "OPTGROUP") li.classList.add("combo-grouped");
+      li.setAttribute("role", "option");
+      li.textContent = o.textContent;
+      li.addEventListener("mousedown", (ev) => { ev.preventDefault(); choose(o.value); });
+      list.append(li);
+      shown.push({ value: o.value, el: li });
+    }
+
     function render(filter) {
       const q = (filter || "").trim().toLowerCase();
       list.replaceChildren();
       shown = [];
-      options().forEach((o, idx) => {
-        if (o.value === "" && (!clearable || q)) return; // placeholder only as "clear" choice
-        if (q && !o.textContent.toLowerCase().includes(q)) return;
-        const li = document.createElement("li");
-        li.id = `${id}-opt-${idx}`;
-        li.className = "combo-option" + (o.value === "" ? " combo-none" : "");
-        li.setAttribute("role", "option");
-        li.textContent = o.textContent;
-        li.addEventListener("mousedown", (ev) => { ev.preventDefault(); choose(o.value); });
-        list.append(li);
-        shown.push({ value: o.value, el: li });
+      let idx = 0;
+      // Walk children so <optgroup> headings stay above their options.
+      // Keyboard navigation only uses `shown` (real options), never headers.
+      [...sel.children].forEach((node) => {
+        if (node.tagName === "OPTGROUP") {
+          const visible = [...node.children].filter((o) => {
+            if (o.tagName !== "OPTION") return false;
+            if (o.value === "" && (!clearable || q)) return false;
+            return optionMatches(o, q);
+          });
+          if (!visible.length) return;
+          const header = document.createElement("li");
+          header.className = "combo-group";
+          header.setAttribute("role", "presentation");
+          header.textContent = node.label;
+          list.append(header);
+          visible.forEach((o) => addOption(o, idx++));
+        } else if (node.tagName === "OPTION") {
+          if (node.value === "" && (!clearable || q)) return; // placeholder only as "clear" choice
+          if (!optionMatches(node, q)) return;
+          addOption(node, idx++);
+        }
       });
       if (!shown.length) {
         const li = document.createElement("li");
