@@ -107,7 +107,8 @@ Each user has their own preferences, stored as **one JSON object** in
   logged-in user's own uid. The user resource (`GET /api/users/:uid`,
   `/api/auth/me`) includes `preferences` too.
 - **Web UI:** the **Settings** tab (`/settings`) edits the base currency
-  with the searchable currency dropdown.
+  with the searchable currency dropdown. The **Add balance** form preselects
+  it as the new balance's currency (it can still be changed).
 
 Example:
 

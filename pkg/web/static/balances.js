@@ -49,16 +49,16 @@
     setStatus("");
   }
 
-  // Default currency for a new balance: the one most existing balances use.
+  // Default currency for a new balance: the signed-in user's base currency
+  // from Settings (preferences.base_currency in GET /api/auth/me; the API
+  // fills in its default when none was chosen). Read on every visit, so a
+  // change in Settings applies at once. "" leaves the picker empty.
   async function defaultCurrency() {
     try {
-      const res = await fetch("/api/balances");
-      const body = await res.json();
-      const n = new Map();
-      for (const b of body.balances || []) n.set(b.currency, (n.get(b.currency) || 0) + 1);
-      let best = "", max = 0;
-      for (const [c, k] of n) if (k > max) { best = c; max = k; }
-      return best;
+      const res = await fetch("/api/auth/me");
+      if (!res.ok) return "";
+      const me = await res.json();
+      return (me.preferences && me.preferences.base_currency) || "";
     } catch (_) { return ""; }
   }
 
