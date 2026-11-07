@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -90,8 +91,20 @@ var v2Objects = []string{"table api_tokens", "index idx_api_tokens_user_uid"}
 // The balances/transactions tables themselves are rebuilt in place.
 var v3Objects = []string{"index idx_balances_user_uid", "index idx_transactions_user_uid"}
 
+// v5Dropped are indexes removed by migration v5: they duplicated the
+// sqlite_autoindex behind each table's uid UNIQUE constraint.
+var v5Dropped = []string{"index idx_transactions_uid", "index idx_balances_uid"}
+
 // latestObjects are the user tables and indexes of a fully migrated database.
-var latestObjects = append(append(append([]string{}, baselineObjects...), v2Objects...), v3Objects...)
+var latestObjects = func() []string {
+	var out []string
+	for _, k := range append(append(append([]string{}, baselineObjects...), v2Objects...), v3Objects...) {
+		if !slices.Contains(v5Dropped, k) {
+			out = append(out, k)
+		}
+	}
+	return out
+}()
 
 func TestFreshDatabaseGetsBaseline(t *testing.T) {
 	ctx := context.Background()
@@ -115,8 +128,8 @@ func TestFreshDatabaseGetsBaseline(t *testing.T) {
 	}
 	st.Close()
 
-	if SchemaVersion != 4 {
-		t.Errorf("SchemaVersion = %d, want 4 (baseline + api_tokens + per-user data + return_on_investment)", SchemaVersion)
+	if SchemaVersion != 5 {
+		t.Errorf("SchemaVersion = %d, want 5 (baseline + api_tokens + per-user data + return_on_investment + drop redundant uid indexes)", SchemaVersion)
 	}
 	if v := pragmaInt(t, path, "user_version"); v != SchemaVersion {
 		t.Errorf("user_version = %d, want %d", v, SchemaVersion)

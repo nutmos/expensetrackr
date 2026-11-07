@@ -2,10 +2,11 @@
 // identifiers (username, email) and typed preferences (see Preferences)
 // stored as one JSON object.
 //
-// The record also has fields reserved for authentication, which is not
-// implemented yet: password_hash (basic login) and linked SSO identities
-// (Sign in with Apple / Google, see Identity). The API never returns secrets.
-// It only says whether a password is set (has_password).
+// The record also carries authentication data: password_hash (a bcrypt hash
+// for username/password login, see pkg/auth and docs/auth.md) and linked SSO
+// identities (Sign in with Apple / Google, see Identity; not wired to a
+// sign-in flow yet). The API never returns secrets. It only says whether a
+// password is set (has_password).
 package user
 
 import (
@@ -29,8 +30,8 @@ const (
 	MaxPreferencesSize = 32 << 10 // bytes of the JSON object (requests are capped at 64 KiB)
 )
 
-// Status of an account. Only "active" is used until auth exists; "disabled"
-// is reserved for blocking sign-in later.
+// Status of an account. Login, sessions and API tokens require "active";
+// "disabled" blocks all of them, but no API sets it yet.
 type Status string
 
 const (
@@ -53,7 +54,7 @@ type User struct {
 	Preferences     Preferences `json:"preferences"` // stored as one JSON object
 	Status          Status      `json:"status"`
 	HasPassword     bool        `json:"has_password"` // derived: PasswordHash != nil
-	PasswordHash    *string     `json:"-"`            // future basic auth (e.g. argon2id PHC string); NEVER exposed
+	PasswordHash    *string     `json:"-"`            // bcrypt hash (pkg/auth); NEVER exposed
 	PasswordUpdated *string     `json:"password_updated_at"`
 	LastLoginAt     *string     `json:"last_login_at"`
 	CreatedAt       string      `json:"created_at"`
