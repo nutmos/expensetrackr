@@ -157,70 +157,70 @@ func (s *Store) UpdateBalance(ctx context.Context, userUID string, id int64, fn 
 // ErrDuplicateName, ErrBalanceInUse (currency change while transactions
 // reference the balance), or fn's error.
 func (s *Store) UpdateBalanceWith(ctx context.Context, userUID string, id int64, opts WriteOptions, fn func(cur balance.Balance) (balance.Balance, error)) (balance.Balance, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return balance.Balance{}, fmt.Errorf("update balance: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
+	var saved balance.Balance
+	err := s.inTx(ctx, "update balance", func(tx *sql.Tx) error {
 
-	cur, err := scanBalance(tx.QueryRowContext(ctx, `SELECT `+balanceCols+` FROM balances WHERE id = ? AND user_uid = ?`, id, userUID))
-	if errors.Is(err, sql.ErrNoRows) {
-		return balance.Balance{}, ErrNotFound
-	}
-	if err != nil {
-		return balance.Balance{}, err
-	}
-	if opts.Version > 0 && cur.Version != opts.Version {
-		return balance.Balance{}, ErrVersionConflict
-	}
-	next, err := fn(cur)
-	if err != nil {
-		return balance.Balance{}, err
-	}
-	scale, ok := money.MinorUnits(next.Currency)
-	if !ok {
-		return balance.Balance{}, fmt.Errorf("unknown currency %q", next.Currency)
-	}
-	now := s.nowRFC3339()
-	next.ID, next.UID, next.CreatedAt, next.UpdatedAt = cur.ID, cur.UID, cur.CreatedAt, &now
-	next.Version = cur.Version + 1
-	// The type is immutable after creation (callers reject a change with 422
-	// via balance.Input.ValidateUpdate); never write it here.
-	if next.Type != cur.Type {
-		return balance.Balance{}, fmt.Errorf("update balance: type cannot change (%s -> %s)", cur.Type, next.Type)
-	}
-	if next.Currency != cur.Currency {
-		var n int
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM transactions WHERE user_uid = ? AND (balance_uid = ? OR to_balance_uid = ?)`, userUID, cur.UID, cur.UID).Scan(&n); err != nil {
-			return balance.Balance{}, fmt.Errorf("update balance: %w", err)
+		cur, err := scanBalance(tx.QueryRowContext(ctx, `SELECT `+balanceCols+` FROM balances WHERE id = ? AND user_uid = ?`, id, userUID))
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
 		}
-		if n > 0 {
-			return balance.Balance{}, fmt.Errorf("%w (%d transaction(s)); its currency cannot change", ErrBalanceInUse, n)
+		if err != nil {
+			return err
 		}
-	}
+		if opts.Version > 0 && cur.Version != opts.Version {
+			return ErrVersionConflict
+		}
+		next, err := fn(cur)
+		if err != nil {
+			return err
+		}
+		scale, ok := money.MinorUnits(next.Currency)
+		if !ok {
+			return fmt.Errorf("unknown currency %q", next.Currency)
+		}
+		now := s.nowRFC3339()
+		next.ID, next.UID, next.CreatedAt, next.UpdatedAt = cur.ID, cur.UID, cur.CreatedAt, &now
+		next.Version = cur.Version + 1
+		// The type is immutable after creation (callers reject a change with 422
+		// via balance.Input.ValidateUpdate); never write it here.
+		if next.Type != cur.Type {
+			return fmt.Errorf("update balance: type cannot change (%s -> %s)", cur.Type, next.Type)
+		}
+		if next.Currency != cur.Currency {
+			var n int
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM transactions WHERE user_uid = ? AND (balance_uid = ? OR to_balance_uid = ?)`, userUID, cur.UID, cur.UID).Scan(&n); err != nil {
+				return fmt.Errorf("update balance: %w", err)
+			}
+			if n > 0 {
+				return fmt.Errorf("%w (%d transaction(s)); its currency cannot change", ErrBalanceInUse, n)
+			}
+		}
 
-	res, err := tx.ExecContext(ctx,
-		`UPDATE balances SET name = ?, currency = ?, description = ?, amount_scale = ?,
+		res, err := tx.ExecContext(ctx,
+			`UPDATE balances SET name = ?, currency = ?, description = ?, amount_scale = ?,
 		        balance_minor = ?, debt_minor = ?, limit_minor = ?, updated_at = ?, version = ?
 		 WHERE id = ? AND version = ?`,
-		next.Name, next.Currency, next.Description, scale,
-		nullInt(next.BalanceMinor), nullInt(next.DebtMinor), nullInt(next.LimitMinor), now, next.Version, id, cur.Version)
-	if err != nil {
-		if mapped := mapBalanceErr(err); mapped == ErrDuplicateName {
-			return balance.Balance{}, mapped
+			next.Name, next.Currency, next.Description, scale,
+			nullInt(next.BalanceMinor), nullInt(next.DebtMinor), nullInt(next.LimitMinor), now, next.Version, id, cur.Version)
+		if err != nil {
+			if mapped := mapBalanceErr(err); mapped == ErrDuplicateName {
+				return mapped
+			}
+			return fmt.Errorf("update balance: %w", err)
 		}
-		return balance.Balance{}, fmt.Errorf("update balance: %w", err)
-	}
-	if n, err := res.RowsAffected(); err != nil || n != 1 {
-		return balance.Balance{}, ErrVersionConflict
-	}
-	if err := recordBalanceAdjustment(ctx, tx, userUID, cur, next, now, s.now()); err != nil {
+		if n, err := res.RowsAffected(); err != nil || n != 1 {
+			return ErrVersionConflict
+		}
+		if err := recordBalanceAdjustment(ctx, tx, userUID, cur, next, now, s.now()); err != nil {
+			return err
+		}
+		saved = next
+		return nil
+	})
+	if err != nil {
 		return balance.Balance{}, err
 	}
-	if err := tx.Commit(); err != nil {
-		return balance.Balance{}, fmt.Errorf("update balance: %w", err)
-	}
-	return next, nil
+	return saved, nil
 }
 
 // DeleteBalance is DeleteBalanceWith without a version check.

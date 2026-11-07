@@ -131,47 +131,47 @@ func (s *Store) GetUserByUID(ctx context.Context, uid string) (user.User, error)
 // are preserved. Changing the email clears email_verified_at. A user with a
 // password must keep a username (ErrUsernameRequired).
 func (s *Store) UpdateUser(ctx context.Context, id int64, fn func(cur user.User) (user.User, error)) (user.User, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return user.User{}, fmt.Errorf("update user: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	cur, err := scanUser(tx.QueryRowContext(ctx, `SELECT `+userCols+` FROM users WHERE id = ?`, id))
-	if errors.Is(err, sql.ErrNoRows) {
-		return user.User{}, ErrNotFound
-	}
-	if err != nil {
-		return user.User{}, err
-	}
-	next, err := fn(cur)
-	if err != nil {
-		return user.User{}, err
-	}
-	now := s.nowRFC3339()
-	// Keep everything the profile API does not own.
-	next.ID, next.UID, next.CreatedAt, next.UpdatedAt = cur.ID, cur.UID, cur.CreatedAt, &now
-	next.Status, next.PasswordHash, next.PasswordUpdated, next.LastLoginAt = cur.Status, cur.PasswordHash, cur.PasswordUpdated, cur.LastLoginAt
-	next.HasPassword = cur.PasswordHash != nil
-	next.EmailVerifiedAt = cur.EmailVerifiedAt
-	if !sameStr(next.Email, cur.Email) {
-		next.EmailVerifiedAt = nil // a new address is unverified
-	}
-	if next.HasPassword && (next.Username == nil || *next.Username == "") {
-		return user.User{}, ErrUsernameRequired
-	}
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE users SET username = ?, email = ?, email_verified_at = ?, display_name = ?, preferences = ?, updated_at = ?
-		 WHERE id = ?`,
-		nullStr(next.Username), nullStr(next.Email), nullStr(next.EmailVerifiedAt), next.DisplayName, next.Preferences.StoredJSON(), now, id); err != nil {
-		if m := mapUserErr(err); m != err {
-			return user.User{}, m
+	var saved user.User
+	err := s.inTx(ctx, "update user", func(tx *sql.Tx) error {
+		cur, err := scanUser(tx.QueryRowContext(ctx, `SELECT `+userCols+` FROM users WHERE id = ?`, id))
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
 		}
-		return user.User{}, fmt.Errorf("update user: %w", err)
+		if err != nil {
+			return err
+		}
+		next, err := fn(cur)
+		if err != nil {
+			return err
+		}
+		now := s.nowRFC3339()
+		// Keep everything the profile API does not own.
+		next.ID, next.UID, next.CreatedAt, next.UpdatedAt = cur.ID, cur.UID, cur.CreatedAt, &now
+		next.Status, next.PasswordHash, next.PasswordUpdated, next.LastLoginAt = cur.Status, cur.PasswordHash, cur.PasswordUpdated, cur.LastLoginAt
+		next.HasPassword = cur.PasswordHash != nil
+		next.EmailVerifiedAt = cur.EmailVerifiedAt
+		if !sameStr(next.Email, cur.Email) {
+			next.EmailVerifiedAt = nil // a new address is unverified
+		}
+		if next.HasPassword && (next.Username == nil || *next.Username == "") {
+			return ErrUsernameRequired
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE users SET username = ?, email = ?, email_verified_at = ?, display_name = ?, preferences = ?, updated_at = ?
+		 WHERE id = ?`,
+			nullStr(next.Username), nullStr(next.Email), nullStr(next.EmailVerifiedAt), next.DisplayName, next.Preferences.StoredJSON(), now, id); err != nil {
+			if m := mapUserErr(err); m != err {
+				return m
+			}
+			return fmt.Errorf("update user: %w", err)
+		}
+		saved = next
+		return nil
+	})
+	if err != nil {
+		return user.User{}, err
 	}
-	if err := tx.Commit(); err != nil {
-		return user.User{}, fmt.Errorf("update user: %w", err)
-	}
-	return next, nil
+	return saved, nil
 }
 
 func sameStr(a, b *string) bool {
@@ -185,36 +185,30 @@ func sameStr(a, b *string) bool {
 // data go with it (ON DELETE CASCADE). Deleting the last user who has a
 // password fails with ErrLastPasswordUser, checked in the same transaction.
 func (s *Store) DeleteUser(ctx context.Context, id int64) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("delete user: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	var uid string
-	var hasPassword bool
-	err = tx.QueryRowContext(ctx, `SELECT uid, password_hash IS NOT NULL FROM users WHERE id = ?`, id).Scan(&uid, &hasPassword)
-	if errors.Is(err, sql.ErrNoRows) {
-		return ErrNotFound
-	}
-	if err != nil {
-		return fmt.Errorf("delete user: %w", err)
-	}
-	if hasPassword {
-		n, err := otherPasswordUsers(ctx, tx, uid)
+	return s.inTx(ctx, "delete user", func(tx *sql.Tx) error {
+		var uid string
+		var hasPassword bool
+		err := tx.QueryRowContext(ctx, `SELECT uid, password_hash IS NOT NULL FROM users WHERE id = ?`, id).Scan(&uid, &hasPassword)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
 		if err != nil {
 			return fmt.Errorf("delete user: %w", err)
 		}
-		if n == 0 {
-			return ErrLastPasswordUser
+		if hasPassword {
+			n, err := otherPasswordUsers(ctx, tx, uid)
+			if err != nil {
+				return fmt.Errorf("delete user: %w", err)
+			}
+			if n == 0 {
+				return ErrLastPasswordUser
+			}
 		}
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id); err != nil {
-		return fmt.Errorf("delete user: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("delete user: %w", err)
-	}
-	return nil
+		if _, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id); err != nil {
+			return fmt.Errorf("delete user: %w", err)
+		}
+		return nil
+	})
 }
 
 // SetPasswordHash stores (or with nil, removes) the password hash for a user
@@ -226,40 +220,37 @@ func (s *Store) SetPasswordHash(ctx context.Context, uid string, hash *string) e
 	if hash != nil && *hash == "" {
 		return errors.New("set password hash: empty hash")
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("set password hash: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	if hash == nil {
-		n, err := otherPasswordUsers(ctx, tx, uid)
+	return s.inTx(ctx, "set password hash", func(tx *sql.Tx) error {
+		if hash == nil {
+			n, err := otherPasswordUsers(ctx, tx, uid)
+			if err != nil {
+				return fmt.Errorf("set password hash: %w", err)
+			}
+			if n == 0 {
+				var has bool
+				if err := tx.QueryRowContext(ctx, `SELECT password_hash IS NOT NULL FROM users WHERE uid = ?`, uid).Scan(&has); err == nil && has {
+					return ErrLastPasswordUser
+				}
+			}
+		}
+		now := s.nowRFC3339()
+		var stamp any = now
+		if hash == nil {
+			stamp = nil
+		}
+		res, err := tx.ExecContext(ctx,
+			`UPDATE users SET password_hash = ?, password_updated_at = ?, updated_at = ? WHERE uid = ?`,
+			nullStr(hash), stamp, now, uid)
 		if err != nil {
 			return fmt.Errorf("set password hash: %w", err)
 		}
-		if n == 0 {
-			var has bool
-			if err := tx.QueryRowContext(ctx, `SELECT password_hash IS NOT NULL FROM users WHERE uid = ?`, uid).Scan(&has); err == nil && has {
-				return ErrLastPasswordUser
-			}
+		if n, err := res.RowsAffected(); err != nil {
+			return fmt.Errorf("set password hash: %w", err)
+		} else if n == 0 {
+			return ErrNotFound
 		}
-	}
-	now := s.nowRFC3339()
-	var stamp any = now
-	if hash == nil {
-		stamp = nil
-	}
-	res, err := tx.ExecContext(ctx,
-		`UPDATE users SET password_hash = ?, password_updated_at = ?, updated_at = ? WHERE uid = ?`,
-		nullStr(hash), stamp, now, uid)
-	if err != nil {
-		return fmt.Errorf("set password hash: %w", err)
-	}
-	if n, err := res.RowsAffected(); err != nil {
-		return fmt.Errorf("set password hash: %w", err)
-	} else if n == 0 {
-		return ErrNotFound
-	}
-	return tx.Commit()
+		return nil
+	})
 }
 
 // ---- SSO identities ------------------------------------------------------

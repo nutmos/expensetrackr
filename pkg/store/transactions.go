@@ -27,17 +27,14 @@ func (s *Store) Create(ctx context.Context, userUID string, e *transaction.Trans
 	if err := checkFX(*e); err != nil {
 		return err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("insert transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }() // no-op after Commit
-	next, err := insertTx(ctx, tx, userUID, *e, s.nowRFC3339())
+	var next transaction.Transaction
+	err := s.inTx(ctx, "insert transaction", func(tx *sql.Tx) error {
+		var err error
+		next, err = insertTx(ctx, tx, userUID, *e, s.nowRFC3339())
+		return err
+	})
 	if err != nil {
 		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("insert transaction: %w", err)
 	}
 	*e = next
 	return nil
@@ -245,64 +242,64 @@ func (s *Store) GetByUID(ctx context.Context, userUID string, uid common_type.UI
 // a new balance that is missing or in another currency is a
 // *validate.ValidationError. Returns ErrNotFound if the row does not exist.
 func (s *Store) UpdateWith(ctx context.Context, userUID string, id int64, opts WriteOptions, fn func(cur transaction.Transaction) (transaction.Transaction, error)) (transaction.Transaction, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return transaction.Transaction{}, fmt.Errorf("update transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }() // no-op after Commit
+	var saved transaction.Transaction
+	err := s.inTx(ctx, "update transaction", func(tx *sql.Tx) error {
 
-	cur, err := scan(tx.QueryRowContext(ctx, `SELECT `+selectCols+` FROM transactions WHERE id = ? AND user_uid = ?`, id, userUID))
-	if errors.Is(err, sql.ErrNoRows) {
-		return transaction.Transaction{}, ErrNotFound
-	}
-	if err != nil {
-		return transaction.Transaction{}, err
-	}
-	if cur.Type == transaction.BalanceAdjustment {
-		return transaction.Transaction{}, ErrReadOnly
-	}
-	if opts.Version > 0 && cur.Version != opts.Version {
-		return transaction.Transaction{}, ErrVersionConflict
-	}
-	next, err := fn(cur)
-	if err != nil {
-		return transaction.Transaction{}, err
-	}
-	if next.Type == transaction.BalanceAdjustment {
-		return transaction.Transaction{}, ErrReadOnly
-	}
-	next.AdjustmentDirection = nil
-	if err := checkFX(next); err != nil {
-		return transaction.Transaction{}, err
-	}
-	scale, ok := money.MinorUnits(next.Currency)
-	if !ok {
-		return transaction.Transaction{}, fmt.Errorf("unknown currency %q", next.Currency)
-	}
-	now := s.nowRFC3339()
-	next.ID, next.UID, next.CreatedAt, next.UpdatedAt = cur.ID, cur.UID, cur.CreatedAt, &now
-	next.Version, next.AdjustsBalances = cur.Version+1, cur.AdjustsBalances
+		cur, err := scan(tx.QueryRowContext(ctx, `SELECT `+selectCols+` FROM transactions WHERE id = ? AND user_uid = ?`, id, userUID))
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if cur.Type == transaction.BalanceAdjustment {
+			return ErrReadOnly
+		}
+		if opts.Version > 0 && cur.Version != opts.Version {
+			return ErrVersionConflict
+		}
+		next, err := fn(cur)
+		if err != nil {
+			return err
+		}
+		if next.Type == transaction.BalanceAdjustment {
+			return ErrReadOnly
+		}
+		next.AdjustmentDirection = nil
+		if err := checkFX(next); err != nil {
+			return err
+		}
+		scale, ok := money.MinorUnits(next.Currency)
+		if !ok {
+			return fmt.Errorf("unknown currency %q", next.Currency)
+		}
+		now := s.nowRFC3339()
+		next.ID, next.UID, next.CreatedAt, next.UpdatedAt = cur.ID, cur.UID, cur.CreatedAt, &now
+		next.Version, next.AdjustsBalances = cur.Version+1, cur.AdjustsBalances
 
-	res, err := tx.ExecContext(ctx,
-		`UPDATE transactions SET type = ?, amount_minor = ?, amount_scale = ?, currency = ?, balance_uid = ?, account = ?, to_balance_uid = ?, to_account = ?, category_uid = ?,
+		res, err := tx.ExecContext(ctx,
+			`UPDATE transactions SET type = ?, amount_minor = ?, amount_scale = ?, currency = ?, balance_uid = ?, account = ?, to_balance_uid = ?, to_account = ?, category_uid = ?,
 		        spent_at = ?, spent_at_unix = ?, note = ?, updated_at = ?, version = ?,
 		        to_amount_minor = ?, to_amount_scale = ?, to_currency = ?, exchange_rate = ?, rate_source = ?, rate_date = ?, import_ref = ?
 		 WHERE id = ? AND version = ?`,
-		append(append([]any{string(next.Type), next.AmountMinor, scale, next.Currency, next.BalanceUID, next.Account, next.ToBalanceUID, next.ToAccount, next.CategoryUID,
-			next.SpentAt, next.SpentTime.Unix(), next.Note, now, next.Version}, fxArgs(next)...), next.ImportRef, id, cur.Version)...)
+			append(append([]any{string(next.Type), next.AmountMinor, scale, next.Currency, next.BalanceUID, next.Account, next.ToBalanceUID, next.ToAccount, next.CategoryUID,
+				next.SpentAt, next.SpentTime.Unix(), next.Note, now, next.Version}, fxArgs(next)...), next.ImportRef, id, cur.Version)...)
+		if err != nil {
+			return mapImportRefErr(ctx, tx, next, fmt.Errorf("update transaction: %w", err))
+		}
+		if n, err := res.RowsAffected(); err != nil || n != 1 {
+			return ErrVersionConflict
+		}
+		if err := applyBalanceEffects(ctx, tx, userUID, &cur, &next, now); err != nil {
+			return err
+		}
+		saved = next
+		return nil
+	})
 	if err != nil {
-		return transaction.Transaction{}, mapImportRefErr(ctx, tx, next, fmt.Errorf("update transaction: %w", err))
-	}
-	if n, err := res.RowsAffected(); err != nil || n != 1 {
-		return transaction.Transaction{}, ErrVersionConflict
-	}
-	if err := applyBalanceEffects(ctx, tx, userUID, &cur, &next, now); err != nil {
 		return transaction.Transaction{}, err
 	}
-	if err := tx.Commit(); err != nil {
-		return transaction.Transaction{}, fmt.Errorf("update transaction: %w", err)
-	}
-	return next, nil
+	return saved, nil
 }
 
 // DeleteWith removes one row from transactions owned by userUID and reverses
@@ -310,35 +307,29 @@ func (s *Store) UpdateWith(ctx context.Context, userUID string, id int64, opts W
 // (including when the id belongs to another user), or ErrVersionConflict when
 // opts.Version > 0 and differs from the stored one.
 func (s *Store) DeleteWith(ctx context.Context, userUID string, id int64, opts WriteOptions) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("delete transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
+	return s.inTx(ctx, "delete transaction", func(tx *sql.Tx) error {
 
-	cur, err := scan(tx.QueryRowContext(ctx, `SELECT `+selectCols+` FROM transactions WHERE id = ? AND user_uid = ?`, id, userUID))
-	if errors.Is(err, sql.ErrNoRows) {
-		return ErrNotFound
-	}
-	if err != nil {
-		return err
-	}
-	if cur.Type == transaction.BalanceAdjustment {
-		return ErrReadOnly
-	}
-	if opts.Version > 0 && cur.Version != opts.Version {
-		return ErrVersionConflict
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM transactions WHERE id = ?`, id); err != nil {
-		return fmt.Errorf("delete transaction: %w", err)
-	}
-	if err := applyBalanceEffects(ctx, tx, userUID, &cur, nil, s.nowRFC3339()); err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("delete transaction: %w", err)
-	}
-	return nil
+		cur, err := scan(tx.QueryRowContext(ctx, `SELECT `+selectCols+` FROM transactions WHERE id = ? AND user_uid = ?`, id, userUID))
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if cur.Type == transaction.BalanceAdjustment {
+			return ErrReadOnly
+		}
+		if opts.Version > 0 && cur.Version != opts.Version {
+			return ErrVersionConflict
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM transactions WHERE id = ?`, id); err != nil {
+			return fmt.Errorf("delete transaction: %w", err)
+		}
+		if err := applyBalanceEffects(ctx, tx, userUID, &cur, nil, s.nowRFC3339()); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 // checkFX enforces the cross-currency invariants: the to_* fields are set

@@ -106,96 +106,95 @@ type BulkOutcome struct {
 // must already be resolved on the items.
 func (s *Store) CreateBulk(ctx context.Context, userUID string, items []BulkItem, opts BulkOptions) (BulkOutcome, error) {
 	out := BulkOutcome{Results: make([]BulkResult, len(items))}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return out, fmt.Errorf("bulk insert: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }() // no-op after Commit
-
-	now := s.nowRFC3339()
-	failed := 0
-	var touched []string
-	seen := map[string]bool{}
-	touch := func(uid string) {
-		if !seen[uid] {
-			seen[uid] = true
-			touched = append(touched, uid)
-		}
-	}
-	for i, it := range items {
-		r := &out.Results[i]
-		if it.Err != nil {
-			r.Status, r.Err = BulkFailed, it.Err
-			failed++
-			continue
-		}
-		e := it.Tx
-		if e.Type == transaction.BalanceAdjustment {
-			r.Status, r.Err = BulkFailed, ErrReadOnly
-			failed++
-			continue
-		}
-		if err := checkFX(e); err != nil {
-			r.Status, r.Err = BulkFailed, err
-			failed++
-			continue
-		}
-		if e.ImportRef != nil {
-			uid, err := existingImportRef(ctx, tx, string(e.BalanceUID), *e.ImportRef)
-			if err != nil {
-				return out, err
+	rolledBack := false
+	err := s.inTx(ctx, "bulk insert", func(tx *sql.Tx) error {
+		now := s.nowRFC3339()
+		failed := 0
+		var touched []string
+		seen := map[string]bool{}
+		touch := func(uid string) {
+			if !seen[uid] {
+				seen[uid] = true
+				touched = append(touched, uid)
 			}
-			if uid != "" {
-				r.Status, r.ExistingUID = BulkSkipped, uid
+		}
+		for i, it := range items {
+			r := &out.Results[i]
+			if it.Err != nil {
+				r.Status, r.Err = BulkFailed, it.Err
+				failed++
 				continue
 			}
-		}
-		if _, err := tx.ExecContext(ctx, `SAVEPOINT bulk_item`); err != nil {
-			return out, fmt.Errorf("bulk insert: %w", err)
-		}
-		next, err := insertTx(ctx, tx, userUID, e, now)
-		if err != nil {
-			for _, q := range []string{`ROLLBACK TO bulk_item`, `RELEASE bulk_item`} {
-				if _, rerr := tx.ExecContext(ctx, q); rerr != nil {
-					return out, fmt.Errorf("bulk insert: %w", rerr)
+			e := it.Tx
+			if e.Type == transaction.BalanceAdjustment {
+				r.Status, r.Err = BulkFailed, ErrReadOnly
+				failed++
+				continue
+			}
+			if err := checkFX(e); err != nil {
+				r.Status, r.Err = BulkFailed, err
+				failed++
+				continue
+			}
+			if e.ImportRef != nil {
+				uid, err := existingImportRef(ctx, tx, string(e.BalanceUID), *e.ImportRef)
+				if err != nil {
+					return err
+				}
+				if uid != "" {
+					r.Status, r.ExistingUID = BulkSkipped, uid
+					continue
 				}
 			}
-			var dup *DuplicateImportRefError
-			if errors.As(err, &dup) {
-				r.Status, r.ExistingUID = BulkSkipped, dup.ExistingUID
+			if _, err := tx.ExecContext(ctx, `SAVEPOINT bulk_item`); err != nil {
+				return fmt.Errorf("bulk insert: %w", err)
+			}
+			next, err := insertTx(ctx, tx, userUID, e, now)
+			if err != nil {
+				for _, q := range []string{`ROLLBACK TO bulk_item`, `RELEASE bulk_item`} {
+					if _, rerr := tx.ExecContext(ctx, q); rerr != nil {
+						return fmt.Errorf("bulk insert: %w", rerr)
+					}
+				}
+				var dup *DuplicateImportRefError
+				if errors.As(err, &dup) {
+					r.Status, r.ExistingUID = BulkSkipped, dup.ExistingUID
+					continue
+				}
+				r.Status, r.Err = BulkFailed, err
+				failed++
 				continue
 			}
-			r.Status, r.Err = BulkFailed, err
-			failed++
-			continue
+			if _, err := tx.ExecContext(ctx, `RELEASE bulk_item`); err != nil {
+				return fmt.Errorf("bulk insert: %w", err)
+			}
+			r.Status, r.Tx = BulkCreated, next
+			if opts.DryRun {
+				r.Status = BulkValid
+			}
+			for _, ef := range next.Effects() {
+				touch(string(ef.BalanceUID))
+			}
 		}
-		if _, err := tx.ExecContext(ctx, `RELEASE bulk_item`); err != nil {
-			return out, fmt.Errorf("bulk insert: %w", err)
+		for _, uid := range touched {
+			b, err := balanceByUIDTx(ctx, tx, userUID, uid)
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			out.Balances = append(out.Balances, b)
 		}
-		r.Status, r.Tx = BulkCreated, next
-		if opts.DryRun {
-			r.Status = BulkValid
+		if opts.DryRun || (opts.Atomic && failed > 0) {
+			rolledBack = true
+			return errRollback
 		}
-		for _, ef := range next.Effects() {
-			touch(string(ef.BalanceUID))
-		}
+		return nil
+	})
+	if err != nil {
+		return out, err
 	}
-	for _, uid := range touched {
-		b, err := balanceByUIDTx(ctx, tx, userUID, uid)
-		if errors.Is(err, ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			return out, err
-		}
-		out.Balances = append(out.Balances, b)
-	}
-	if opts.DryRun || (opts.Atomic && failed > 0) {
-		return out, nil // deferred rollback
-	}
-	if err := tx.Commit(); err != nil {
-		return out, fmt.Errorf("bulk insert: %w", err)
-	}
-	out.Committed = true
+	out.Committed = !rolledBack
 	return out, nil
 }
