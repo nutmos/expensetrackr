@@ -21,7 +21,22 @@ var (
 	ErrDuplicateEmail = errors.New("a user with this email already exists")
 	// ErrDuplicateIdentity: (provider, provider_subject) is already linked.
 	ErrDuplicateIdentity = errors.New("this provider account is already linked to a user")
+	// ErrUsernameRequired: an update would remove the username of a user
+	// who has a password. Login looks users up by username, so the account
+	// could never sign in again (issue #77).
+	ErrUsernameRequired = errors.New("a user with a password must keep a username (it is their login name)")
+	// ErrLastPasswordUser: the change would leave no user with a password.
+	// That would lock everyone out and reopen first-run registration to
+	// anonymous visitors (issue #77).
+	ErrLastPasswordUser = errors.New("this is the only account that can log in; it cannot be deleted or lose its password")
 )
+
+// otherPasswordUsers counts users other than uid that have a password.
+func otherPasswordUsers(ctx context.Context, tx *sql.Tx, uid string) (int, error) {
+	var n int
+	err := tx.QueryRowContext(ctx, `SELECT count(*) FROM users WHERE password_hash IS NOT NULL AND uid <> ?`, uid).Scan(&n)
+	return n, err
+}
 
 const userCols = `id, uid, username, email, email_verified_at, display_name, preferences,
 	password_hash, password_updated_at, status, last_login_at, created_at, updated_at`
@@ -113,7 +128,8 @@ func (s *Store) GetUserByUID(ctx context.Context, uid string) (user.User, error)
 
 // UpdateUser loads user id, applies fn (profile fields only) and stores the
 // result in one database transaction. uid, status, password and login fields
-// are preserved. Changing the email clears email_verified_at.
+// are preserved. Changing the email clears email_verified_at. A user with a
+// password must keep a username (ErrUsernameRequired).
 func (s *Store) UpdateUser(ctx context.Context, id int64, fn func(cur user.User) (user.User, error)) (user.User, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -140,6 +156,9 @@ func (s *Store) UpdateUser(ctx context.Context, id int64, fn func(cur user.User)
 	if !sameStr(next.Email, cur.Email) {
 		next.EmailVerifiedAt = nil // a new address is unverified
 	}
+	if next.HasPassword && (next.Username == nil || *next.Username == "") {
+		return user.User{}, ErrUsernameRequired
+	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE users SET username = ?, email = ?, email_verified_at = ?, display_name = ?, preferences = ?, updated_at = ?
 		 WHERE id = ?`,
@@ -162,14 +181,38 @@ func sameStr(a, b *string) bool {
 	return *a == *b
 }
 
-// DeleteUser removes a user; linked identities go with it (ON DELETE CASCADE).
+// DeleteUser removes a user; linked identities, sessions, tokens and owned
+// data go with it (ON DELETE CASCADE). Deleting the last user who has a
+// password fails with ErrLastPasswordUser, checked in the same transaction.
 func (s *Store) DeleteUser(ctx context.Context, id int64) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("delete user: %w", err)
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	defer func() { _ = tx.Rollback() }()
+	var uid string
+	var hasPassword bool
+	err = tx.QueryRowContext(ctx, `SELECT uid, password_hash IS NOT NULL FROM users WHERE id = ?`, id).Scan(&uid, &hasPassword)
+	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("delete user: %w", err)
+	}
+	if hasPassword {
+		n, err := otherPasswordUsers(ctx, tx, uid)
+		if err != nil {
+			return fmt.Errorf("delete user: %w", err)
+		}
+		if n == 0 {
+			return ErrLastPasswordUser
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("delete user: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("delete user: %w", err)
 	}
 	return nil
 }
@@ -177,26 +220,46 @@ func (s *Store) DeleteUser(ctx context.Context, id int64) error {
 // SetPasswordHash stores (or with nil, removes) the password hash for a user
 // and stamps password_updated_at. Not exposed over HTTP; the auth endpoints
 // use RegisterUser / ChangePassword with a bcrypt hash (pkg/auth). The hash
-// is never returned by the API.
+// is never returned by the API. Removing the password of the last user who
+// has one fails with ErrLastPasswordUser.
 func (s *Store) SetPasswordHash(ctx context.Context, uid string, hash *string) error {
 	if hash != nil && *hash == "" {
 		return errors.New("set password hash: empty hash")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("set password hash: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if hash == nil {
+		n, err := otherPasswordUsers(ctx, tx, uid)
+		if err != nil {
+			return fmt.Errorf("set password hash: %w", err)
+		}
+		if n == 0 {
+			var has bool
+			if err := tx.QueryRowContext(ctx, `SELECT password_hash IS NOT NULL FROM users WHERE uid = ?`, uid).Scan(&has); err == nil && has {
+				return ErrLastPasswordUser
+			}
+		}
 	}
 	now := s.nowRFC3339()
 	var stamp any = now
 	if hash == nil {
 		stamp = nil
 	}
-	res, err := s.db.ExecContext(ctx,
+	res, err := tx.ExecContext(ctx,
 		`UPDATE users SET password_hash = ?, password_updated_at = ?, updated_at = ? WHERE uid = ?`,
 		nullStr(hash), stamp, now, uid)
 	if err != nil {
 		return fmt.Errorf("set password hash: %w", err)
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	if n, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("set password hash: %w", err)
+	} else if n == 0 {
 		return ErrNotFound
 	}
-	return nil
+	return tx.Commit()
 }
 
 // ---- SSO identities ------------------------------------------------------

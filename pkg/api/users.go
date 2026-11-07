@@ -28,8 +28,8 @@ func (s *Server) registerUserRoutes(api *gin.RouterGroup) {
 	api.PUT("/users/:uid/preferences", s.replacePreferences)
 }
 
-// writeUserError maps user errors: 404, 409 duplicate username/email, then
-// the shared 422/400/500 handling.
+// writeUserError maps user errors: 404, 409 duplicate username/email or last
+// login account, 422 username required, then the shared 422/400/500 handling.
 func writeUserError(c *gin.Context, err error) {
 	if errors.Is(err, store.ErrNotFound) {
 		c.JSON(http.StatusNotFound, errorBody{Error: "user not found"})
@@ -39,6 +39,11 @@ func writeUserError(c *gin.Context, err error) {
 	} else if errors.Is(err, store.ErrDuplicateEmail) {
 		c.JSON(http.StatusConflict, errorBody{Error: err.Error(),
 			Fields: map[string]string{"email": "is already used by another user"}})
+	} else if errors.Is(err, store.ErrUsernameRequired) {
+		c.JSON(http.StatusUnprocessableEntity, errorBody{Error: "validation failed", Code: "username_required",
+			Fields: map[string]string{"username": "cannot be removed: this user logs in with it"}})
+	} else if errors.Is(err, store.ErrLastPasswordUser) {
+		c.JSON(http.StatusConflict, errorBody{Error: err.Error(), Code: "last_login_user"})
 	} else {
 		writeInputError(c, err)
 	}
@@ -144,7 +149,8 @@ func (s *Server) patchUser(c *gin.Context) {
 	c.JSON(http.StatusOK, updated)
 }
 
-// deleteUser removes the profile and its linked identities.
+// deleteUser removes the profile and its linked identities. The last user
+// who can log in cannot be deleted (409 last_login_user).
 func (s *Server) deleteUser(c *gin.Context) {
 	cur, ok := s.resolveUser(c)
 	if !ok {

@@ -711,7 +711,7 @@ paths:
       tags: [users]
       operationId: replaceUser
       summary: Replace a user profile
-      description: Full replace of the profile fields. Omitted `username`/`email` are removed and omitted `preferences` resets every preference to its default. Read-only fields are ignored. Not versioned.
+      description: Full replace of the profile fields. Omitted `username`/`email` are removed and omitted `preferences` resets every preference to its default. Read-only fields are ignored. Not versioned. A user with a password must keep a username (their login name); removing it is a 422 with code `username_required`.
       requestBody:
         required: true
         content:
@@ -766,12 +766,18 @@ paths:
       tags: [users]
       operationId: deleteUser
       summary: Delete a user profile
-      description: Also deletes the user's linked identities.
+      description: Also deletes the user's linked identities, sessions, API tokens and data. The last user who has a password cannot be deleted (409 `last_login_user`), so first-run registration never reopens.
       responses:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '204': { description: Deleted. }
         '400': { $ref: '#/components/responses/BadUid' }
         '404': { $ref: '#/components/responses/UserNotFound' }
+        '409':
+          description: This is the only user who can log in.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: "this is the only account that can log in; it cannot be deleted or lose its password", code: last_login_user }
         '500': { $ref: '#/components/responses/InternalError' }
 
   /api/users/{uid}/identities:
