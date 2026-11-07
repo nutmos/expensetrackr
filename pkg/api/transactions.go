@@ -48,13 +48,18 @@ func (s *Server) registerTransactionRoutes(api *gin.RouterGroup) {
 	api.DELETE("/transactions/:uid", s.deleteTransaction)
 }
 
-// attachPaymentBalance loads the balance for e.BalanceUID, checks its type is
-// allowed for e.Type, and sets e.Account to the balance's current name. For a
-// transfer it also resolves to_balance_uid and sets ToAccount. Returns a *validate.ValidationError on balance_uid
-// when the balance is missing or not payable.
+// attachPaymentBalance resolves everything a validated transaction refers to,
+// among the logged-in user's records:
 //
-// For a transfer it then fills the cross-currency fields (convertTransfer),
-// which may fetch an exchange rate; prev is the stored transaction on PUT.
+//   - balance_uid: must exist and be allowed for e.Type; sets e.Account;
+//   - category_uid (if any): must exist and match the type (attachCategory);
+//   - to_balance_uid (transfer, asset purchase, return on investment): must
+//     exist and be allowed as destination; sets e.ToAccount;
+//   - for a transfer, the cross-currency fields (convertTransfer), which may
+//     fetch an exchange rate. prev is the stored transaction on PUT.
+//
+// A missing or unsuitable reference is a *validate.ValidationError on that
+// field.
 func (s *Server) attachPaymentBalance(c *gin.Context, e *transaction.Transaction, in transaction.CreateInput, prev *transaction.Transaction) error {
 	b, err := s.Store.GetBalanceByUID(c.Request.Context(), sessionUserUID(c), e.BalanceUID)
 	if errors.Is(err, store.ErrNotFound) {
@@ -186,6 +191,23 @@ func (s *Server) replaceTransaction(c *gin.Context) {
 }
 
 func (s *Server) listTransactions(c *gin.Context) {
+	f, fields := parseListFilter(c)
+	if len(fields) > 0 {
+		c.JSON(http.StatusBadRequest, errorBody{Error: "invalid query parameters", Fields: fields})
+		return
+	}
+	items, err := s.Store.List(c.Request.Context(), sessionUserUID(c), f)
+	if err != nil {
+		internalError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"transactions": items, "count": len(items)})
+}
+
+// parseListFilter reads the GET /api/transactions query (from, to, type,
+// category_uid, limit) into a store.ListFilter. Invalid parameters are
+// returned as field messages (the handler answers 400 with them).
+func parseListFilter(c *gin.Context) (store.ListFilter, map[string]string) {
 	fields := map[string]string{}
 	var f store.ListFilter
 
@@ -235,17 +257,7 @@ func (s *Server) listTransactions(c *gin.Context) {
 			f.Limit = n
 		}
 	}
-	if len(fields) > 0 {
-		c.JSON(http.StatusBadRequest, errorBody{Error: "invalid query parameters", Fields: fields})
-		return
-	}
-
-	items, err := s.Store.List(c.Request.Context(), sessionUserUID(c), f)
-	if err != nil {
-		internalError(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"transactions": items, "count": len(items)})
+	return f, fields
 }
 
 func (s *Server) getTransaction(c *gin.Context) {
