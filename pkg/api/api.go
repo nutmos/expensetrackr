@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -17,7 +16,6 @@ import (
 	"github.com/nutmos/expensetrackr/pkg/fx"
 	"github.com/nutmos/expensetrackr/pkg/money"
 	"github.com/nutmos/expensetrackr/pkg/store"
-	"github.com/nutmos/expensetrackr/pkg/validate"
 
 	"github.com/gin-gonic/gin"
 )
@@ -124,39 +122,6 @@ func decodeBodyLimit(c *gin.Context, dst any, disallowUnknown bool, limit int64)
 		return false
 	}
 	return true
-}
-
-// writeInputError maps validation/request errors to 422/400, anything else to 500.
-func writeInputError(c *gin.Context, err error) {
-	var ve *validate.ValidationError
-	var re *validate.RequestError
-	var dup *store.DuplicateImportRefError
-	if errors.As(err, &ve) {
-		c.JSON(http.StatusUnprocessableEntity, errorBody{Error: "validation failed", Fields: ve.Fields})
-	} else if errors.As(err, &re) {
-		c.JSON(http.StatusBadRequest, errorBody{Error: re.Msg})
-	} else if errors.Is(err, store.ErrNotFound) {
-		c.JSON(http.StatusNotFound, errorBody{Error: "transaction not found"})
-	} else if errors.Is(err, fx.ErrUnsupported) {
-		c.JSON(http.StatusUnprocessableEntity, errorBody{Error: fxMessage(err), Code: "exchange_rate_unsupported",
-			Fields: map[string]string{"to_amount": "no exchange rate is available for this currency pair; provide to_amount manually"}})
-	} else if errors.Is(err, fx.ErrUnavailable) {
-		c.JSON(http.StatusServiceUnavailable, errorBody{Error: fxMessage(err), Code: "exchange_rate_unavailable"})
-	} else if errors.Is(err, fx.ErrBadUpstream) {
-		c.JSON(http.StatusBadGateway, errorBody{Error: fxMessage(err), Code: "exchange_rate_unavailable"})
-	} else if errors.Is(err, store.ErrReadOnly) {
-		c.JSON(http.StatusConflict, errorBody{Error: err.Error(), Code: "balance_adjustment_readonly"})
-	} else if errors.As(err, &dup) {
-		c.JSON(http.StatusConflict, errorBody{Error: dup.Error(), Code: "duplicate_import_ref",
-			Fields: map[string]string{"import_ref": "is already used on this balance by transaction " + dup.ExistingUID}})
-	} else {
-		internalError(c, err)
-	}
-}
-
-func internalError(c *gin.Context, err error) {
-	log.Printf("internal error: %v", err)
-	c.JSON(http.StatusInternalServerError, errorBody{Error: "internal server error"})
 }
 
 func describeJSONError(err error) string {

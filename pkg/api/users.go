@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/nutmos/expensetrackr/pkg/store"
 	"github.com/nutmos/expensetrackr/pkg/user"
 	"github.com/nutmos/expensetrackr/pkg/validate"
 
@@ -26,27 +25,6 @@ func (s *Server) registerUserRoutes(api *gin.RouterGroup) {
 	api.GET("/users/:uid/identities", s.listUserIdentities)
 	api.GET("/users/:uid/preferences", s.getPreferences)
 	api.PUT("/users/:uid/preferences", s.replacePreferences)
-}
-
-// writeUserError maps user errors: 404, 409 duplicate username/email or last
-// login account, 422 username required, then the shared 422/400/500 handling.
-func writeUserError(c *gin.Context, err error) {
-	if errors.Is(err, store.ErrNotFound) {
-		c.JSON(http.StatusNotFound, errorBody{Error: "user not found"})
-	} else if errors.Is(err, store.ErrDuplicateUsername) {
-		c.JSON(http.StatusConflict, errorBody{Error: err.Error(),
-			Fields: map[string]string{"username": "is already taken (usernames are case-insensitive)"}})
-	} else if errors.Is(err, store.ErrDuplicateEmail) {
-		c.JSON(http.StatusConflict, errorBody{Error: err.Error(),
-			Fields: map[string]string{"email": "is already used by another user"}})
-	} else if errors.Is(err, store.ErrUsernameRequired) {
-		c.JSON(http.StatusUnprocessableEntity, errorBody{Error: "validation failed", Code: "username_required",
-			Fields: map[string]string{"username": "cannot be removed: this user logs in with it"}})
-	} else if errors.Is(err, store.ErrLastPasswordUser) {
-		c.JSON(http.StatusConflict, errorBody{Error: err.Error(), Code: "last_login_user"})
-	} else {
-		writeInputError(c, err)
-	}
 }
 
 // resolveUser looks up /api/users/:uid (400 malformed, 404 unknown).

@@ -20,28 +20,6 @@ func (s *Server) registerBalanceRoutes(api *gin.RouterGroup) {
 	api.DELETE("/balances/:uid", s.deleteBalance)
 }
 
-// writeBalanceError maps balance errors: 404 not found, 409 duplicate name or
-// currency change while in use, then the shared 422/400/500 handling.
-// (Version conflicts are answered by balanceConflict, which needs the store.)
-func writeBalanceError(c *gin.Context, err error) {
-	if errors.Is(err, store.ErrNotFound) {
-		c.JSON(http.StatusNotFound, errorBody{Error: "balance not found"})
-	} else if errors.Is(err, store.ErrBalanceInUse) {
-		c.JSON(http.StatusConflict, errorBody{
-			Error:  err.Error(),
-			Code:   "balance_in_use",
-			Fields: map[string]string{"currency": "cannot change while transactions reference this balance (no exchange-rate conversion)"},
-		})
-	} else if errors.Is(err, store.ErrDuplicateName) {
-		c.JSON(http.StatusConflict, errorBody{
-			Error:  "a balance with this name already exists",
-			Fields: map[string]string{"name": "is already used by another of your balances (names are case-insensitive)"},
-		})
-	} else {
-		writeInputError(c, err)
-	}
-}
-
 // resolveBalance looks up /api/balances/:uid. Only the UUID uid is accepted:
 // a malformed value is 400, an unknown uid is 404.
 func (s *Server) resolveBalance(c *gin.Context) (balance.Balance, bool) {

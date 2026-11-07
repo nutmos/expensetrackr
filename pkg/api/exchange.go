@@ -123,7 +123,7 @@ func (s *Server) getExchangeRate(c *gin.Context) {
 	}
 	q, err := s.rate(c, from, to, date, time.Local)
 	if err != nil {
-		writeInputError(c, err)
+		writeError(c, err, "")
 		return
 	}
 	c.JSON(http.StatusOK, q)

@@ -21,9 +21,9 @@ import (
 )
 
 // ErrNotFound is returned when the requested row does not exist (or belongs
-// to another user). It is shared by every table; its message still says
-// "transaction" (see issue #65).
-var ErrNotFound = errors.New("transaction not found")
+// to another user). It is shared by every table, so its message names none;
+// the API answers "<resource> not found" for the route (issue #65).
+var ErrNotFound = errors.New("not found")
 
 // ErrVersionConflict is returned by an update or delete whose expected
 // version (WriteOptions.Version) no longer matches the stored row: someone

@@ -1,12 +1,10 @@
 package api
 
 import (
-	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/nutmos/expensetrackr/pkg/category"
-	"github.com/nutmos/expensetrackr/pkg/store"
 
 	"github.com/gin-gonic/gin"
 )
@@ -25,26 +23,6 @@ func (s *Server) registerCategoryRoutes(api *gin.RouterGroup) {
 func sessionUserUID(c *gin.Context) string {
 	u, _ := currentUser(c)
 	return u.UID
-}
-
-// writeCategoryError maps category errors: 404 not found, 409 duplicate name
-// or in use or limit reached, then the shared 422/400/500 handling.
-func writeCategoryError(c *gin.Context, err error) {
-	if errors.Is(err, store.ErrNotFound) {
-		c.JSON(http.StatusNotFound, errorBody{Error: "category not found"})
-	} else if errors.Is(err, store.ErrDuplicateCategory) {
-		c.JSON(http.StatusConflict, errorBody{
-			Error:  "a category with this name and type already exists",
-			Fields: map[string]string{"name": "is already used by another category of this type (names are case-insensitive)"},
-		})
-	} else if errors.Is(err, store.ErrCategoryLimit) {
-		c.JSON(http.StatusConflict, errorBody{Error: err.Error()})
-	} else if errors.Is(err, store.ErrCategoryInUse) {
-		c.JSON(http.StatusConflict, errorBody{Error: err.Error() +
-			"; reassign or clear category_uid on those transactions first"})
-	} else {
-		writeInputError(c, err)
-	}
 }
 
 // resolveCategory looks up /api/categories/:uid (400 malformed, 404 unknown).
