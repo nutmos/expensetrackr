@@ -50,16 +50,22 @@ yet.
 
 ## API
 
+Every user sees and manages **only their own account** (issue #76): every
+`/api/users/:uid…` route answers **404** for any other uid, exactly like an
+unknown one, so other accounts can't be found out. Changing (`PUT`, `PATCH`)
+or deleting the account needs a browser session; an API token gets 403
+`session_required` there but may read the account and change preferences.
+
 | Method | Path | Notes |
 |--------|------|-------|
-| POST   | `/api/users` | 201 + user, `Location: /api/users/<uid>`. Body: `display_name` (required), `username`, `email`, `preferences` (all optional) |
-| GET    | `/api/users` | 200 `{"users":[...],"count":n}`, oldest first |
+| POST   | `/api/users` | **Disabled**: 403 `use_register`. Accounts are created with `POST /api/auth/register` |
+| GET    | `/api/users` | 200 `{"users":[...],"count":1}`: only your own account |
 | GET    | `/api/users/:uid` | 200 + user |
 | PUT    | `/api/users/:uid` | Full replace of the profile fields. Omitted `username`/`email` are removed; omitted `preferences` resets every preference to its default. A user with a password must keep a username: 422 `username_required` |
 | PATCH  | `/api/users/:uid` | Only the fields present change. **`preferences` replaces the whole object** (no deep merge); `null` resets every preference to its default. `username`/`email`: `null` or `""` removes (not the username of a user with a password: 422 `username_required`) |
 | DELETE | `/api/users/:uid` | 204; linked identities, sessions, tokens and data are deleted too. 409 `last_login_user` for the last user with a password |
 | GET    | `/api/users/:uid/identities` | 200 `{"identities":[...],"count":n}`. Read-only; empty until SSO exists |
-| GET    | `/api/users/:uid/preferences` | 200 + preferences (defaults filled in). Own uid only (403 otherwise) |
+| GET    | `/api/users/:uid/preferences` | 200 + preferences (defaults filled in). Own uid only (404 otherwise) |
 | PUT    | `/api/users/:uid/preferences` | Replace the whole preferences object; omitted keys go back to their defaults. Own uid only; any invalid preference is a **400** with `fields` |
 
 Response shape:
@@ -104,7 +110,7 @@ Each user has their own preferences, stored as **one JSON object** in
   versions keep working. Adding a key is a new struct field; no migration.
 - **Writing is strict:** unknown keys and invalid values are rejected.
 - **Scope:** `GET`/`PUT /api/users/:uid/preferences` only work for the
-  logged-in user's own uid. The user resource (`GET /api/users/:uid`,
+  logged-in user's own uid (another uid is 404). The user resource (`GET /api/users/:uid`,
   `/api/auth/me`) includes `preferences` too.
 - **Web UI:** the **Settings** tab (`/settings`) edits the base currency
   with the searchable currency dropdown. The **Add balance** form preselects

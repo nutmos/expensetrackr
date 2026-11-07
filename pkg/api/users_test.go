@@ -34,74 +34,74 @@ func noSecrets(t *testing.T, label, body string) {
 	}
 }
 
-func TestUsersCRUD(t *testing.T) {
-	h, st := newTestServerWithStore(t)
+// otherUser creates, directly in the store, a second account with a
+// password ("other", other@example.com) that the logged-in tester must not
+// be able to see or change through the API.
+func otherUser(t *testing.T, st *store.Store) user.User {
+	t.Helper()
+	name, email := "other", "other@example.com"
+	u := user.User{Username: &name, DisplayName: "Other"}
+	if err := st.RegisterUser(context.Background(), &u, "$2a$04$unused", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpdateUser(context.Background(), u.ID, func(cur user.User) (user.User, error) {
+		cur.Email = &email
+		return cur, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return u
+}
 
-	rec, u := do(t, h, "POST", "/api/users", `{"display_name":" Nat ","username":"Nat","email":"Nat@Example.com","preferences":{"base_currency":"thb"}}`)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("create: %d %s", rec.Code, rec.Body)
-	}
-	uid, _ := u["uid"].(string)
-	if !isUUIDv4(uid) || rec.Header().Get("Location") != "/api/users/"+uid ||
-		u["display_name"] != "Nat" || u["username"] != "nat" || u["email"] != "nat@example.com" ||
-		u["status"] != "active" || u["has_password"] != false || u["email_verified_at"] != nil ||
-		u["last_login_at"] != nil || u["password_updated_at"] != nil || u["updated_at"] != nil {
-		t.Errorf("create body: %v", u)
-	}
-	if p, ok := u["preferences"].(map[string]any); !ok || len(p) != 1 || p["base_currency"] != "THB" {
-		t.Errorf("preferences: %#v", u["preferences"])
-	}
-	noSecrets(t, "create", rec.Body.String())
+// TestOwnAccountAPI: the logged-in user reads and edits their own profile
+// through /api/users/:uid (issue #76 limits these routes to it).
+func TestOwnAccountAPI(t *testing.T) {
+	h, st := newTestServerWithStore(t) // logged in as "tester"
+	_, me := do(t, h, "GET", "/api/auth/me", "")
+	uid := me["uid"].(string)
+	path := "/api/users/" + uid
+	other := otherUser(t, st)
 
-	// Minimal profile: only display_name; preferences take their defaults.
-	rec, m := do(t, h, "POST", "/api/users", `{"display_name":"Guest"}`)
-	if rec.Code != 201 || m["username"] != nil || m["email"] != nil || m["preferences"].(map[string]any)["base_currency"] != user.DefaultBaseCurrency {
-		t.Errorf("minimal: %d %v", rec.Code, m)
+	rec, got := do(t, h, "GET", path, "")
+	if rec.Code != 200 || got["uid"] != uid || got["username"] != "tester" || got["status"] != "active" ||
+		got["has_password"] != true || got["password_updated_at"] == nil || got["preferences"].(map[string]any)["base_currency"] != user.DefaultBaseCurrency {
+		t.Errorf("get own: %d %v", rec.Code, got)
 	}
-	guest := m["uid"].(string)
+	noSecrets(t, "get", rec.Body.String())
 
-	// Validation / request errors.
+	// The list holds only the caller.
+	rec, list := do(t, h, "GET", "/api/users", "")
+	if items, _ := list["users"].([]any); rec.Code != 200 || list["count"].(float64) != 1 || len(items) != 1 || items[0].(map[string]any)["uid"] != uid {
+		t.Errorf("list: %d %v", rec.Code, list)
+	}
+	noSecrets(t, "list", rec.Body.String())
+
+	// Validation / request errors (PUT validates like the old create did).
 	for _, c := range []struct {
 		body   string
 		status int
 		field  string
 	}{
 		{`{}`, 422, "display_name"},
-		{`{"display_name":"x","preferences":[1,2]}`, 422, "preferences"},
-		{`{"display_name":"x","preferences":"dark"}`, 422, "preferences"},
-		{`{"display_name":"x","preferences":42}`, 422, "preferences"},
-		{`{"display_name":"x","preferences":{"theme":"dark"}}`, 422, "preferences"},
-		{`{"display_name":"x","preferences":{"base_currency":"XYZ"}}`, 422, "preferences.base_currency"},
-		{`{"display_name":"x","email":"not-an-email"}`, 422, "email"},
+		{`{"display_name":"x","username":"tester","preferences":[1,2]}`, 422, "preferences"},
+		{`{"display_name":"x","username":"tester","preferences":"dark"}`, 422, "preferences"},
+		{`{"display_name":"x","username":"tester","preferences":42}`, 422, "preferences"},
+		{`{"display_name":"x","username":"tester","preferences":{"theme":"dark"}}`, 422, "preferences"},
+		{`{"display_name":"x","username":"tester","preferences":{"base_currency":"XYZ"}}`, 422, "preferences.base_currency"},
+		{`{"display_name":"x","username":"tester","email":"not-an-email"}`, 422, "email"},
 		{`{"display_name":"x","username":"a b"}`, 422, "username"},
-		{`{"display_name":"x","username":"NAT"}`, 409, "username"},
-		{`{"display_name":"x","email":"NAT@example.COM"}`, 409, "email"},
+		{`{"display_name":"x","username":"OTHER"}`, 409, "username"},
+		{`{"display_name":"x","username":"tester","email":"OTHER@example.COM"}`, 409, "email"},
 		{`{"display_name":"x","password":"hunter2"}`, 400, ""},
 		{`{"display_name":"x","password_hash":"$argon2id$x"}`, 400, ""},
 		{`{"display_name":"x","preferences":{"a":}}`, 400, ""}, // malformed JSON body
 		{`[]`, 400, ""},
 	} {
-		rec, body := do(t, h, "POST", "/api/users", c.body)
+		rec, body := do(t, h, "PUT", path, c.body)
 		if rec.Code != c.status || (c.field != "" && fieldsOf(body)[c.field] == nil) {
-			t.Errorf("POST %s: %d %v, want %d on %q", c.body, rec.Code, body, c.status, c.field)
+			t.Errorf("PUT %s: %d %v, want %d on %q", c.body, rec.Code, body, c.status, c.field)
 		}
 	}
-
-	path := "/api/users/" + uid
-	// A password set by the (future) auth layer is never exposed.
-	if err := st.SetPasswordHash(context.Background(), uid, strPtr("$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA")); err != nil {
-		t.Fatal(err)
-	}
-	rec, got := do(t, h, "GET", path, "")
-	if rec.Code != 200 || got["has_password"] != true || got["password_updated_at"] == nil {
-		t.Errorf("get after password: %d %v", rec.Code, got)
-	}
-	noSecrets(t, "get", rec.Body.String())
-	rec, list := do(t, h, "GET", "/api/users", "")
-	if rec.Code != 200 || list["count"].(float64) != 3 { // + the logged-in "tester"
-		t.Errorf("list: %d %v", rec.Code, list)
-	}
-	noSecrets(t, "list", rec.Body.String())
 
 	// PATCH: preferences replaced as a whole; read-only fields ignored.
 	rec, got = do(t, h, "PATCH", path, `{"preferences":{"base_currency":"EUR"},"status":"disabled","has_password":false,"uid":"x"}`)
@@ -120,45 +120,42 @@ func TestUsersCRUD(t *testing.T) {
 		{`{"password":"x"}`, 400},
 		{`{"display_name":null}`, 422},
 		{`{"preferences":[1]}`, 422},
-		{`{"username":"guest-taken"}`, 200},
+		{`{"username":"Other"}`, 409},
+		{`{"username":"Tester-2","email":"tester@example.com"}`, 200},
 	} {
 		if rec, body := do(t, h, "PATCH", path, c.body); rec.Code != c.status {
 			t.Errorf("PATCH %s: %d %v, want %d", c.body, rec.Code, body, c.status)
 		}
 	}
-	if rec, body := do(t, h, "PATCH", "/api/users/"+guest, `{"username":"Guest-Taken"}`); rec.Code != 409 || fieldsOf(body)["username"] == nil {
-		t.Errorf("PATCH dup username: %d %v", rec.Code, body)
-	}
-	if rec, body := do(t, h, "PATCH", path, `{"email":null}`); rec.Code != 200 || body["email"] != nil {
+	if rec, body := do(t, h, "PATCH", path, `{"email":null}`); rec.Code != 200 || body["email"] != nil || body["username"] != "tester-2" {
 		t.Errorf("PATCH clear email: %d %v", rec.Code, body)
 	}
 
 	// PUT: full replace of profile fields; a GET response round-trips.
 	_, cur := do(t, h, "GET", path, "")
 	rec, got = do(t, h, "PUT", path, mustJSON(t, cur))
-	if rec.Code != 200 || got["username"] != "guest-taken" || got["has_password"] != true {
+	if rec.Code != 200 || got["username"] != "tester-2" || got["has_password"] != true {
 		t.Errorf("PUT round-trip: %d %v", rec.Code, got)
 	}
 	// A user with a password keeps their username, the login name (#77).
-	rec, got = do(t, h, "PUT", path, `{"display_name":"Nat E."}`)
+	rec, got = do(t, h, "PUT", path, `{"display_name":"Tester T."}`)
 	if rec.Code != 422 || got["code"] != "username_required" || fieldsOf(got)["username"] == nil {
 		t.Errorf("PUT without username: %d %v", rec.Code, got)
 	}
-	rec, got = do(t, h, "PUT", path, `{"display_name":"Nat E.","username":"guest-taken"}`)
-	if rec.Code != 200 || got["username"] != "guest-taken" || got["email"] != nil || got["preferences"].(map[string]any)["base_currency"] != user.DefaultBaseCurrency || got["has_password"] != true {
+	rec, got = do(t, h, "PUT", path, `{"display_name":"Tester T.","username":"tester"}`)
+	if rec.Code != 200 || got["username"] != "tester" || got["email"] != nil || got["preferences"].(map[string]any)["base_currency"] != user.DefaultBaseCurrency {
 		t.Errorf("PUT minimal clears profile fields only: %d %v", rec.Code, got)
 	}
 	noSecrets(t, "put", rec.Body.String())
 
 	// Identities: read-only list (empty until SSO exists; store-created here).
-	rec, ids := do(t, h, "GET", path+"/identities", "")
-	if rec.Code != 200 || ids["count"].(float64) != 0 {
+	if rec, ids := do(t, h, "GET", path+"/identities", ""); rec.Code != 200 || ids["count"].(float64) != 0 {
 		t.Errorf("identities empty: %d %v", rec.Code, ids)
 	}
 	if err := st.CreateIdentity(context.Background(), &user.Identity{UserUID: uid, Provider: user.ProviderApple, ProviderSubject: "001234.abc"}); err != nil {
 		t.Fatal(err)
 	}
-	rec, ids = do(t, h, "GET", path+"/identities", "")
+	rec, ids := do(t, h, "GET", path+"/identities", "")
 	items, _ := ids["identities"].([]any)
 	if rec.Code != 200 || len(items) != 1 || items[0].(map[string]any)["provider"] != "apple" || items[0].(map[string]any)["user_uid"] != uid {
 		t.Errorf("identities: %d %v", rec.Code, ids)
@@ -174,29 +171,77 @@ func TestUsersCRUD(t *testing.T) {
 			t.Errorf("GET %s: %d, want 400", p, rec.Code)
 		}
 	}
-	const unknown = "/api/users/00000000-0000-4000-8000-000000000000"
-	for _, c := range [][2]string{{"GET", ""}, {"PUT", `{"display_name":"x"}`}, {"PATCH", `{"display_name":"x"}`}, {"DELETE", ""}} {
-		if rec, _ := do(t, h, c[0], unknown, c[1]); rec.Code != 404 {
-			t.Errorf("%s unknown: %d", c[0], rec.Code)
-		}
-	}
-	if rec, _ := do(t, h, "GET", unknown+"/identities", ""); rec.Code != 404 {
-		t.Errorf("identities unknown user: %d", rec.Code)
-	}
 
-	// DELETE removes the user and its identities.
-	if rec, _ := do(t, h, "DELETE", path, ""); rec.Code != 204 {
-		t.Errorf("delete: %d", rec.Code)
-	}
-	if rec, _ := do(t, h, "GET", path, ""); rec.Code != 404 {
-		t.Errorf("get after delete: %d", rec.Code)
-	}
-	if ids, _ := st.ListIdentities(context.Background(), uid); len(ids) != 0 {
-		t.Errorf("identities after delete: %v", ids)
+	// The other account is still untouched by everything above.
+	if u, err := st.GetUserByUID(context.Background(), other.UID); err != nil || *u.Username != "other" || *u.Email != "other@example.com" {
+		t.Errorf("other user changed: %+v %v", u, err)
 	}
 }
 
-func strPtr(s string) *string { return &s }
+// TestUserRoutesOnlyReachOwnAccount (issue #76): another user's account is
+// a 404 on every /api/users route, the same as an unknown uid, and is left
+// unchanged; POST /api/users is disabled.
+func TestUserRoutesOnlyReachOwnAccount(t *testing.T) {
+	h, st := newTestServerWithStore(t) // logged in as "tester"
+	other := otherUser(t, st)
+	if err := st.CreateIdentity(context.Background(), &user.Identity{UserUID: other.UID, Provider: user.ProviderGoogle, ProviderSubject: "sub-1"}); err != nil {
+		t.Fatal(err)
+	}
+	const unknown = "00000000-0000-4000-8000-000000000000"
+	for _, target := range []string{other.UID, strings.ToUpper(other.UID), unknown} {
+		base := "/api/users/" + target
+		for _, c := range []struct{ method, path, body string }{
+			{"GET", base, ""},
+			{"PUT", base, `{"display_name":"Hijacked","username":"hijacked"}`},
+			{"PATCH", base, `{"display_name":"Hijacked"}`},
+			{"DELETE", base, ""},
+			{"GET", base + "/identities", ""},
+			{"GET", base + "/preferences", ""},
+			{"PUT", base + "/preferences", `{"base_currency":"EUR"}`},
+		} {
+			rec, body := do(t, h, c.method, c.path, c.body)
+			if rec.Code != http.StatusNotFound || body["error"] != "user not found" {
+				t.Errorf("%s %s: %d %v, want 404 user not found", c.method, c.path, rec.Code, body)
+			}
+		}
+	}
+	got, err := st.GetUserByUID(context.Background(), other.UID)
+	if err != nil || got.DisplayName != "Other" || *got.Username != "other" || got.Preferences.BaseCurrency != "" {
+		t.Errorf("other user changed: %+v %v", got, err)
+	}
+	if ids, _ := st.ListIdentities(context.Background(), other.UID); len(ids) != 1 {
+		t.Errorf("other user's identities: %v", ids)
+	}
+
+	// Creating profiles through this API is disabled.
+	for _, body := range []string{`{"display_name":"Guest"}`, `{}`, `[]`} {
+		rec, b := do(t, h, "POST", "/api/users", body)
+		if rec.Code != http.StatusForbidden || b["code"] != "use_register" {
+			t.Errorf("POST /api/users %s: %d %v, want 403 use_register", body, rec.Code, b)
+		}
+	}
+	if us, _ := st.ListUsers(context.Background()); len(us) != 2 {
+		t.Errorf("users after refused creates: %d", len(us))
+	}
+}
+
+// TestDeleteOwnAccount: a user can delete their own account once another
+// login account exists (#77); the session ends with it.
+func TestDeleteOwnAccount(t *testing.T) {
+	h, st := newTestServerWithStore(t)
+	_, me := do(t, h, "GET", "/api/auth/me", "")
+	path := "/api/users/" + me["uid"].(string)
+	otherUser(t, st)
+	if rec, b := do(t, h, "DELETE", path, ""); rec.Code != 204 {
+		t.Fatalf("delete own account: %d %v", rec.Code, b)
+	}
+	if rec, _ := do(t, h, "GET", "/api/auth/me", ""); rec.Code != http.StatusUnauthorized {
+		t.Errorf("session after deleting the account: %d, want 401", rec.Code)
+	}
+	if _, err := st.GetUserByUID(context.Background(), me["uid"].(string)); err == nil {
+		t.Error("account still exists")
+	}
+}
 
 func mustJSON(t *testing.T, v any) string {
 	t.Helper()
@@ -229,14 +274,18 @@ func TestAccountLockoutGuards(t *testing.T) {
 		t.Errorf("username after refused updates: %v", got["username"])
 	}
 
-	// Users without a password may still drop their username.
-	rec, guest := do(t, h, "POST", "/api/users", `{"display_name":"Guest","username":"guest"}`)
-	if rec.Code != 201 {
-		t.Fatalf("create guest: %d %v", rec.Code, guest)
+	// Users without a password may still drop their username (store rule;
+	// such profiles can't be reached through the API since issue #76).
+	guestName := "guest"
+	guest := user.User{Username: &guestName, DisplayName: "Guest"}
+	if err := st.CreateUser(context.Background(), &guest); err != nil {
+		t.Fatal(err)
 	}
-	guestPath := "/api/users/" + guest["uid"].(string)
-	if rec, b := do(t, h, "PATCH", guestPath, `{"username":null}`); rec.Code != 200 || b["username"] != nil {
-		t.Errorf("guest clears username: %d %v", rec.Code, b)
+	if got, err := st.UpdateUser(context.Background(), guest.ID, func(cur user.User) (user.User, error) {
+		cur.Username = nil
+		return cur, nil
+	}); err != nil || got.Username != nil {
+		t.Errorf("guest clears username: %+v %v", got, err)
 	}
 
 	// The last password user cannot be deleted; deleting a password-less
@@ -244,12 +293,12 @@ func TestAccountLockoutGuards(t *testing.T) {
 	if rec, b := do(t, h, "DELETE", mePath, ""); rec.Code != 409 || b["code"] != "last_login_user" {
 		t.Errorf("delete last login user: %d %v, want 409 last_login_user", rec.Code, b)
 	}
-	if rec, b := do(t, h, "DELETE", guestPath, ""); rec.Code != 204 {
-		t.Errorf("delete guest: %d %v", rec.Code, b)
+	if err := st.DeleteUser(context.Background(), guest.ID); err != nil {
+		t.Errorf("delete guest: %v", err)
 	}
 	// Registration stays closed to anonymous visitors.
 	anon := (&Server{Store: st, Static: fstest.MapFS{"index.html": {}}}).Router()
-	rec = httptest.NewRecorder()
+	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/auth/register", strings.NewReader(`{"username":"intruder","password":"pw-12345678"}`))
 	req.Header.Set("Content-Type", "application/json")
 	anon.ServeHTTP(rec, req)

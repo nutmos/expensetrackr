@@ -8,7 +8,7 @@ import (
 )
 
 func TestPreferencesAPI(t *testing.T) {
-	h, _ := newTestServerWithStore(t)
+	h, st := newTestServerWithStore(t)
 	_, me := do(t, h, "GET", "/api/auth/me", "")
 	path := "/api/users/" + me["uid"].(string) + "/preferences"
 
@@ -52,12 +52,13 @@ func TestPreferencesAPI(t *testing.T) {
 		})
 	}
 
-	// Scoped to the logged-in user: another user's preferences are 403.
-	_, other := do(t, h, "POST", "/api/users", `{"display_name":"Other"}`)
-	otherPath := "/api/users/" + other["uid"].(string) + "/preferences"
+	// Scoped to the logged-in user: another user's preferences are a 404,
+	// like an unknown user (issue #76).
+	other := otherUser(t, st)
+	otherPath := "/api/users/" + other.UID + "/preferences"
 	for _, m := range []string{"GET", "PUT"} {
-		if rec, _ := do(t, h, m, otherPath, `{"base_currency":"EUR"}`); rec.Code != http.StatusForbidden {
-			t.Errorf("%s other user's preferences: %d, want 403", m, rec.Code)
+		if rec, _ := do(t, h, m, otherPath, `{"base_currency":"EUR"}`); rec.Code != http.StatusNotFound {
+			t.Errorf("%s other user's preferences: %d, want 404", m, rec.Code)
 		}
 	}
 	if rec, _ := do(t, h, "GET", "/api/users/00000000-0000-4000-8000-000000000000/preferences", ""); rec.Code != http.StatusNotFound {

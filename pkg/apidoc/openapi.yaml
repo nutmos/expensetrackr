@@ -661,37 +661,24 @@ paths:
     post:
       tags: [users]
       operationId: createUser
-      summary: Create a user profile
+      summary: Create a user profile (disabled)
       description: |
-        `display_name` is required. `username`, `email` and `preferences` are optional.
-        `password` / `password_hash` are **not** accepted (400 unknown field). Read-only fields
-        (`uid`, `status`, `has_password`, timestamps) are accepted and ignored, so a response can be sent back.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/UserInput' }
-            example: { display_name: Alex Example, username: alex, email: alex@example.com, preferences: { base_currency: THB } }
+        **Disabled** (issue #76): always 403 `use_register`. Every user manages only their own
+        account, so a password-less profile created here could neither log in nor be managed.
+        Create accounts with `POST /api/auth/register`.
       responses:
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '201':
-          description: Created.
-          headers:
-            Location: { $ref: '#/components/headers/LocationUser' }
+        '403':
+          description: Creating profiles here is disabled.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/User' }
-              examples:
-                user: { $ref: '#/components/examples/UserExample' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '409': { $ref: '#/components/responses/UserConflict' }
-        '422': { $ref: '#/components/responses/ValidationFailed' }
-        '500': { $ref: '#/components/responses/InternalError' }
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: creating user profiles here is disabled; create an account with POST /api/auth/register, code: use_register }
     get:
       tags: [users]
       operationId: listUsers
-      summary: List user profiles
-      description: Oldest first.
+      summary: List your profile
+      description: Only the logged-in user's own account (one item). Other accounts are never listed.
       responses:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '200':
@@ -724,7 +711,7 @@ paths:
       tags: [users]
       operationId: replaceUser
       summary: Replace a user profile
-      description: Full replace of the profile fields. Omitted `username`/`email` are removed and omitted `preferences` resets every preference to its default. Read-only fields are ignored. Not versioned. A user with a password must keep a username (their login name); removing it is a 422 with code `username_required`.
+      description: Full replace of the profile fields. Omitted `username`/`email` are removed and omitted `preferences` resets every preference to its default. Read-only fields are ignored. Not versioned. A user with a password must keep a username (their login name); removing it is a 422 with code `username_required`. Needs a browser session; an API token gets 403 `session_required`.
       requestBody:
         required: true
         content:
@@ -733,6 +720,7 @@ paths:
             example: { display_name: Alex E., username: alex, preferences: { base_currency: SGD } }
       responses:
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/SessionRequired' }
         '200':
           description: Updated.
           content:
@@ -748,6 +736,7 @@ paths:
       operationId: patchUser
       summary: Partially update a user profile
       description: |
+        Needs a browser session; an API token gets 403 `session_required`.
         Only the fields present change. `preferences` **replaces** the whole object (no deep merge;
         `null` resets every preference to its default). `username`/`email`: `null` or `""` removes it. `display_name: null` is a 422.
         Read-only fields are ignored. A patch with nothing else is a 400.
@@ -765,6 +754,7 @@ paths:
                 value: { email: null }
       responses:
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/SessionRequired' }
         '200':
           description: Updated.
           content:
@@ -779,9 +769,10 @@ paths:
       tags: [users]
       operationId: deleteUser
       summary: Delete a user profile
-      description: Also deletes the user's linked identities, sessions, API tokens and data. The last user who has a password cannot be deleted (409 `last_login_user`), so first-run registration never reopens.
+      description: Also deletes the user's linked identities, sessions, API tokens and data. The last user who has a password cannot be deleted (409 `last_login_user`), so first-run registration never reopens. Needs a browser session; an API token gets 403 `session_required`.
       responses:
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/SessionRequired' }
         '204': { description: Deleted. }
         '400': { $ref: '#/components/responses/BadUid' }
         '404': { $ref: '#/components/responses/UserNotFound' }
@@ -819,7 +810,7 @@ paths:
       tags: [users]
       operationId: getUserPreferences
       summary: Get your preferences
-      description: Only for the logged-in user's own uid (403 otherwise). Unset keys show their default.
+      description: Only for the logged-in user's own uid (404 otherwise). Unset keys show their default.
       responses:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '200':
@@ -828,7 +819,6 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Preferences' }
         '400': { $ref: '#/components/responses/BadUid' }
-        '403': { $ref: '#/components/responses/PreferencesForbidden' }
         '404': { $ref: '#/components/responses/UserNotFound' }
         '500': { $ref: '#/components/responses/InternalError' }
     put:
@@ -858,7 +848,6 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
               example: { error: invalid preferences, fields: { base_currency: 'must be a supported ISO 4217 currency code (see /api/currencies)' } }
-        '403': { $ref: '#/components/responses/PreferencesForbidden' }
         '404': { $ref: '#/components/responses/UserNotFound' }
         '500': { $ref: '#/components/responses/InternalError' }
 
@@ -1219,7 +1208,7 @@ components:
       name: uid
       in: path
       required: true
-      description: User uid (UUID, case-insensitive).
+      description: Your own user uid (UUID, case-insensitive; see `GET /api/auth/me`). Any other uid, existing or not, is 404 `user not found`.
       schema: { $ref: '#/components/schemas/Uid' }
       example: 3525dd1f-ae96-4c71-b996-06a43679cfa2
     IfMatch:
@@ -1274,12 +1263,6 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
-    PreferencesForbidden:
-      description: The uid is not the logged-in user's (preferences are personal).
-      content:
-        application/json:
-          schema: { $ref: '#/components/schemas/Error' }
-          example: { error: preferences can only be read or changed by their own user }
     UnsupportedMediaType:
       description: A request body that is not `Content-Type application/json`.
       content:
