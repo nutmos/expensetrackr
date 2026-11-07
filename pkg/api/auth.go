@@ -285,7 +285,7 @@ func (s *Server) register(c *gin.Context) {
 			return
 		}
 		if has {
-			c.JSON(http.StatusForbidden, errorBody{Error: "registration is closed; log in to create more users", Code: "registration_closed"})
+			writeRegistrationClosed(c)
 			return
 		}
 	}
@@ -301,7 +301,7 @@ func (s *Server) register(c *gin.Context) {
 	u := user.User{Username: &username, DisplayName: display}
 	err = s.Store.RegisterUser(c.Request.Context(), &u, hash, !loggedIn)
 	if errors.Is(err, store.ErrRegistrationClosed) {
-		c.JSON(http.StatusForbidden, errorBody{Error: "registration is closed; log in to create more users", Code: "registration_closed"})
+		writeRegistrationClosed(c)
 		return
 	}
 	if err != nil {

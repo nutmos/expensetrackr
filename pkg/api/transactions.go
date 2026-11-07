@@ -102,17 +102,17 @@ func (s *Server) createTransaction(c *gin.Context) {
 	}
 	e, err := in.Validate()
 	if err != nil {
-		writeInputError(c, err)
+		writeTransactionError(c, err)
 		return
 	}
 	if err := s.attachPaymentBalance(c, &e, in, nil); err != nil {
-		writeInputError(c, err)
+		writeTransactionError(c, err)
 		return
 	}
 	// Create also moves the balances (same DB transaction); a missing balance
 	// or a currency mismatch comes back as a validation error (422).
 	if err := s.Store.Create(c.Request.Context(), sessionUserUID(c), &e); err != nil {
-		writeInputError(c, err)
+		writeTransactionError(c, err)
 		return
 	}
 	c.Header("Location", "/api/transactions/"+string(e.UID))
@@ -125,7 +125,7 @@ func (s *Server) createTransaction(c *gin.Context) {
 func (s *Server) transactionConflict(c *gin.Context, id int64) {
 	cur, err := s.Store.Get(c.Request.Context(), sessionUserUID(c), id)
 	if err != nil {
-		writeInputError(c, err)
+		writeTransactionError(c, err)
 		return
 	}
 	writeVersionConflict(c, "transaction", cur, cur.Version)
@@ -143,7 +143,7 @@ func (s *Server) saveTransaction(c *gin.Context, cur transaction.Transaction, ve
 		return
 	}
 	if err != nil {
-		writeInputError(c, err)
+		writeTransactionError(c, err)
 		return
 	}
 	setETag(c, updated.Version)
@@ -160,7 +160,7 @@ func (s *Server) replaceTransaction(c *gin.Context) {
 		return
 	}
 	if cur.Type == transaction.BalanceAdjustment { // read-only, whatever the body or version
-		writeInputError(c, store.ErrReadOnly)
+		writeTransactionError(c, store.ErrReadOnly)
 		return
 	}
 	var in transaction.CreateInput
@@ -177,14 +177,14 @@ func (s *Server) replaceTransaction(c *gin.Context) {
 	}
 	next, err := in.Validate()
 	if err != nil {
-		writeInputError(c, err)
+		writeTransactionError(c, err)
 		return
 	}
 	if in.ImportRef == nil { // omitted: keep the stored ref ("" clears it)
 		next.ImportRef = cur.ImportRef
 	}
 	if err := s.attachPaymentBalance(c, &next, in, &cur); err != nil {
-		writeInputError(c, err)
+		writeTransactionError(c, err)
 		return
 	}
 	s.saveTransaction(c, cur, version, next)
@@ -300,7 +300,7 @@ func (s *Server) deleteTransaction(c *gin.Context) {
 		return
 	}
 	if cur.Type == transaction.BalanceAdjustment { // read-only, whatever the body or version
-		writeInputError(c, store.ErrReadOnly)
+		writeTransactionError(c, store.ErrReadOnly)
 		return
 	}
 	version, ok := clientVersion(c, nil, false)
@@ -313,7 +313,7 @@ func (s *Server) deleteTransaction(c *gin.Context) {
 		return
 	}
 	if err != nil {
-		writeInputError(c, err)
+		writeTransactionError(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -327,12 +327,8 @@ func (s *Server) resolveTransaction(c *gin.Context) (transaction.Transaction, bo
 		return transaction.Transaction{}, false
 	}
 	e, err := s.Store.GetByUID(c.Request.Context(), sessionUserUID(c), uid)
-	if errors.Is(err, store.ErrNotFound) {
-		c.JSON(http.StatusNotFound, errorBody{Error: "transaction not found"})
-		return transaction.Transaction{}, false
-	}
 	if err != nil {
-		internalError(c, err)
+		writeTransactionError(c, err)
 		return transaction.Transaction{}, false
 	}
 	return e, true
