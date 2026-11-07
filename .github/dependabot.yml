@@ -1,0 +1,18 @@
+# Weekly dependency updates (issue #81). Go modules are grouped into one PR
+# per week; GitHub Actions get their own PR.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      go-modules:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]

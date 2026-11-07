@@ -6,6 +6,7 @@ BIN      ?= bin/expense-server
 ADDR     ?= 127.0.0.1:8080
 DB       ?= data/expenses.db
 GOLANGCI_LINT ?= golangci-lint
+GOVULNCHECK_VERSION ?= v1.9.0
 
 export GOTOOLCHAIN ?= local
 export CGO_ENABLED ?= 0
@@ -27,6 +28,14 @@ run: build ## Build, then run the server on $(ADDR) with the DB at $(DB).
 .PHONY: test
 test: ## Run all tests.
 	$(GO) test ./...
+
+.PHONY: test-race
+test-race: ## Run all tests with the race detector (needs cgo and a C compiler).
+	CGO_ENABLED=1 $(GO) test -race ./...
+
+.PHONY: vulncheck
+vulncheck: ## Report known vulnerabilities reachable from the code (govulncheck).
+	$(GO) run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
 .PHONY: vet
 vet: ## Run go vet.

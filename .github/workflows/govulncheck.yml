@@ -1,0 +1,32 @@
+name: govulncheck
+
+# Known-vulnerability scan (issue #81). It also runs weekly, because new
+# advisories appear without any change to the code.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 3 * * 1" # Mondays 03:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: govulncheck-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      # Fails when the code calls a known-vulnerable function, in a
+      # dependency or in the standard library of the toolchain in go.mod.
+      - run: make vulncheck
