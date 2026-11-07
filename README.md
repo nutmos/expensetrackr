@@ -726,7 +726,8 @@ from a searchable dropdown (the shared `combobox.js`) filled from
 the submitted value is always the plain code. On the
 transaction form, choosing (or changing) the account sets the currency to that
 balance's currency; it can still be changed, and the server's mismatch error is
-shown. A new balance defaults to the currency most existing balances use.
+shown. A new balance defaults to your base currency from the **Settings** page
+(`USD` until you choose one).
 
 **Currency flags.** Each currency in `GET /api/currencies` carries a `flag`
 emoji (`pkg/money/flags.go`), shown before the code in the currency dropdowns,
