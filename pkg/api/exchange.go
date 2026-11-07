@@ -13,7 +13,6 @@ import (
 	"github.com/nutmos/expensetrackr/pkg/fx"
 	"github.com/nutmos/expensetrackr/pkg/money"
 	"github.com/nutmos/expensetrackr/pkg/transaction"
-	"github.com/nutmos/expensetrackr/pkg/validate"
 
 	"github.com/gin-gonic/gin"
 )
@@ -130,75 +129,11 @@ func (s *Server) getExchangeRate(c *gin.Context) {
 	c.JSON(http.StatusOK, q)
 }
 
-// convertTransfer fills the cross-currency fields of a transfer e whose
-// balances src and dst have been resolved. in carries the client's
-// to_amount / to_currency; prev (PUT only) is the stored transaction, whose
-// conversion is kept when nothing that affects it changed and to_amount is
-// omitted. Stored rates are never refetched for reversal.
+// convertTransfer fills the cross-currency fields of a transfer
+// (transaction.ConvertTransfer), looking rates up through s.rate so they are
+// cached and, in a bulk request, memoized and time-bounded.
 func (s *Server) convertTransfer(c *gin.Context, e *transaction.Transaction, in transaction.CreateInput, src, dst balance.Balance, prev *transaction.Transaction) error {
-	e.ToAmount, e.ToAmountMinor, e.ToCurrency, e.ExchangeRate, e.RateSource, e.RateDate = nil, nil, nil, nil, nil, nil
-	if e.Type != transaction.Transfer || dst.UID == "" {
-		return nil
-	}
-	rawTo := strings.TrimSpace(string(in.ToAmount))
-	if tc := strings.ToUpper(strings.TrimSpace(in.ToCurrency)); tc != "" && tc != dst.Currency {
-		return &validate.ValidationError{Fields: map[string]string{"to_currency": fmt.Sprintf("must be %s, the currency of the destination balance %q", dst.Currency, dst.Name)}}
-	}
-	if src.Currency != e.Currency {
-		// Same message the store gives; checked first so no rate is fetched.
-		return &validate.ValidationError{Fields: map[string]string{"balance_uid": fmt.Sprintf(
-			"balance %q is in %s but the transaction is in %s; the currencies must match", src.Name, src.Currency, e.Currency)}}
-	}
-	toScale, _ := money.MinorUnits(dst.Currency)
-	fromScale, _ := money.MinorUnits(e.Currency)
-	if dst.Currency == e.Currency {
-		if rawTo != "" {
-			m, err := money.ParseAmount(rawTo, toScale)
-			if err != nil {
-				return &validate.ValidationError{Fields: map[string]string{"to_amount": err.Error()}}
-			}
-			if m != e.AmountMinor {
-				return &validate.ValidationError{Fields: map[string]string{"to_amount": "must equal amount (or be omitted) when both balances use the same currency"}}
-			}
-		}
-		return nil
-	}
-	cur := dst.Currency
-	e.ToCurrency = &cur
-	if rawTo != "" {
-		m, err := money.ParseAmount(rawTo, toScale)
-		if err != nil {
-			return &validate.ValidationError{Fields: map[string]string{"to_amount": err.Error()}}
-		}
-		amt, rate, src := money.FormatAmount(m, toScale), fx.ManualRate(e.AmountMinor, fromScale, m, toScale), "manual"
-		e.ToAmountMinor, e.ToAmount, e.ExchangeRate, e.RateSource = &m, &amt, &rate, &src
-		return nil
-	}
-	if prev != nil && prev.ToCurrency != nil && prev.ToAmountMinor != nil && *prev.ToCurrency == cur &&
-		prev.Type == e.Type && prev.Currency == e.Currency && prev.AmountMinor == e.AmountMinor &&
-		prev.BalanceUID == e.BalanceUID && prev.ToBalanceUID != nil && *prev.ToBalanceUID == *e.ToBalanceUID &&
-		localDate(prev.SpentAt) == localDate(e.SpentAt) {
-		e.ToAmountMinor, e.ToAmount, e.ExchangeRate, e.RateSource, e.RateDate = prev.ToAmountMinor, prev.ToAmount, prev.ExchangeRate, prev.RateSource, prev.RateDate
-		return nil
-	}
-	q, err := s.rate(c, e.Currency, cur, localDate(e.SpentAt), e.SpentTime.Location())
-	if err != nil {
-		return err
-	}
-	m, err := fx.Convert(e.AmountMinor, fromScale, q.Rate, toScale)
-	if err != nil {
-		return &validate.ValidationError{Fields: map[string]string{"amount": err.Error()}}
-	}
-	amt, rate, srcName, date := money.FormatAmount(m, toScale), q.Rate, fx.Source, q.Date
-	e.ToAmountMinor, e.ToAmount, e.ExchangeRate, e.RateSource, e.RateDate = &m, &amt, &rate, &srcName, &date
-	return nil
-}
-
-// localDate is the YYYY-MM-DD part of an RFC 3339 spent_at, i.e. the date
-// in the offset the user entered.
-func localDate(spentAt string) string {
-	if len(spentAt) >= 10 {
-		return spentAt[:10]
-	}
-	return spentAt
+	return e.ConvertTransfer(in, src, dst, prev, func(from, to, date string, loc *time.Location) (fx.Quote, error) {
+		return s.rate(c, from, to, date, loc)
+	})
 }

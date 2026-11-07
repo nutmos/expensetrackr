@@ -654,13 +654,15 @@ pkg/money/                         exact amounts: decimal string <-> integer min
 pkg/validate/                      ValidationError (422) and RequestError (400)
 pkg/transaction/                   transaction domain model + validation (no I/O)
   transaction.go                   Transaction, CreateInput, Validate, ParseTimestamp
+  transfer.go                      ConvertTransfer: cross-currency fields of a transfer (rate lookup injected)
   input.go                         Transaction.Input (stored record -> CreateInput)
 pkg/category/                      category domain model (Type expense|income, Input, Validate)
 pkg/user/                          user profile model: Input, Validate, ApplyPatch, Preferences (typed JSON settings), Identity
 pkg/balance/                       balance domain model + per-type validation (no I/O)
   balance.go                       Type, Balance, Input, Validate, ComputeTotals
 pkg/store/                         persistence (modernc.org/sqlite)
-  store.go                         transactions in table "transactions": Open, Create, List, Get, Update(With), Delete(With); WriteOptions, ErrVersionConflict
+  store.go                         Store, Open, Close; errors shared by every table (ErrNotFound, ErrVersionConflict, ...), WriteOptions
+  transactions.go                  table "transactions": Create, List, Get(ByUID), UpdateWith, DeleteWith
   effects.go                       applyBalanceEffects: move balances for a transaction write (same DB transaction)
   balances.go                      table "balances": CreateBalance, ListBalances, GetBalance, UpdateBalance(With), DeleteBalance(With)
   adjustments.go                   balance_adjustment transactions recorded by manual balance edits
@@ -671,7 +673,8 @@ pkg/store/                         persistence (modernc.org/sqlite)
   store_test.go                    fresh DB gets the baseline; old/foreign/newer databases are refused untouched
 pkg/api/                           Gin routes and handlers
   api.go                           router setup + shared helpers
-  transactions.go                  /api/transactions routes
+  transactions.go                  /api/transactions routes (parseListFilter for the list query)
+  exchange.go                      exchange-rate lookups (cache, bulk memo), GET /api/exchange-rates
   balances.go                      /api/balances routes
   version.go                       optimistic locking: If-Match / "version", ETag, 428 / 409
   categories.go                    /api/categories routes
