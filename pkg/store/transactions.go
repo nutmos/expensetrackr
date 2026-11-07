@@ -3,8 +3,11 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/nutmos/expensetrackr/pkg/common_type"
@@ -80,7 +83,56 @@ type ListFilter struct {
 	To          *time.Time       // inclusive
 	Type        transaction.Type // "" = all
 	CategoryUID common_type.UID  // "" = all
-	Limit       int
+	// BalanceUID matches transactions that use the balance as source
+	// (balance_uid) or destination (to_balance_uid). "" = all.
+	BalanceUID common_type.UID
+	// After continues a listing: only rows strictly after this position in
+	// the list order (spent_at_unix DESC, id DESC). nil = from the start.
+	After *ListCursor
+	Limit int
+}
+
+// ListCursor is a position in the transaction list order (spent_at_unix
+// DESC, id DESC): keyset pagination, so pages stay consistent while rows
+// are added or deleted.
+type ListCursor struct {
+	SpentAtUnix int64
+	ID          int64
+}
+
+// cursorVersion prefixes encoded cursors so the format can change later.
+const cursorVersion = "1"
+
+// ErrBadCursor is returned by ParseListCursor for a malformed cursor.
+var ErrBadCursor = errors.New("invalid cursor")
+
+// String encodes the cursor as an opaque URL-safe token.
+func (c ListCursor) String() string {
+	raw := cursorVersion + "." + strconv.FormatInt(c.SpentAtUnix, 10) + "." + strconv.FormatInt(c.ID, 10)
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+// ParseListCursor decodes a token made by ListCursor.String.
+func ParseListCursor(s string) (ListCursor, error) {
+	b, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		return ListCursor{}, ErrBadCursor
+	}
+	parts := strings.Split(string(b), ".")
+	if len(parts) != 3 || parts[0] != cursorVersion {
+		return ListCursor{}, ErrBadCursor
+	}
+	at, err1 := strconv.ParseInt(parts[1], 10, 64)
+	id, err2 := strconv.ParseInt(parts[2], 10, 64)
+	if err1 != nil || err2 != nil || id < 1 {
+		return ListCursor{}, ErrBadCursor
+	}
+	return ListCursor{SpentAtUnix: at, ID: id}, nil
+}
+
+// cursorOf is the list position of e.
+func cursorOf(e transaction.Transaction) ListCursor {
+	return ListCursor{SpentAtUnix: e.SpentTime.Unix(), ID: e.ID}
 }
 
 const selectCols = `id, uid, type, amount_minor, amount_scale, currency, balance_uid, account, to_balance_uid, to_account, category_uid, spent_at, note, created_at, updated_at, version, balance_applied, adjustment_direction,
@@ -107,6 +159,14 @@ func (s *Store) List(ctx context.Context, userUID string, f ListFilter) ([]trans
 		query += ` AND type = ?`
 		args = append(args, string(f.Type))
 	}
+	if f.BalanceUID != "" {
+		query += ` AND (balance_uid = ? OR to_balance_uid = ?)`
+		args = append(args, f.BalanceUID, f.BalanceUID)
+	}
+	if f.After != nil {
+		query += ` AND (spent_at_unix < ? OR (spent_at_unix = ? AND id < ?))`
+		args = append(args, f.After.SpentAtUnix, f.After.SpentAtUnix, f.After.ID)
+	}
 	query += ` ORDER BY spent_at_unix DESC, id DESC`
 	if f.Limit > 0 {
 		query += ` LIMIT ?`
@@ -127,6 +187,27 @@ func (s *Store) List(ctx context.Context, userUID string, f ListFilter) ([]trans
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// ListPage is List for one page of at most f.Limit rows (f.Limit must be >
+// 0). next is the cursor for the following page (pass it as f.After), or nil
+// when there are no more rows.
+func (s *Store) ListPage(ctx context.Context, userUID string, f ListFilter) (items []transaction.Transaction, next *ListCursor, err error) {
+	if f.Limit < 1 {
+		return nil, nil, fmt.Errorf("list transactions: page limit %d", f.Limit)
+	}
+	page := f.Limit
+	f.Limit++ // one extra row tells whether another page exists
+	items, err = s.List(ctx, userUID, f)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(items) > page {
+		items = items[:page]
+		c := cursorOf(items[page-1])
+		next = &c
+	}
+	return items, next, nil
 }
 
 // Get returns one row from transactions owned by userUID or ErrNotFound

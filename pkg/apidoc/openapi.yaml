@@ -152,8 +152,12 @@ paths:
       summary: List transactions
       description: |
         Newest first (by the absolute instant of `spent_at`, then most recently created).
-        All filters are optional and combine with AND. There is no offset/cursor pagination;
-        use `limit` and the time window.
+        All filters are optional and combine with AND.
+
+        **Pagination:** a response holds at most `limit` rows. When more match, `next_cursor`
+        is set: send it back as `cursor` with the same filters to get the next page, until
+        `next_cursor` is null. Cursors mark a position in the list order (keyset pagination),
+        so rows added or deleted between requests don't shift later pages.
       parameters:
         - name: from
           in: query
@@ -173,10 +177,18 @@ paths:
           in: query
           description: Only transactions linked to this category.
           schema: { $ref: '#/components/schemas/Uid' }
+        - name: balance_uid
+          in: query
+          description: Only transactions that use this balance, as source (`balance_uid`) or destination (`to_balance_uid`).
+          schema: { $ref: '#/components/schemas/Uid' }
         - name: limit
           in: query
-          description: Maximum number of rows.
+          description: Maximum number of rows per page.
           schema: { type: integer, minimum: 1, maximum: 5000, default: 500 }
+        - name: cursor
+          in: query
+          description: The `next_cursor` of the previous page (opaque). Omit for the first page.
+          schema: { type: string, example: MS4xNzkxMjAwMDAwLjQy }
       responses:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '200':
@@ -194,6 +206,7 @@ paths:
                 fields:
                   type: 'must be one of: expense, income, transfer, asset_purchase, return_on_investment, balance_adjustment'
                   limit: must be an integer between 1 and 5000
+                  cursor: is not a cursor from this API (use next_cursor from the previous page)
         '500': { $ref: '#/components/responses/InternalError' }
 
   /api/transactions/bulk:
@@ -1912,7 +1925,7 @@ components:
           description: Balances touched by created/valid items, as they are (or would be, for a dry run or a rolled-back batch) after the request.
     TransactionList:
       type: object
-      required: [transactions, count]
+      required: [transactions, count, next_cursor]
       properties:
         transactions:
           type: array
@@ -1921,6 +1934,11 @@ components:
           type: integer
           description: Number of items returned (not the total number of matches).
           example: 1
+        next_cursor:
+          type: string
+          nullable: true
+          description: Pass as `cursor` to get the next page; null on the last page.
+          example: null
 
     BalanceType:
       type: string

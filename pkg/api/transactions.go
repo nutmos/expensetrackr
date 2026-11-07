@@ -196,16 +196,23 @@ func (s *Server) listTransactions(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, errorBody{Error: "invalid query parameters", Fields: fields})
 		return
 	}
-	items, err := s.Store.List(c.Request.Context(), sessionUserUID(c), f)
+	items, next, err := s.Store.ListPage(c.Request.Context(), sessionUserUID(c), f)
 	if err != nil {
 		internalError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"transactions": items, "count": len(items)})
+	// next_cursor is null on the last page; otherwise pass it back as
+	// ?cursor= (with the same filters) to get the next page.
+	var nextCursor *string
+	if next != nil {
+		s := next.String()
+		nextCursor = &s
+	}
+	c.JSON(http.StatusOK, gin.H{"transactions": items, "count": len(items), "next_cursor": nextCursor})
 }
 
 // parseListFilter reads the GET /api/transactions query (from, to, type,
-// category_uid, limit) into a store.ListFilter. Invalid parameters are
+// category_uid, balance_uid, limit, cursor) into a store.ListFilter. Invalid parameters are
 // returned as field messages (the handler answers 400 with them).
 func parseListFilter(c *gin.Context) (store.ListFilter, map[string]string) {
 	fields := map[string]string{}
@@ -245,6 +252,22 @@ func parseListFilter(c *gin.Context) (store.ListFilter, map[string]string) {
 			f.CategoryUID = raw
 		} else {
 			fields["category_uid"] = "must be a UUID"
+		}
+	}
+
+	if raw := common_type.NormalizeUID(c.Query("balance_uid")); raw != "" {
+		if raw.Valid() {
+			f.BalanceUID = raw
+		} else {
+			fields["balance_uid"] = "must be a UUID"
+		}
+	}
+
+	if raw := strings.TrimSpace(c.Query("cursor")); raw != "" {
+		if cur, err := store.ParseListCursor(raw); err == nil {
+			f.After = &cur
+		} else {
+			fields["cursor"] = "is not a cursor from this API (use next_cursor from the previous page)"
 		}
 	}
 

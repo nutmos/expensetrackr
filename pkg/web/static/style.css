@@ -144,3 +144,5 @@ td.num.fx .fx-rates { display: flex; flex-direction: column; align-items: flex-e
 td.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
 #tokens-card { max-width: 1000px; }
 #token-table td.time { white-space: nowrap; }
+.load-more { text-align: center; margin: 12px 0 4px; }
+.load-more:has(button[hidden]) { display: none; }
