@@ -11,6 +11,12 @@
   const tbody = $("#transaction-table tbody");
   const listStatus = $("#list-status");
   const totalsEl = $("#totals");
+  const loadMoreBtn = $("#tx-load-more");
+  // The list loads PAGE_SIZE rows at a time; "Load more" fetches the next
+  // page with the API's next_cursor (issue #86).
+  const PAGE_SIZE = 100;
+  let loaded = []; // rows shown in the list, in order
+  let nextCursor = null; // cursor for the next page, or null on the last one
   const LIST = "/transactions";
   const LS_KEY = "expense-log:last";
   // Form state: null on the add page, else the transaction being edited.
@@ -584,7 +590,7 @@
     for (const [code, { scale, expense, income }] of sums) {
       parts.push(`${App.currencyText(code)}: expenses ${formatMinor(expense, scale)}, income ${formatMinor(income, scale)}`);
     }
-    totalsEl.textContent = parts.length ? "Totals (shown rows, transfers, asset purchases and balance adjustments excluded): " + parts.join(" · ") : "";
+    totalsEl.textContent = parts.length ? "Totals (loaded rows, transfers, asset purchases and balance adjustments excluded): " + parts.join(" · ") : "";
   }
 
   // Category name for a transaction, looked up client-side by category_uid
@@ -635,102 +641,157 @@
     loadTransactions();
   }
 
+  // One list row (Edit/Delete, or "Automatic" for a balance adjustment).
+  function transactionRow(e, highlightUID) {
+    const tr = document.createElement("tr");
+    tr.dataset.uid = String(e.uid);
+    if (highlightUID && e.uid === highlightUID) tr.classList.add("just-saved");
+    const timeTd = cell(shownTime(e.spent_at), "time");
+    if (e.updated_at) {
+      const mark = document.createElement("span");
+      mark.className = "edited";
+      mark.textContent = "edited";
+      mark.title = "Last edited " + shownTime(e.updated_at);
+      timeTd.append(mark);
+    }
+    const t = e.type || "expense";
+    const isAdj = t === "balance_adjustment";
+    const typeTd = cell(TYPE_LABEL[t] || t, "type type-" + t);
+    const acctTd = cell(accountText(e));
+    // An adjustment shows its direction as a sign: + the edited balance
+    // or debt went up, − it went down.
+    const fxRow = e.to_amount && e.to_currency;
+    const amountTd = cell(isAdj ? (e.adjustment_direction === "decrease" ? "−" : "+") + e.amount : fxRow ? "" : e.amount, "num");
+    if (fxRow) {
+      // "1,000.00 THB" / "→ 39.70 SGD" (each kept on one line, may wrap
+      // between them), then both rates from the API's conversion_rates.
+      amountTd.classList.add("fx");
+      const amounts = document.createElement("div");
+      amounts.className = "fx-amounts";
+      for (const text of [`${fmtAmount(e.amount)} ${e.currency}`, `→ ${fmtAmount(e.to_amount)} ${e.to_currency}`]) {
+        const part = document.createElement("span");
+        part.textContent = text;
+        amounts.append(part);
+      }
+      amountTd.append(amounts);
+      const lines = conversionLines(e.conversion_rates);
+      if (lines.length) {
+        const box = document.createElement("div");
+        box.className = "fx-rates";
+        for (const l of lines) {
+          const line = document.createElement("span");
+          line.textContent = l.text;
+          box.append(line);
+        }
+        amountTd.append(box);
+      }
+      amountTd.title = [
+        e.rate_source === "manual" ? "Amount received entered by hand" : `ECB rate of ${e.rate_date} via Frankfurter: 1 ${e.currency} = ${e.exchange_rate} ${e.to_currency}`,
+        ...lines.map((l) => l.full),
+      ].join("\n");
+    }
+    if (isAdj) {
+      tr.classList.add("row-adjustment");
+      amountTd.title = `Manual balance edit: ${e.adjustment_direction === "decrease" ? "decreased" : "increased"} by ${e.amount} ${e.currency}`;
+    }
+    if (fxRow) tr.classList.add("fx-row");
+    acctTd.classList.add("acct");
+    tr.append(timeTd, typeTd, amountTd, cell(fxRow ? `${App.currencyText(e.currency)} → ${App.currencyText(e.to_currency)}` : App.currencyText(e.currency), "cur"), acctTd, cell(categoryName(e.category_uid), "cat"), cell(e.note || "", "note"));
+    const actions = document.createElement("td");
+    actions.className = "actions-cell";
+    if (isAdj) {
+      // Read-only: recorded automatically, no Edit/Delete.
+      const auto = document.createElement("span");
+      auto.className = "auto-label";
+      auto.textContent = "Automatic";
+      auto.title = "Recorded when the balance was edited by hand; edit the balance to correct it.";
+      actions.append(auto);
+    } else {
+      actions.append(
+        link("Edit", `/transactions/${encodeURIComponent(e.uid)}/edit`, "button edit"),
+        button("Delete", "danger", () => deleteTransaction(e)),
+      );
+    }
+    tr.append(actions);
+    return tr;
+  }
+
+  // GET one page of the list with the current filters; cursor = null for
+  // the first page.
+  async function fetchPage(cursor) {
+    const params = filterParams();
+    params.set("limit", String(PAGE_SIZE));
+    if (cursor) params.set("cursor", cursor);
+    const res = await fetch("/api/transactions?" + params);
+    return { res, body: await res.json() };
+  }
+
+  function showListState() {
+    if (loaded.length === 0) {
+      listStatus.textContent = "No transactions yet.";
+    } else if (nextCursor) {
+      listStatus.textContent = `Showing the ${loaded.length} most recent transactions, newest first.`;
+    } else {
+      listStatus.textContent = `${loaded.length} transaction(s), newest first.`;
+    }
+    loadMoreBtn.hidden = !nextCursor;
+    loadMoreBtn.disabled = false;
+    loadMoreBtn.textContent = "Load more";
+    renderTotals(loaded);
+  }
+
   async function loadTransactions(highlightUID) {
     const my = ++gen;
     listStatus.textContent = "Loading…";
+    loadMoreBtn.hidden = true;
     try {
-      const params = filterParams();
-      const [res] = await Promise.all([
-        fetch("/api/transactions" + (params.toString() ? "?" + params : "")),
+      const [{ res, body }] = await Promise.all([
+        fetchPage(null),
         loadCategoriesList(),
         App.loadCurrencies(), // cached; flags for the Currency column
       ]);
-      const body = await res.json();
       if (my !== gen) return;
       if (!res.ok) {
         listStatus.textContent = body.error + (body.fields ? ": " + Object.values(body.fields).join("; ") : "");
         return;
       }
-      tbody.replaceChildren();
-      for (const e of body.transactions) {
-        const tr = document.createElement("tr");
-        tr.dataset.uid = String(e.uid);
-        if (highlightUID && e.uid === highlightUID) tr.classList.add("just-saved");
-        const timeTd = cell(shownTime(e.spent_at), "time");
-        if (e.updated_at) {
-          const mark = document.createElement("span");
-          mark.className = "edited";
-          mark.textContent = "edited";
-          mark.title = "Last edited " + shownTime(e.updated_at);
-          timeTd.append(mark);
-        }
-        const t = e.type || "expense";
-        const isAdj = t === "balance_adjustment";
-        const typeTd = cell(TYPE_LABEL[t] || t, "type type-" + t);
-        const acctTd = cell(accountText(e));
-        // An adjustment shows its direction as a sign: + the edited balance
-        // or debt went up, − it went down.
-        const fxRow = e.to_amount && e.to_currency;
-        const amountTd = cell(isAdj ? (e.adjustment_direction === "decrease" ? "−" : "+") + e.amount : fxRow ? "" : e.amount, "num");
-        if (fxRow) {
-          // "1,000.00 THB" / "→ 39.70 SGD" (each kept on one line, may wrap
-          // between them), then both rates from the API's conversion_rates.
-          amountTd.classList.add("fx");
-          const amounts = document.createElement("div");
-          amounts.className = "fx-amounts";
-          for (const text of [`${fmtAmount(e.amount)} ${e.currency}`, `→ ${fmtAmount(e.to_amount)} ${e.to_currency}`]) {
-            const part = document.createElement("span");
-            part.textContent = text;
-            amounts.append(part);
-          }
-          amountTd.append(amounts);
-          const lines = conversionLines(e.conversion_rates);
-          if (lines.length) {
-            const box = document.createElement("div");
-            box.className = "fx-rates";
-            for (const l of lines) {
-              const line = document.createElement("span");
-              line.textContent = l.text;
-              box.append(line);
-            }
-            amountTd.append(box);
-          }
-          amountTd.title = [
-            e.rate_source === "manual" ? "Amount received entered by hand" : `ECB rate of ${e.rate_date} via Frankfurter: 1 ${e.currency} = ${e.exchange_rate} ${e.to_currency}`,
-            ...lines.map((l) => l.full),
-          ].join("\n");
-        }
-        if (isAdj) {
-          tr.classList.add("row-adjustment");
-          amountTd.title = `Manual balance edit: ${e.adjustment_direction === "decrease" ? "decreased" : "increased"} by ${e.amount} ${e.currency}`;
-        }
-        if (fxRow) tr.classList.add("fx-row");
-        acctTd.classList.add("acct");
-        tr.append(timeTd, typeTd, amountTd, cell(fxRow ? `${App.currencyText(e.currency)} → ${App.currencyText(e.to_currency)}` : App.currencyText(e.currency), "cur"), acctTd, cell(categoryName(e.category_uid), "cat"), cell(e.note || "", "note"));
-        const actions = document.createElement("td");
-        actions.className = "actions-cell";
-        if (isAdj) {
-          // Read-only: recorded automatically, no Edit/Delete.
-          const auto = document.createElement("span");
-          auto.className = "auto-label";
-          auto.textContent = "Automatic";
-          auto.title = "Recorded when the balance was edited by hand; edit the balance to correct it.";
-          actions.append(auto);
-        } else {
-          actions.append(
-            link("Edit", `/transactions/${encodeURIComponent(e.uid)}/edit`, "button edit"),
-            button("Delete", "danger", () => deleteTransaction(e)),
-          );
-        }
-        tr.append(actions);
-        tbody.append(tr);
-      }
-      listStatus.textContent = body.count === 0 ? "No transactions yet." : `${body.count} transaction(s), newest first.`;
-      renderTotals(body.transactions);
+      tbody.replaceChildren(...body.transactions.map((e) => transactionRow(e, highlightUID)));
+      loaded = body.transactions.slice();
+      nextCursor = body.next_cursor || null;
+      showListState();
     } catch (err) {
       if (my === gen) listStatus.textContent = "Failed to load transactions: " + err.message;
     }
   }
+
+  // Appends the next page. A filter change or reload meanwhile (gen moved
+  // on) discards the result.
+  async function loadMore() {
+    if (!nextCursor) return;
+    const my = gen;
+    loadMoreBtn.disabled = true;
+    loadMoreBtn.textContent = "Loading…";
+    try {
+      const { res, body } = await fetchPage(nextCursor);
+      if (my !== gen) return;
+      if (!res.ok) {
+        listStatus.textContent = body.error + (body.fields ? ": " + Object.values(body.fields).join("; ") : "");
+        loadMoreBtn.disabled = false;
+        loadMoreBtn.textContent = "Load more";
+        return;
+      }
+      tbody.append(...body.transactions.map((e) => transactionRow(e)));
+      loaded = loaded.concat(body.transactions);
+      nextCursor = body.next_cursor || null;
+      showListState();
+    } catch (err) {
+      if (my !== gen) return;
+      listStatus.textContent = "Failed to load more transactions: " + err.message;
+      loadMoreBtn.disabled = false;
+      loadMoreBtn.textContent = "Load more";
+    }
+  }
+  loadMoreBtn.addEventListener("click", loadMore);
 
   // "3361.50" -> "3,361.50" (display only; digits as stored).
   function fmtAmount(v) {
