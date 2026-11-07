@@ -2,14 +2,12 @@ package api
 
 import (
 	"net/http"
-	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
 
-	"github.com/nutmos/expensetrackr/pkg/store"
-
 	"github.com/gin-gonic/gin"
+	"github.com/nutmos/expensetrackr/pkg/store/storetest"
 )
 
 // TestBalancesAndTransactionsArePerUser: user B cannot list, get, update or
@@ -18,11 +16,7 @@ import (
 // only each user's own rows.
 func TestBalancesAndTransactionsArePerUser(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	st, err := store.Open(filepath.Join(t.TempDir(), "own.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
+	st := storetest.Open(t)
 	router := (&Server{Store: st, Static: fstest.MapFS{"index.html": {Data: []byte("x")}}}).Router()
 	alice := asUser(t, router, st, "alice")
 	bob := asUser(t, router, st, "bob")

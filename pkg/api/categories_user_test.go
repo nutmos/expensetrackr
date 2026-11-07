@@ -3,13 +3,13 @@ package api
 import (
 	"context"
 	"net/http"
-	"path/filepath"
 	"testing"
 	"testing/fstest"
 	"time"
 
 	"github.com/nutmos/expensetrackr/pkg/auth"
 	"github.com/nutmos/expensetrackr/pkg/store"
+	"github.com/nutmos/expensetrackr/pkg/store/storetest"
 	"github.com/nutmos/expensetrackr/pkg/user"
 
 	"github.com/gin-gonic/gin"
@@ -39,11 +39,7 @@ func asUser(t *testing.T, router http.Handler, st *store.Store, name string) htt
 // categories; another user's uid is 404 and cannot be used on a transaction.
 func TestCategoriesArePerUser(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
+	st := storetest.Open(t)
 	router := (&Server{Store: st, Static: fstest.MapFS{"index.html": {Data: []byte("x")}}}).Router()
 	alice := asUser(t, router, st, "alice")
 	bob := asUser(t, router, st, "bob")

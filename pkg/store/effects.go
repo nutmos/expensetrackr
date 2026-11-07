@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/nutmos/expensetrackr/pkg/balance"
 	"github.com/nutmos/expensetrackr/pkg/transaction"
@@ -29,6 +30,16 @@ import (
 // longer exists (deleted) is skipped. See transaction.Effects for the sign
 // rules.
 func applyBalanceEffects(ctx context.Context, tx *sql.Tx, userUID string, old, next *transaction.Transaction, now string) error {
+	// Lock every balance this write touches before reading any of them, in
+	// one statement and in uid order: concurrent writes to the same balance
+	// then queue instead of losing an update (the reads below are followed by
+	// absolute writes), and a fixed order rules out deadlocks between them.
+	// The locked rows are returned and used below; they can't change until
+	// this transaction ends.
+	locked, err := lockBalances(ctx, tx, userUID, old, next)
+	if err != nil {
+		return err
+	}
 	deltas := map[string]int64{}
 	var order []string
 	reversedCurrency := map[string]string{}
@@ -48,12 +59,9 @@ func applyBalanceEffects(ctx context.Context, tx *sql.Tx, userUID string, old, n
 	if next != nil && next.AdjustsBalances {
 		for _, ef := range next.Effects() {
 			uid := string(ef.BalanceUID)
-			b, err := balanceByUIDTx(ctx, tx, userUID, uid)
-			if errors.Is(err, ErrNotFound) {
+			b, ok := locked[uid]
+			if !ok {
 				return &validate.ValidationError{Fields: map[string]string{ef.Field: "does not match any balance"}}
-			}
-			if err != nil {
-				return err
 			}
 			if want := effectCurrency(*next, ef); b.Currency != want {
 				msg := fmt.Sprintf("balance %q is in %s but the transaction is in %s; the currencies must match", b.Name, b.Currency, want)
@@ -70,12 +78,9 @@ func applyBalanceEffects(ctx context.Context, tx *sql.Tx, userUID string, old, n
 		if d == 0 {
 			continue
 		}
-		b, err := balanceByUIDTx(ctx, tx, userUID, uid)
-		if errors.Is(err, ErrNotFound) {
+		b, ok := locked[uid]
+		if !ok {
 			continue // balance deleted since: nothing left to adjust
-		}
-		if err != nil {
-			return err
 		}
 		if cur, ok := reversedCurrency[uid]; ok && cur != b.Currency {
 			// Prevented by UpdateBalanceWith (currency is fixed while
@@ -89,7 +94,7 @@ func applyBalanceEffects(ctx context.Context, tx *sql.Tx, userUID string, old, n
 			return err
 		}
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE balances SET balance_minor = ?, debt_minor = ?, version = version + 1, updated_at = ? WHERE id = ?`,
+			`UPDATE balances SET balance_minor = $1, debt_minor = $2, version = version + 1, updated_at = $3 WHERE id = $4`,
 			nullInt(b.BalanceMinor), nullInt(b.DebtMinor), now, b.ID); err != nil {
 			return fmt.Errorf("adjust balance %s: %w", uid, err)
 		}
@@ -104,8 +109,46 @@ func effectCurrency(e transaction.Transaction, ef transaction.Effect) string {
 	return e.Currency
 }
 
+// lockBalances takes row locks (SELECT ... FOR UPDATE) on the user's
+// balances referenced by txs, in uid order, and returns them by uid. Missing
+// balances are simply absent; the caller reports them.
+func lockBalances(ctx context.Context, tx *sql.Tx, userUID string, txs ...*transaction.Transaction) (map[string]balance.Balance, error) {
+	seen := map[string]bool{}
+	var uids []string
+	for _, e := range txs {
+		if e == nil {
+			continue
+		}
+		for _, ef := range e.Effects() {
+			if u := string(ef.BalanceUID); !seen[u] {
+				seen[u] = true
+				uids = append(uids, u)
+			}
+		}
+	}
+	out := map[string]balance.Balance{}
+	if len(uids) == 0 {
+		return out, nil
+	}
+	sort.Strings(uids)
+	rows, err := tx.QueryContext(ctx,
+		`SELECT `+balanceCols+` FROM balances WHERE user_uid = $1 AND uid = ANY($2::uuid[]) ORDER BY uid FOR UPDATE`, userUID, uids)
+	if err != nil {
+		return nil, fmt.Errorf("lock balances: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		b, err := scanBalance(rows)
+		if err != nil {
+			return nil, fmt.Errorf("lock balances: %w", err)
+		}
+		out[string(b.UID)] = b
+	}
+	return out, rows.Err()
+}
+
 func balanceByUIDTx(ctx context.Context, tx *sql.Tx, userUID, uid string) (balance.Balance, error) {
-	b, err := scanBalance(tx.QueryRowContext(ctx, `SELECT `+balanceCols+` FROM balances WHERE uid = ? AND user_uid = ?`, uid, userUID))
+	b, err := scanBalance(tx.QueryRowContext(ctx, `SELECT `+balanceCols+` FROM balances WHERE uid = $1 AND user_uid = $2`, uid, userUID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return balance.Balance{}, ErrNotFound
 	}

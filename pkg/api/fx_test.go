@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/nutmos/expensetrackr/pkg/fx"
 	"github.com/nutmos/expensetrackr/pkg/store"
+	"github.com/nutmos/expensetrackr/pkg/store/storetest"
 
 	"github.com/gin-gonic/gin"
 )
@@ -49,11 +49,7 @@ func fakeFrankfurter(t *testing.T) (*httptest.Server, *atomic.Int32) {
 func newFXServer(t *testing.T, fxURL string) (http.Handler, *store.Store) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	st, err := store.Open(filepath.Join(t.TempDir(), "fx.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
+	st := storetest.Open(t)
 	static := fstest.MapFS{"index.html": {Data: []byte("<!doctype html>")}}
 	client := &fx.Client{BaseURL: fxURL, Cache: st, HTTP: &http.Client{Timeout: 2 * time.Second},
 		Now: func() time.Time { return time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC) }}

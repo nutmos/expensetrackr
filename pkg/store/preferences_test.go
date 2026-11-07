@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 
 	"github.com/nutmos/expensetrackr/pkg/user"
@@ -12,11 +11,7 @@ import (
 // column and what comes back, including rows written by other versions.
 func TestUserPreferencesRoundTrip(t *testing.T) {
 	ctx := context.Background()
-	st, err := Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
+	st := openTestStore(t)
 	u := user.User{DisplayName: "Prefs"}
 	if err := st.CreateUser(ctx, &u); err != nil {
 		t.Fatal(err)
@@ -37,11 +32,11 @@ func TestUserPreferencesRoundTrip(t *testing.T) {
 			return err
 		}, `{"base_currency":"THB"}`, user.Preferences{BaseCurrency: "THB"}},
 		{"unknown keys in the row are tolerated", func() error {
-			_, err := st.db.ExecContext(ctx, `UPDATE users SET preferences = '{"theme":"dark","base_currency":"EUR"}' WHERE id = ?`, u.ID)
+			_, err := st.db.ExecContext(ctx, `UPDATE users SET preferences = '{"theme":"dark","base_currency":"EUR"}' WHERE id = $1`, u.ID)
 			return err
 		}, "", user.Preferences{BaseCurrency: "EUR"}},
 		{"missing keys are tolerated", func() error {
-			_, err := st.db.ExecContext(ctx, `UPDATE users SET preferences = '{"theme":"dark"}' WHERE id = ?`, u.ID)
+			_, err := st.db.ExecContext(ctx, `UPDATE users SET preferences = '{"theme":"dark"}' WHERE id = $1`, u.ID)
 			return err
 		}, "", user.Preferences{}},
 		{"reset stores {}", func() error {
@@ -58,9 +53,11 @@ func TestUserPreferencesRoundTrip(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.wantColumn != "" {
+				// jsonb normalizes spacing and key order: compare as JSON.
 				var col string
-				if err := st.db.QueryRowContext(ctx, `SELECT preferences FROM users WHERE id = ?`, u.ID).Scan(&col); err != nil || col != tc.wantColumn {
-					t.Errorf("column %q %v, want %q", col, err, tc.wantColumn)
+				var same bool
+				if err := st.db.QueryRowContext(ctx, `SELECT preferences::text, preferences = $2::jsonb FROM users WHERE id = $1`, u.ID, tc.wantColumn).Scan(&col, &same); err != nil || !same {
+					t.Errorf("column %s %v, want %s", col, err, tc.wantColumn)
 				}
 			}
 			got, err := st.GetUserByUID(ctx, u.UID)

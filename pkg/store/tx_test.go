@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"path/filepath"
 	"testing"
 )
 
@@ -12,21 +11,22 @@ import (
 // otherwise, treats errRollback as a silent rollback, and rolls back on a
 // panic.
 func TestInTx(t *testing.T) {
-	st, err := Open(filepath.Join(t.TempDir(), "tx.db"))
-	if err != nil {
+	st := openTestStore(t)
+	ctx := context.Background()
+	// A scratch table in the test's own schema.
+	if _, err := st.db.ExecContext(ctx, `CREATE TABLE tx_probe (key text PRIMARY KEY)`); err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
-	ctx := context.Background()
+	var err error
 	put := func(key string) func(tx *sql.Tx) error {
 		return func(tx *sql.Tx) error {
-			_, err := tx.ExecContext(ctx, `INSERT INTO meta (key, value, updated_at) VALUES (?, '1', 'now')`, key)
+			_, err := tx.ExecContext(ctx, `INSERT INTO tx_probe (key) VALUES ($1)`, key)
 			return err
 		}
 	}
 	has := func(key string) bool {
 		var n int
-		if err := st.db.QueryRowContext(ctx, `SELECT count(*) FROM meta WHERE key = ?`, key).Scan(&n); err != nil {
+		if err := st.db.QueryRowContext(ctx, `SELECT count(*) FROM tx_probe WHERE key = $1`, key).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
 		return n == 1

@@ -40,26 +40,24 @@ const apiTokenCols = `id, uid, user_uid, name, prefix, token_hash, scopes, creat
 
 func scanAPIToken(row interface{ Scan(...any) error }) (APIToken, error) {
 	var t APIToken
-	var scopes, created string
-	var used, exp, rev sql.NullString
-	if err := row.Scan(&t.ID, &t.UID, &t.UserUID, &t.Name, &t.Prefix, &t.TokenHash, &scopes, &created, &used, &exp, &rev); err != nil {
+	var scopes string
+	var used, exp, rev sql.NullTime
+	if err := row.Scan(&t.ID, &t.UID, &t.UserUID, &t.Name, &t.Prefix, &t.TokenHash, &scopes, &t.CreatedAt, &used, &exp, &rev); err != nil {
 		return t, err
 	}
 	t.Scopes = strings.Fields(scopes)
-	t.CreatedAt, _ = time.Parse(time.RFC3339, created)
-	t.LastUsedAt, t.ExpiresAt, t.RevokedAt = parseNullTime(used), parseNullTime(exp), parseNullTime(rev)
+	t.CreatedAt = t.CreatedAt.UTC()
+	t.LastUsedAt, t.ExpiresAt, t.RevokedAt = timePtr(used), timePtr(exp), timePtr(rev)
 	return t, nil
 }
 
-func parseNullTime(s sql.NullString) *time.Time {
-	if !s.Valid {
+// timePtr is a nullable timestamptz as a *time.Time in UTC.
+func timePtr(t sql.NullTime) *time.Time {
+	if !t.Valid {
 		return nil
 	}
-	t, err := time.Parse(time.RFC3339, s.String)
-	if err != nil {
-		return nil
-	}
-	return &t
+	v := t.Time.UTC()
+	return &v
 }
 
 func nullTime(t *time.Time) any {
@@ -77,14 +75,11 @@ func (s *Store) CreateAPIToken(ctx context.Context, t *APIToken) error {
 		return err
 	}
 	now := s.nowRFC3339()
-	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO api_tokens (uid, user_uid, name, prefix, token_hash, scopes, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		uid.String(), t.UserUID, t.Name, t.Prefix, t.TokenHash, strings.Join(t.Scopes, " "), now, nullTime(t.ExpiresAt))
+	err = s.db.QueryRowContext(ctx,
+		`INSERT INTO api_tokens (uid, user_uid, name, prefix, token_hash, scopes, created_at, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+		uid.String(), t.UserUID, t.Name, t.Prefix, t.TokenHash, strings.Join(t.Scopes, " "), now, nullTime(t.ExpiresAt)).Scan(&t.ID)
 	if err != nil {
 		return fmt.Errorf("create api token: %w", err)
-	}
-	if t.ID, err = res.LastInsertId(); err != nil {
-		return err
 	}
 	t.UID = uid.String()
 	t.CreatedAt, _ = time.Parse(time.RFC3339, now)
@@ -94,7 +89,7 @@ func (s *Store) CreateAPIToken(ctx context.Context, t *APIToken) error {
 // ListAPITokens returns the user's tokens that are not revoked, newest first.
 func (s *Store) ListAPITokens(ctx context.Context, userUID string) ([]APIToken, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+apiTokenCols+` FROM api_tokens WHERE user_uid = ? AND revoked_at IS NULL ORDER BY created_at DESC, id DESC`, userUID)
+		`SELECT `+apiTokenCols+` FROM api_tokens WHERE user_uid = $1 AND revoked_at IS NULL ORDER BY created_at DESC, id DESC`, userUID)
 	if err != nil {
 		return nil, fmt.Errorf("list api tokens: %w", err)
 	}
@@ -113,7 +108,7 @@ func (s *Store) ListAPITokens(ctx context.Context, userUID string) ([]APIToken, 
 // GetAPITokenByHash returns the token with this hash (revoked and expired
 // ones too; the caller checks), or ErrTokenNotFound.
 func (s *Store) GetAPITokenByHash(ctx context.Context, tokenHash string) (APIToken, error) {
-	t, err := scanAPIToken(s.db.QueryRowContext(ctx, `SELECT `+apiTokenCols+` FROM api_tokens WHERE token_hash = ?`, tokenHash))
+	t, err := scanAPIToken(s.db.QueryRowContext(ctx, `SELECT `+apiTokenCols+` FROM api_tokens WHERE token_hash = $1`, tokenHash))
 	if errors.Is(err, sql.ErrNoRows) {
 		return t, ErrTokenNotFound
 	}
@@ -125,7 +120,7 @@ func (s *Store) GetAPITokenByHash(ctx context.Context, tokenHash string) (APITok
 
 // TouchAPIToken records when a token was last used.
 func (s *Store) TouchAPIToken(ctx context.Context, id int64, at time.Time) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE api_tokens SET last_used_at = ? WHERE id = ?`, ts(at), id)
+	_, err := s.db.ExecContext(ctx, `UPDATE api_tokens SET last_used_at = $1 WHERE id = $2`, ts(at), id)
 	return err
 }
 
@@ -134,7 +129,7 @@ func (s *Store) TouchAPIToken(ctx context.Context, id int64, at time.Time) error
 // ErrTokenNotFound.
 func (s *Store) RevokeAPIToken(ctx context.Context, userUID, uid string) error {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE api_tokens SET revoked_at = ? WHERE uid = ? AND user_uid = ? AND revoked_at IS NULL`, s.nowRFC3339(), uid, userUID)
+		`UPDATE api_tokens SET revoked_at = $1 WHERE uid = $2 AND user_uid = $3 AND revoked_at IS NULL`, s.nowRFC3339(), uid, userUID)
 	if err != nil {
 		return fmt.Errorf("revoke api token: %w", err)
 	}

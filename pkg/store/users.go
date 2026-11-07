@@ -6,12 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/nutmos/expensetrackr/pkg/common_type"
 	"github.com/nutmos/expensetrackr/pkg/user"
-
-	"modernc.org/sqlite"
-	sqlite3 "modernc.org/sqlite/lib"
 )
 
 var (
@@ -34,31 +32,24 @@ var (
 // otherPasswordUsers counts users other than uid that have a password.
 func otherPasswordUsers(ctx context.Context, tx *sql.Tx, uid string) (int, error) {
 	var n int
-	err := tx.QueryRowContext(ctx, `SELECT count(*) FROM users WHERE password_hash IS NOT NULL AND uid <> ?`, uid).Scan(&n)
+	err := tx.QueryRowContext(ctx, `SELECT count(*) FROM users WHERE password_hash IS NOT NULL AND uid <> $1`, uid).Scan(&n)
 	return n, err
 }
 
 const userCols = `id, uid, username, email, email_verified_at, display_name, preferences,
 	password_hash, password_updated_at, status, last_login_at, created_at, updated_at`
 
+// mapUserErr maps constraint violations on users and user_identities to the
+// store's errors (by constraint name, see schema.go).
 func mapUserErr(err error) error {
-	var se *sqlite.Error
-	if !errors.As(err, &se) {
-		return err
-	}
-	switch se.Code() {
-	case sqlite3.SQLITE_CONSTRAINT_UNIQUE:
-		msg := se.Error()
-		if strings.Contains(msg, "users.username") {
-			return ErrDuplicateUsername
-		}
-		if strings.Contains(msg, "users.email") {
-			return ErrDuplicateEmail
-		}
-		if strings.Contains(msg, "user_identities.provider") {
-			return ErrDuplicateIdentity
-		}
-	case sqlite3.SQLITE_CONSTRAINT_FOREIGNKEY:
+	switch {
+	case isUniqueViolation(err, "users_username_uq"):
+		return ErrDuplicateUsername
+	case isUniqueViolation(err, "users_email_uq"):
+		return ErrDuplicateEmail
+	case isUniqueViolation(err, "user_identities_provider_subject_uq"):
+		return ErrDuplicateIdentity
+	case isForeignKeyViolation(err):
 		return ErrNotFound // identity for a user that does not exist
 	}
 	return err
@@ -85,18 +76,17 @@ func (s *Store) CreateUser(ctx context.Context, u *user.User) error {
 	if u.Status == "" {
 		u.Status = user.StatusActive
 	}
-	res, err := s.db.ExecContext(ctx,
+	err = s.db.QueryRowContext(ctx,
 		`INSERT INTO users (uid, username, email, display_name, preferences, status, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		u.UID, nullStr(u.Username), nullStr(u.Email), u.DisplayName, u.Preferences.StoredJSON(), string(u.Status), u.CreatedAt)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+		u.UID, nullStr(u.Username), nullStr(u.Email), u.DisplayName, u.Preferences.StoredJSON(), string(u.Status), u.CreatedAt).Scan(&u.ID)
 	if err != nil {
 		if m := mapUserErr(err); m != err {
 			return m
 		}
 		return fmt.Errorf("insert user: %w", err)
 	}
-	u.ID, err = res.LastInsertId()
-	return err
+	return nil
 }
 
 // ListUsers returns all users, oldest first.
@@ -119,8 +109,8 @@ func (s *Store) ListUsers(ctx context.Context) ([]user.User, error) {
 
 // GetUserByUID returns one user or ErrNotFound.
 func (s *Store) GetUserByUID(ctx context.Context, uid string) (user.User, error) {
-	u, err := scanUser(s.db.QueryRowContext(ctx, `SELECT `+userCols+` FROM users WHERE uid = ?`, uid))
-	if errors.Is(err, sql.ErrNoRows) {
+	u, err := scanUser(s.db.QueryRowContext(ctx, `SELECT `+userCols+` FROM users WHERE uid = $1`, uid))
+	if errors.Is(err, sql.ErrNoRows) || isInvalidText(err) { // not a UUID: no such user
 		return user.User{}, ErrNotFound
 	}
 	return u, err
@@ -133,7 +123,7 @@ func (s *Store) GetUserByUID(ctx context.Context, uid string) (user.User, error)
 func (s *Store) UpdateUser(ctx context.Context, id int64, fn func(cur user.User) (user.User, error)) (user.User, error) {
 	var saved user.User
 	err := s.inTx(ctx, "update user", func(tx *sql.Tx) error {
-		cur, err := scanUser(tx.QueryRowContext(ctx, `SELECT `+userCols+` FROM users WHERE id = ?`, id))
+		cur, err := scanUser(tx.QueryRowContext(ctx, `SELECT `+userCols+` FROM users WHERE id = $1 FOR UPDATE`, id))
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -157,8 +147,8 @@ func (s *Store) UpdateUser(ctx context.Context, id int64, fn func(cur user.User)
 			return ErrUsernameRequired
 		}
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE users SET username = ?, email = ?, email_verified_at = ?, display_name = ?, preferences = ?, updated_at = ?
-		 WHERE id = ?`,
+			`UPDATE users SET username = $1, email = $2, email_verified_at = $3, display_name = $4, preferences = $5, updated_at = $6
+		 WHERE id = $7`,
 			nullStr(next.Username), nullStr(next.Email), nullStr(next.EmailVerifiedAt), next.DisplayName, next.Preferences.StoredJSON(), now, id); err != nil {
 			if m := mapUserErr(err); m != err {
 				return m
@@ -186,9 +176,12 @@ func sameStr(a, b *string) bool {
 // password fails with ErrLastPasswordUser, checked in the same transaction.
 func (s *Store) DeleteUser(ctx context.Context, id int64) error {
 	return s.inTx(ctx, "delete user", func(tx *sql.Tx) error {
+		if err := lockLoginUsers(ctx, tx); err != nil {
+			return fmt.Errorf("delete user: %w", err)
+		}
 		var uid string
 		var hasPassword bool
-		err := tx.QueryRowContext(ctx, `SELECT uid, password_hash IS NOT NULL FROM users WHERE id = ?`, id).Scan(&uid, &hasPassword)
+		err := tx.QueryRowContext(ctx, `SELECT uid, password_hash IS NOT NULL FROM users WHERE id = $1`, id).Scan(&uid, &hasPassword)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -204,7 +197,7 @@ func (s *Store) DeleteUser(ctx context.Context, id int64) error {
 				return ErrLastPasswordUser
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, id); err != nil {
 			return fmt.Errorf("delete user: %w", err)
 		}
 		return nil
@@ -222,13 +215,16 @@ func (s *Store) SetPasswordHash(ctx context.Context, uid string, hash *string) e
 	}
 	return s.inTx(ctx, "set password hash", func(tx *sql.Tx) error {
 		if hash == nil {
+			if err := lockLoginUsers(ctx, tx); err != nil {
+				return fmt.Errorf("set password hash: %w", err)
+			}
 			n, err := otherPasswordUsers(ctx, tx, uid)
 			if err != nil {
 				return fmt.Errorf("set password hash: %w", err)
 			}
 			if n == 0 {
 				var has bool
-				if err := tx.QueryRowContext(ctx, `SELECT password_hash IS NOT NULL FROM users WHERE uid = ?`, uid).Scan(&has); err == nil && has {
+				if err := tx.QueryRowContext(ctx, `SELECT password_hash IS NOT NULL FROM users WHERE uid = $1`, uid).Scan(&has); err == nil && has {
 					return ErrLastPasswordUser
 				}
 			}
@@ -239,7 +235,7 @@ func (s *Store) SetPasswordHash(ctx context.Context, uid string, hash *string) e
 			stamp = nil
 		}
 		res, err := tx.ExecContext(ctx,
-			`UPDATE users SET password_hash = ?, password_updated_at = ?, updated_at = ? WHERE uid = ?`,
+			`UPDATE users SET password_hash = $1, password_updated_at = $2, updated_at = $3 WHERE uid = $4`,
 			nullStr(hash), stamp, now, uid)
 		if err != nil {
 			return fmt.Errorf("set password hash: %w", err)
@@ -273,23 +269,22 @@ func (s *Store) CreateIdentity(ctx context.Context, id *user.Identity) error {
 	id.UID = uid.String()
 	id.CreatedAt = s.nowRFC3339()
 	id.LastUsedAt = nil
-	res, err := s.db.ExecContext(ctx,
+	err = s.db.QueryRowContext(ctx,
 		`INSERT INTO user_identities (uid, user_uid, provider, provider_subject, email, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		id.UID, id.UserUID, string(id.Provider), id.ProviderSubject, nullStr(id.Email), id.CreatedAt)
+		 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+		id.UID, id.UserUID, string(id.Provider), id.ProviderSubject, nullStr(id.Email), id.CreatedAt).Scan(&id.ID)
 	if err != nil {
 		if m := mapUserErr(err); m != err {
 			return m
 		}
 		return fmt.Errorf("insert identity: %w", err)
 	}
-	id.ID, err = res.LastInsertId()
-	return err
+	return nil
 }
 
 // ListIdentities returns the identities linked to a user (oldest first).
 func (s *Store) ListIdentities(ctx context.Context, userUID string) ([]user.Identity, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+identityCols+` FROM user_identities WHERE user_uid = ? ORDER BY id`, userUID)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+identityCols+` FROM user_identities WHERE user_uid = $1 ORDER BY id`, userUID)
 	if err != nil {
 		return nil, fmt.Errorf("list identities: %w", err)
 	}
@@ -298,13 +293,15 @@ func (s *Store) ListIdentities(ctx context.Context, userUID string) ([]user.Iden
 	for rows.Next() {
 		var id user.Identity
 		var provider string
-		var email, used sql.NullString
-		if err := rows.Scan(&id.ID, &id.UID, &id.UserUID, &provider, &id.ProviderSubject, &email, &id.CreatedAt, &used); err != nil {
+		var email sql.NullString
+		var created time.Time
+		var used sql.NullTime
+		if err := rows.Scan(&id.ID, &id.UID, &id.UserUID, &provider, &id.ProviderSubject, &email, &created, &used); err != nil {
 			return nil, fmt.Errorf("scan identity: %w", err)
 		}
 		id.Provider = user.Provider(provider)
 		id.Email = strPtr(email)
-		id.LastUsedAt = strPtr(used)
+		id.CreatedAt, id.LastUsedAt = ts(created), nullTS(used)
 		out = append(out, id)
 	}
 	return out, rows.Err()
@@ -316,7 +313,7 @@ func (s *Store) FindUserByIdentity(ctx context.Context, provider user.Provider, 
 	u, err := scanUser(s.db.QueryRowContext(ctx,
 		`SELECT `+prefixed("u.", userCols)+` FROM users u
 		 JOIN user_identities i ON i.user_uid = u.uid
-		 WHERE i.provider = ? AND i.provider_subject = ?`, string(provider), subject))
+		 WHERE i.provider = $1 AND i.provider_subject = $2`, string(provider), subject))
 	if errors.Is(err, sql.ErrNoRows) {
 		return user.User{}, ErrNotFound
 	}
@@ -341,18 +338,21 @@ func strPtr(n sql.NullString) *string {
 
 func scanUser(r scanner) (user.User, error) {
 	var u user.User
-	var username, email, verified, hash, pwUpdated, lastLogin, updated sql.NullString
+	var username, email, hash sql.NullString
+	var verified, pwUpdated, lastLogin, updated sql.NullTime
+	var created time.Time
 	var prefs, status string
 	var err error
 	if err = r.Scan(&u.ID, &u.UID, &username, &email, &verified, &u.DisplayName, &prefs,
-		&hash, &pwUpdated, &status, &lastLogin, &u.CreatedAt, &updated); err != nil {
+		&hash, &pwUpdated, &status, &lastLogin, &created, &updated); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return u, err
 		}
 		return u, fmt.Errorf("scan user: %w", err)
 	}
-	u.Username, u.Email, u.EmailVerifiedAt = strPtr(username), strPtr(email), strPtr(verified)
-	u.PasswordHash, u.PasswordUpdated, u.LastLoginAt, u.UpdatedAt = strPtr(hash), strPtr(pwUpdated), strPtr(lastLogin), strPtr(updated)
+	u.Username, u.Email, u.EmailVerifiedAt = strPtr(username), strPtr(email), nullTS(verified)
+	u.PasswordHash, u.PasswordUpdated, u.LastLoginAt, u.UpdatedAt = strPtr(hash), nullTS(pwUpdated), nullTS(lastLogin), nullTS(updated)
+	u.CreatedAt = ts(created)
 	u.HasPassword = u.PasswordHash != nil
 	if u.Preferences, err = user.ParseStoredPreferences([]byte(prefs)); err != nil {
 		return u, err

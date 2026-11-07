@@ -3,11 +3,11 @@ package api
 import (
 	"fmt"
 	"net/url"
-	"path/filepath"
 	"testing"
 	"testing/fstest"
 
 	"github.com/nutmos/expensetrackr/pkg/store"
+	"github.com/nutmos/expensetrackr/pkg/store/storetest"
 
 	"github.com/gin-gonic/gin"
 )
@@ -107,11 +107,7 @@ func TestTransactionPagination(t *testing.T) {
 // or the destination of a transaction, and only the user's own rows.
 func TestTransactionBalanceFilter(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	st, err := store.Open(filepath.Join(t.TempDir(), "filter.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
+	st := storetest.Open(t)
 	router := (&Server{Store: st, Static: fstest.MapFS{"index.html": {Data: []byte("x")}}}).Router()
 	alice := asUser(t, router, st, "alice")
 	bob := asUser(t, router, st, "bob")

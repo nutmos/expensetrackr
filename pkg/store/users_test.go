@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"path/filepath"
 	"testing"
 
 	"github.com/nutmos/expensetrackr/pkg/user"
@@ -27,11 +26,7 @@ func sp(s string) *string { return &s }
 
 func TestUserStore(t *testing.T) {
 	ctx := context.Background()
-	st, err := Open(filepath.Join(t.TempDir(), "u.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
+	st := openTestStore(t)
 
 	a := newUser(t, st, user.Input{DisplayName: "Alice", Username: sp("Alice"), Email: sp("Alice@Example.com"),
 		Preferences: json.RawMessage(`{ "base_currency": "thb" }`)})
@@ -60,7 +55,7 @@ func TestUserStore(t *testing.T) {
 	// The database itself rejects non-object preferences.
 	for _, raw := range []string{`[1,2]`, `{bad`} {
 		if _, err := st.db.ExecContext(ctx, `INSERT INTO users (uid, display_name, preferences, status, created_at)
-			VALUES ('00000000-0000-4000-8000-000000000001', 'x', ?, 'active', '2026-01-01T00:00:00Z')`, raw); err == nil {
+			VALUES ('00000000-0000-4000-8000-000000000001', 'x', $1, 'active', '2026-01-01T00:00:00Z')`, raw); err == nil {
 			t.Errorf("preferences %s accepted by DB", raw)
 		}
 	}
@@ -70,7 +65,7 @@ func TestUserStore(t *testing.T) {
 	if err := st.SetPasswordHash(ctx, a.UID, sp("$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.db.ExecContext(ctx, `UPDATE users SET email_verified_at = '2026-10-08T00:00:00Z' WHERE uid = ?`, a.UID); err != nil {
+	if _, err := st.db.ExecContext(ctx, `UPDATE users SET email_verified_at = '2026-10-08T00:00:00Z' WHERE uid = $1`, a.UID); err != nil {
 		t.Fatal(err)
 	}
 	upd, err := st.UpdateUser(ctx, a.ID, func(cur user.User) (user.User, error) {
@@ -149,7 +144,7 @@ func TestUserStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	var n int
-	if err := st.db.QueryRowContext(ctx, `SELECT count(*) FROM user_identities WHERE user_uid = ?`, a.UID).Scan(&n); err != nil || n != 0 {
+	if err := st.db.QueryRowContext(ctx, `SELECT count(*) FROM user_identities WHERE user_uid = $1`, a.UID).Scan(&n); err != nil || n != 0 {
 		t.Errorf("identities after delete: %d %v", n, err)
 	}
 	if err := st.DeleteUser(ctx, a.ID); !errors.Is(err, ErrNotFound) {

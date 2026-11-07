@@ -4,13 +4,15 @@ import (
 	"database/sql"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib" // "pgx" driver for direct SQL
+
 	"github.com/nutmos/expensetrackr/pkg/auth"
 	"github.com/nutmos/expensetrackr/pkg/store"
+	"github.com/nutmos/expensetrackr/pkg/store/storetest"
 
 	"github.com/gin-gonic/gin"
 )
@@ -23,12 +25,14 @@ type authClient struct {
 	ip     string
 }
 
+// lastAuthDB is the database URL of the last newAuthServer, for tests that
+// change rows directly.
 var lastAuthDB string
 
 func newAuthServer(t *testing.T, srv *Server) (*Server, *store.Store) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	lastAuthDB = filepath.Join(t.TempDir(), "auth.db")
+	lastAuthDB = storetest.URL(t)
 	st, err := store.Open(lastAuthDB)
 	if err != nil {
 		t.Fatal(err)
@@ -158,7 +162,7 @@ func TestAuthDisabledUserCannotLogin(t *testing.T) {
 	c := &authClient{t: t, h: srv.Router()}
 	c.req("POST", "/api/auth/register", `{"username":"nat","password":"pw-12345"}`, nil)
 	c.req("POST", "/api/auth/logout", "", nil)
-	db, err := sql.Open("sqlite", "file:"+lastAuthDB)
+	db, err := sql.Open("pgx", lastAuthDB)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,13 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/nutmos/expensetrackr/pkg/balance"
 	"github.com/nutmos/expensetrackr/pkg/common_type"
 	"github.com/nutmos/expensetrackr/pkg/money"
-
-	"modernc.org/sqlite"
-	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // ErrDuplicateName is returned when another of the same user's balances
@@ -25,10 +23,10 @@ var ErrBalanceInUse = errors.New("balance is used by transactions")
 
 const balanceCols = `id, uid, name, type, currency, description, amount_scale, balance_minor, debt_minor, limit_minor, created_at, updated_at, version`
 
-// mapBalanceErr turns a UNIQUE violation on balances.name into ErrDuplicateName.
+// mapBalanceErr turns a violation of the per-user unique name index into
+// ErrDuplicateName.
 func mapBalanceErr(err error) error {
-	var se *sqlite.Error
-	if errors.As(err, &se) && se.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE {
+	if isUniqueViolation(err, "balances_user_name_uq") {
 		return ErrDuplicateName
 	}
 	return err
@@ -56,22 +54,17 @@ func (s *Store) CreateBalance(ctx context.Context, userUID string, b *balance.Ba
 	b.UID = uid
 	b.CreatedAt = s.nowRFC3339()
 	b.UpdatedAt, b.Version = nil, 1
-	res, err := s.db.ExecContext(ctx,
+	err = s.db.QueryRowContext(ctx,
 		`INSERT INTO balances (uid, user_uid, name, type, currency, description, amount_scale, balance_minor, debt_minor, limit_minor, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
 		b.UID, userUID, b.Name, string(b.Type), b.Currency, b.Description, scale,
-		nullInt(b.BalanceMinor), nullInt(b.DebtMinor), nullInt(b.LimitMinor), b.CreatedAt)
+		nullInt(b.BalanceMinor), nullInt(b.DebtMinor), nullInt(b.LimitMinor), b.CreatedAt).Scan(&b.ID)
 	if err != nil {
 		if mapped := mapBalanceErr(err); mapped == ErrDuplicateName {
 			return mapped
 		}
 		return fmt.Errorf("insert balance: %w", err)
 	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("insert balance: %w", err)
-	}
-	b.ID = id
 	return nil
 }
 
@@ -79,11 +72,11 @@ func (s *Store) CreateBalance(ctx context.Context, userUID string, b *balance.Ba
 // accounts, credit cards, other assets, other liabilities), then by name.
 // typ "" means all.
 func (s *Store) ListBalances(ctx context.Context, userUID string, typ balance.Type) ([]balance.Balance, error) {
-	query := `SELECT ` + balanceCols + ` FROM balances WHERE user_uid = ?`
+	query := `SELECT ` + balanceCols + ` FROM balances WHERE user_uid = $1`
 	args := []any{userUID}
 	if typ != "" {
-		query += ` AND type = ?`
 		args = append(args, string(typ))
+		query += fmt.Sprintf(` AND type = $%d`, len(args))
 	}
 	query += ` ORDER BY CASE type WHEN 'payment_account' THEN 1 WHEN 'credit_card' THEN 2
 	                              WHEN 'other_asset' THEN 3 ELSE 4 END, name, id`
@@ -122,7 +115,7 @@ func (s *Store) ListPayableBalances(ctx context.Context, userUID string) ([]bala
 // GetBalance returns one balance by numeric id for userUID or ErrNotFound
 // (including when the id belongs to another user).
 func (s *Store) GetBalance(ctx context.Context, userUID string, id int64) (balance.Balance, error) {
-	b, err := scanBalance(s.db.QueryRowContext(ctx, `SELECT `+balanceCols+` FROM balances WHERE id = ? AND user_uid = ?`, id, userUID))
+	b, err := scanBalance(s.db.QueryRowContext(ctx, `SELECT `+balanceCols+` FROM balances WHERE id = $1 AND user_uid = $2`, id, userUID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return balance.Balance{}, ErrNotFound
 	}
@@ -132,8 +125,8 @@ func (s *Store) GetBalance(ctx context.Context, userUID string, id int64) (balan
 // GetBalanceByUID returns one balance by its UUID for userUID or ErrNotFound
 // (including when the uid belongs to another user).
 func (s *Store) GetBalanceByUID(ctx context.Context, userUID string, uid common_type.UID) (balance.Balance, error) {
-	b, err := scanBalance(s.db.QueryRowContext(ctx, `SELECT `+balanceCols+` FROM balances WHERE uid = ? AND user_uid = ?`, uid, userUID))
-	if errors.Is(err, sql.ErrNoRows) {
+	b, err := scanBalance(s.db.QueryRowContext(ctx, `SELECT `+balanceCols+` FROM balances WHERE uid = $1 AND user_uid = $2`, uid, userUID))
+	if errors.Is(err, sql.ErrNoRows) || isInvalidText(err) { // not a UUID: no such balance
 		return balance.Balance{}, ErrNotFound
 	}
 	return b, err
@@ -159,8 +152,8 @@ func (s *Store) UpdateBalance(ctx context.Context, userUID string, id int64, fn 
 func (s *Store) UpdateBalanceWith(ctx context.Context, userUID string, id int64, opts WriteOptions, fn func(cur balance.Balance) (balance.Balance, error)) (balance.Balance, error) {
 	var saved balance.Balance
 	err := s.inTx(ctx, "update balance", func(tx *sql.Tx) error {
-
-		cur, err := scanBalance(tx.QueryRowContext(ctx, `SELECT `+balanceCols+` FROM balances WHERE id = ? AND user_uid = ?`, id, userUID))
+		// FOR UPDATE: concurrent writes to this balance wait for this one.
+		cur, err := scanBalance(tx.QueryRowContext(ctx, `SELECT `+balanceCols+` FROM balances WHERE id = $1 AND user_uid = $2 FOR UPDATE`, id, userUID))
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -188,7 +181,7 @@ func (s *Store) UpdateBalanceWith(ctx context.Context, userUID string, id int64,
 		}
 		if next.Currency != cur.Currency {
 			var n int
-			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM transactions WHERE user_uid = ? AND (balance_uid = ? OR to_balance_uid = ?)`, userUID, cur.UID, cur.UID).Scan(&n); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM transactions WHERE user_uid = $1 AND (balance_uid = $2 OR to_balance_uid = $3)`, userUID, cur.UID, cur.UID).Scan(&n); err != nil {
 				return fmt.Errorf("update balance: %w", err)
 			}
 			if n > 0 {
@@ -197,9 +190,9 @@ func (s *Store) UpdateBalanceWith(ctx context.Context, userUID string, id int64,
 		}
 
 		res, err := tx.ExecContext(ctx,
-			`UPDATE balances SET name = ?, currency = ?, description = ?, amount_scale = ?,
-		        balance_minor = ?, debt_minor = ?, limit_minor = ?, updated_at = ?, version = ?
-		 WHERE id = ? AND version = ?`,
+			`UPDATE balances SET name = $1, currency = $2, description = $3, amount_scale = $4,
+		        balance_minor = $5, debt_minor = $6, limit_minor = $7, updated_at = $8, version = $9
+		 WHERE id = $10 AND version = $11`,
 			next.Name, next.Currency, next.Description, scale,
 			nullInt(next.BalanceMinor), nullInt(next.DebtMinor), nullInt(next.LimitMinor), now, next.Version, id, cur.Version)
 		if err != nil {
@@ -234,9 +227,9 @@ func (s *Store) DeleteBalance(ctx context.Context, userUID string, id int64) err
 // reference it keep its uid and name snapshot; editing or deleting them later
 // skips the missing balance.
 func (s *Store) DeleteBalanceWith(ctx context.Context, userUID string, id int64, opts WriteOptions) error {
-	q, args := `DELETE FROM balances WHERE id = ? AND user_uid = ?`, []any{id, userUID}
+	q, args := `DELETE FROM balances WHERE id = $1 AND user_uid = $2`, []any{id, userUID}
 	if opts.Version > 0 {
-		q, args = q+` AND version = ?`, append(args, opts.Version)
+		q, args = q+` AND version = $3`, append(args, opts.Version)
 	}
 	res, err := s.db.ExecContext(ctx, q, args...)
 	if err != nil {
@@ -262,9 +255,10 @@ func scanBalance(r scanner) (balance.Balance, error) {
 	var typ string
 	var scale int
 	var bal, debt, limit sql.NullInt64
-	var updated sql.NullString
+	var created time.Time
+	var updated sql.NullTime
 	if err := r.Scan(&b.ID, &b.UID, &b.Name, &typ, &b.Currency, &b.Description, &scale,
-		&bal, &debt, &limit, &b.CreatedAt, &updated, &b.Version); err != nil {
+		&bal, &debt, &limit, &created, &updated, &b.Version); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return b, err
 		}
@@ -279,8 +273,6 @@ func scanBalance(r scanner) (balance.Balance, error) {
 		return &v
 	}
 	b.SetAmounts(scale, ptr(bal), ptr(debt), ptr(limit))
-	if updated.Valid {
-		b.UpdatedAt = &updated.String
-	}
+	b.CreatedAt, b.UpdatedAt = ts(created), nullTS(updated)
 	return b, nil
 }

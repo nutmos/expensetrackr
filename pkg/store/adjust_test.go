@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"sync"
 	"testing"
 
@@ -41,11 +40,7 @@ type fixture struct {
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
-	st, err := Open(filepath.Join(t.TempDir(), "adjust.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
+	st := openTestStore(t)
 	f := &fixture{t: t, st: st, userUID: seedOwner(t, st)}
 	mk := func(in balance.Input) balance.Balance {
 		b := mustBalance(t, in)

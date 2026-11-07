@@ -175,17 +175,20 @@ func TestAPITokenDisabledUserAndTouch(t *testing.T) {
 	h, alice, _ := tokenSetup(t, srv)
 	tok := createTok(t, alice, `{"name":"Expense agent","scopes":["read"]}`)
 	anon := &authClient{t: t, h: h}
-	db, err := sql.Open("sqlite", "file:"+lastAuthDB)
+	db, err := sql.Open("pgx", lastAuthDB)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 	lastUsed := func() string {
-		var s sql.NullString
-		if err := db.QueryRow(`SELECT last_used_at FROM api_tokens WHERE uid = ?`, tok.UID).Scan(&s); err != nil {
+		var at sql.NullTime
+		if err := db.QueryRow(`SELECT last_used_at FROM api_tokens WHERE uid = $1`, tok.UID).Scan(&at); err != nil {
 			t.Fatal(err)
 		}
-		return s.String
+		if !at.Valid {
+			return ""
+		}
+		return at.Time.UTC().Format(time.RFC3339)
 	}
 	steps := []struct {
 		advance time.Duration
@@ -207,7 +210,7 @@ func TestAPITokenDisabledUserAndTouch(t *testing.T) {
 
 	// Hash-only storage: the plaintext appears nowhere in the database.
 	var hits int
-	if err := db.QueryRow(`SELECT count(*) FROM api_tokens WHERE token_hash = ? AND instr(name || prefix || token_hash || scopes, ?) = 0`,
+	if err := db.QueryRow(`SELECT count(*) FROM api_tokens WHERE token_hash = $1 AND strpos(name || prefix || token_hash || scopes, $2) = 0`,
 		auth.HashToken(tok.Token), tok.Token).Scan(&hits); err != nil || hits != 1 {
 		t.Errorf("hash-only storage: hits=%d err=%v", hits, err)
 	}

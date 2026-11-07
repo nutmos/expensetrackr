@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -17,11 +16,7 @@ import (
 
 func newUserStore(t *testing.T, names ...string) (*Store, []string) {
 	t.Helper()
-	st, err := Open(filepath.Join(t.TempDir(), "cats.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
+	st := openTestStore(t)
 	var uids []string
 	for _, n := range names {
 		u := user.User{Username: strp(n), DisplayName: n}
@@ -115,14 +110,14 @@ func TestUserCategoriesCRUDIsolationAndLimits(t *testing.T) {
 
 	// Deleting a user cascades its categories row.
 	var bid int64
-	if err := st.db.QueryRow(`SELECT id FROM users WHERE uid = ?`, b).Scan(&bid); err != nil {
+	if err := st.db.QueryRow(`SELECT id FROM users WHERE uid = $1`, b).Scan(&bid); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.DeleteUser(ctx, bid); err != nil {
 		t.Fatal(err)
 	}
 	var n int
-	if err := st.db.QueryRow(`SELECT count(*) FROM user_categories WHERE user_uid = ?`, b).Scan(&n); err != nil {
+	if err := st.db.QueryRow(`SELECT count(*) FROM user_categories WHERE user_uid = $1`, b).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 0 {
@@ -137,8 +132,8 @@ func TestUserCategoriesInUse(t *testing.T) {
 	if err := st.CreateCategory(ctx, u[0], &food); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.db.Exec(`INSERT INTO transactions (uid, user_uid, type, amount_minor, amount_scale, currency, balance_uid, account, category_uid, spent_at, spent_at_unix, created_at)
-		VALUES ('cccccccc-cccc-4ccc-8ccc-cccccccccccc', ?, 'expense', 100, 2, 'THB', 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'Cash', ?, '2026-01-05T00:00:00Z', 1, '2026-01-05T00:00:00Z')`, u[0], food.UID); err != nil {
+	if _, err := st.db.Exec(`INSERT INTO transactions (uid, user_uid, type, amount_minor, amount_scale, currency, balance_uid, account, category_uid, spent_at, spent_at_utc, created_at)
+		VALUES ('cccccccc-cccc-4ccc-8ccc-cccccccccccc', $1, 'expense', 100, 2, 'THB', 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'Cash', $2, '2026-01-05T00:00:00Z', '2026-01-05T00:00:00Z', '2026-01-05T00:00:00Z')`, u[0], food.UID); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.DeleteCategory(ctx, u[0], food.UID); !errors.Is(err, ErrCategoryInUse) {
@@ -166,26 +161,19 @@ func TestUserCategoriesVersionConflictRetry(t *testing.T) {
 	if err := st.CreateCategory(ctx, a, &first); err != nil {
 		t.Fatal(err)
 	}
-	// Simulate another process committing between our read and our write
-	// (a second connection to the same WAL database): our write sees a stale
-	// row, is retried once from a fresh read and succeeds without losing the
-	// other writer's change.
-	var path string
-	if err := st.db.QueryRowContext(ctx, `SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&path); err != nil {
-		t.Fatal(err)
-	}
-	other, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer other.Close()
+	// Simulate another writer committing between our read and our write: the
+	// hook runs inside our transaction and writes through another pooled
+	// connection (st.db), so it commits on its own. Our write sees a stale
+	// version, is retried once from a fresh read and succeeds without losing
+	// the other writer's change.
+	other := st.db
 	calls := 0
 	testHookCategoryRead = func(_ *sql.Tx, userUID string) {
 		calls++
 		if calls == 1 {
 			if _, err := other.Exec(`UPDATE user_categories SET version = version + 1,
-				categories = json_insert(categories, '$[#]', json('{"uid":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","name":"Other","type":"expense","description":"","created_at":"2026-01-01T00:00:00Z","updated_at":null}'))
-				WHERE user_uid = ?`, userUID); err != nil {
+				categories = categories || '[{"uid":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","name":"Other","type":"expense","description":"","created_at":"2026-01-01T00:00:00Z","updated_at":null}]'::jsonb
+				WHERE user_uid = $1`, userUID); err != nil {
 				t.Error(err)
 			}
 		}
@@ -203,7 +191,7 @@ func TestUserCategoriesVersionConflictRetry(t *testing.T) {
 	}
 	// Two conflicts in a row: give up with a conflict error, nothing lost.
 	testHookCategoryRead = func(_ *sql.Tx, userUID string) {
-		if _, err := other.Exec(`UPDATE user_categories SET version = version + 1 WHERE user_uid = ?`, userUID); err != nil {
+		if _, err := other.Exec(`UPDATE user_categories SET version = version + 1 WHERE user_uid = $1`, userUID); err != nil {
 			t.Error(err)
 		}
 	}
