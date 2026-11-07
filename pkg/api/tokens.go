@@ -41,7 +41,8 @@ const (
 var allowedScopes = []string{ScopeRead, ScopeWrite}
 
 // sessionOnlyAPI are routes that need a cookie session: managing tokens,
-// changing credentials and logging out. A token gets 403 there.
+// changing credentials or the account (the username is the login name),
+// deleting it, and logging out. A token gets 403 there.
 var sessionOnlyAPI = map[string]bool{
 	"GET /api/tokens":         true,
 	"POST /api/tokens":        true,
@@ -49,6 +50,9 @@ var sessionOnlyAPI = map[string]bool{
 	"PUT /api/auth/password":  true,
 	"POST /api/auth/logout":   true,
 	"POST /api/auth/register": true, // creates accounts with passwords
+	"PUT /api/users/:uid":     true, // issue #76
+	"PATCH /api/users/:uid":   true,
+	"DELETE /api/users/:uid":  true,
 }
 
 func (s *Server) registerTokenRoutes(api *gin.RouterGroup) {

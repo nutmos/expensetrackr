@@ -532,14 +532,14 @@ only on validation, conflict and duplicate-name errors.
 | GET    | `/api/tokens`          | 200 `{"tokens":[...],"count":n}` | Session only. Your active API tokens (display prefix, never the secret) |
 | POST   | `/api/tokens`          | 201 + token incl. `token` (shown once) | Session only. `name` (≤ 64 chars), `scopes` (`read`, `write`), optional `expires_in_days` (1–3650); 422 invalid |
 | DELETE | `/api/tokens/:uid`     | 204 | Session only. Revokes; 404 not yours / unknown |
-| POST   | `/api/users`           | 201 + user, `Location: /api/users/<uid>` | `display_name` required; `username`, `email`, `preferences` (object, see below) optional. 422 invalid, 409 duplicate username/email, 400 unknown fields (incl. `password`, `password_hash`) |
-| GET    | `/api/users`           | 200 `{"users":[...],"count":n}` | Oldest first |
-| GET    | `/api/users/:uid`      | 200 + user | Never includes `password_hash`; `has_password` instead |
+| POST   | `/api/users`           | 403 `use_register` | Disabled: create accounts with `POST /api/auth/register` |
+| GET    | `/api/users`           | 200 `{"users":[...],"count":1}` | Only your own account |
+| GET    | `/api/users/:uid`      | 200 + user | **Your own uid only**: any other uid, existing or not, is 404 (all `/api/users/:uid…` routes). Never includes `password_hash`; `has_password` instead |
 | PUT    | `/api/users/:uid`      | 200 + updated user | Full replace of profile fields (omitted username/email removed, preferences → defaults). Read-only fields in the body are ignored. A user with a password keeps their username: 422 `username_required` |
 | PATCH  | `/api/users/:uid`      | 200 + updated user | Partial; `preferences` **replaces** the whole object (`null` → defaults); `username`/`email` `null` removes (422 `username_required` for the username of a user with a password) |
-| DELETE | `/api/users/:uid`      | 204 | Also deletes linked identities. 409 `last_login_user` for the last user with a password, so first-run registration never reopens |
+| DELETE | `/api/users/:uid`      | 204 | Deletes your account (and its identities, sessions, tokens and data). 409 `last_login_user` for the last user with a password, so first-run registration never reopens. PUT, PATCH and DELETE need a browser session (API token: 403 `session_required`) |
 | GET    | `/api/users/:uid/identities` | 200 `{"identities":[...],"count":n}` | Read-only SSO links (empty until SSO exists) |
-| GET    | `/api/users/:uid/preferences` | 200 `{"base_currency":"USD"}` | Your own preferences (defaults filled in); another user's uid is 403 |
+| GET    | `/api/users/:uid/preferences` | 200 `{"base_currency":"USD"}` | Your own preferences (defaults filled in); another user's uid is 404 |
 | PUT    | `/api/users/:uid/preferences` | 200 + preferences | Replaces the whole object (omitted keys → defaults). Own uid only; unsupported `base_currency` or unknown key is a 400 |
 | GET    | `/api/currencies`    | 200 `{"currencies":[{"code":"THB","name":"Baht","scale":2,"flag":"🇹🇭"},...],"count":n}` | Supported ISO 4217 codes (from `pkg/money`), sorted by code, with a display-only flag emoji (see below); the web page's currency dropdowns use it |
 | GET    | `/api/exchange-rates?from=USD&to=THB&date=YYYY-MM-DD` | 200 `{"from":"USD","to":"THB","rate":"33.615","date":"2026-10-12","source":"frankfurter"}` | Rate preview (cached Frankfurter / ECB rate; `date` optional = latest). 400 bad query, 422 unsupported pair, 503/502 Frankfurter down. See [docs/exchange-rates.md](docs/exchange-rates.md) |
@@ -868,8 +868,8 @@ User data is only inserted with `textContent` / input `.value` (never
 ## Open questions
 
 - Authentication: username/password login exists (docs/auth.md). Transactions,
-  balances and categories are per user. Follow-ups: SSO; roles; password reset;
-  scoping `/api/users` ownership.
+  balances and categories are per user, and each user manages only their own
+  account. Follow-ups: SSO; roles (admin accounts); password reset.
 - Currency conversion and reporting currency (e.g. totals in THB or SGD), and
   where exchange rates would come from.
 - Categories/tags, receipts or attachments; an edit history / audit log

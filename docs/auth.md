@@ -43,8 +43,10 @@ Everything under `/api` needs a valid session or API token (401 JSON
 The HTML shell (`/`, `/transactions`, …) and `/static/*` are public too; they
 contain no data, and the page asks `/api/auth/me` before showing anything.
 
-The users API (`/api/users…`) is kept and now requires a session. Any
-logged-in user can manage all profiles (there are no roles yet).
+The users API (`/api/users…`) requires a login, and each user reaches only
+their **own** account: any other uid is 404, `GET /api/users` lists just the
+caller, and `POST /api/users` is disabled (403 `use_register`; accounts are
+created with `POST /api/auth/register`). There are no roles yet.
 
 ## CSRF
 
@@ -94,7 +96,7 @@ a session).
 | Sending | `Authorization: Bearer ext_...`. When this header is present the session cookie is **ignored**, so a token request never gains session-only rights and a bad token is 401 even with a valid cookie. |
 | Rejected (401 `invalid_token`) | Unknown, malformed (no `ext_` prefix, longer than 128 characters), revoked or expired tokens, and tokens of a disabled or password-less user. |
 | Scopes | `read`: GET/HEAD only. `write`: every method. A `read` token on another method gets 403 `insufficient_scope`. |
-| Session only (403 `session_required`) | `GET/POST /api/tokens`, `DELETE /api/tokens/:uid`, `PUT /api/auth/password`, `POST /api/auth/logout`, `POST /api/auth/register`. A token can't mint, list or revoke tokens, change credentials, create password accounts or end sessions. |
+| Session only (403 `session_required`) | `GET/POST /api/tokens`, `DELETE /api/tokens/:uid`, `PUT /api/auth/password`, `POST /api/auth/logout`, `POST /api/auth/register`, `PUT`/`PATCH`/`DELETE /api/users/:uid`. A token can't mint, list or revoke tokens, change credentials or the account (the username is the login name), delete it, create password accounts or end sessions. It can read the account and change its preferences. |
 | Expiry | Optional `expires_in_days` (1–3650). Without it the token lives until revoked. |
 | Last used | `last_used_at` is written at most once a minute (same throttle as the session touch). |
 | Revocation | `DELETE /api/tokens/:uid` sets `revoked_at`; the row is kept for audit and no longer listed. Another user's token is 404. Deleting a user deletes their tokens (`ON DELETE CASCADE`). |
@@ -196,13 +198,12 @@ earliest-created user (`ORDER BY created_at ASC, id ASC`). If the database
 has such rows but no users, those orphans are deleted so the migration can
 apply `NOT NULL user_uid` without failing. Balance names are unique per user.
 
-`/api/users` ownership (who may edit or list other accounts) is a separate
-follow-up; this release does not change that behaviour.
+`/api/users` ownership was added later (issue #76): every user reaches only
+their own account.
 
 ## Follow-ups
 
 - **SSO** (Sign in with Apple / Google) using `user_identities`.
-- Roles / admin (who may create users or edit others' profiles), disabling users via API;
-  scoping `/api/users` so accounts cannot edit one another.
+- Roles / admin (who may create users or edit others' profiles), disabling users via API.
 - Password reset (needs email or an admin), "log out everywhere", session list.
 - Persistent / global rate limiting (the throttle is per process and in memory).

@@ -12,9 +12,16 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// User profiles. Like the rest of the API these endpoints require a session
+// User profiles. Like the rest of the API these endpoints require a login
 // (see auth.go); they never accept or return passwords/hashes (passwords are
 // set via /api/auth) and expose linked SSO identities read-only.
+//
+// Each user sees and manages only their own account (issue #76): another
+// user's uid answers 404 exactly like an unknown one, GET /api/users lists
+// only the caller, and POST /api/users is disabled (accounts are created with
+// POST /api/auth/register). Changing or deleting the account needs a browser
+// session (sessionOnlyAPI in tokens.go); API tokens can read it and change
+// preferences.
 func (s *Server) registerUserRoutes(api *gin.RouterGroup) {
 	api.POST("/users", s.createUser)
 	api.GET("/users", s.listUsers)
@@ -27,10 +34,17 @@ func (s *Server) registerUserRoutes(api *gin.RouterGroup) {
 	api.PUT("/users/:uid/preferences", s.replacePreferences)
 }
 
-// resolveUser looks up /api/users/:uid (400 malformed, 404 unknown).
-func (s *Server) resolveUser(c *gin.Context) (user.User, bool) {
+// resolveOwnUser looks up /api/users/:uid for routes a user may only use on
+// their own account: 400 if :uid is malformed, 404 if it is unknown or
+// belongs to someone else (the same answer, so uids of other accounts can't
+// be probed).
+func (s *Server) resolveOwnUser(c *gin.Context) (user.User, bool) {
 	uid, ok := pathUID(c)
 	if !ok {
+		return user.User{}, false
+	}
+	if me, ok := currentUser(c); !ok || !uid.Matches(me.UID) {
+		writeNotFound(c, "user")
 		return user.User{}, false
 	}
 	u, err := s.Store.GetUserByUID(c.Request.Context(), uid.String())
@@ -41,35 +55,33 @@ func (s *Server) resolveUser(c *gin.Context) (user.User, bool) {
 	return u, true
 }
 
+// createUser answers 403: with no admin role, a profile made this way could
+// never log in and nobody could manage it (issue #76). Accounts are created
+// with POST /api/auth/register.
 func (s *Server) createUser(c *gin.Context) {
-	var in user.Input
-	if !decodeBody(c, &in, true) {
-		return
-	}
-	u, err := in.Validate()
-	if err != nil {
-		writeUserError(c, err)
-		return
-	}
-	if err := s.Store.CreateUser(c.Request.Context(), &u); err != nil {
-		writeUserError(c, err)
-		return
-	}
-	c.Header("Location", "/api/users/"+u.UID)
-	c.JSON(http.StatusCreated, u)
+	c.JSON(http.StatusForbidden, errorBody{
+		Error: "creating user profiles here is disabled; create an account with POST /api/auth/register",
+		Code:  "use_register",
+	})
 }
 
+// listUsers returns only the caller's own account.
 func (s *Server) listUsers(c *gin.Context) {
-	items, err := s.Store.ListUsers(c.Request.Context())
-	if err != nil {
-		internalError(c, err)
+	me, ok := currentUser(c)
+	if !ok {
+		s.unauthorized(c)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"users": items, "count": len(items)})
+	u, err := s.Store.GetUserByUID(c.Request.Context(), me.UID)
+	if err != nil {
+		writeUserError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"users": []user.User{u}, "count": 1})
 }
 
 func (s *Server) getUser(c *gin.Context) {
-	if u, ok := s.resolveUser(c); ok {
+	if u, ok := s.resolveOwnUser(c); ok {
 		c.JSON(http.StatusOK, u)
 	}
 }
@@ -77,7 +89,7 @@ func (s *Server) getUser(c *gin.Context) {
 // replaceUser handles PUT: full replace of the profile fields (display_name
 // required; omitted username/email are removed; omitted preferences become {}).
 func (s *Server) replaceUser(c *gin.Context) {
-	cur, ok := s.resolveUser(c)
+	cur, ok := s.resolveOwnUser(c)
 	if !ok {
 		return
 	}
@@ -101,7 +113,7 @@ func (s *Server) replaceUser(c *gin.Context) {
 // patchUser handles PATCH: only fields present change; "preferences"
 // replaces the whole object (see user.Input.ApplyPatch).
 func (s *Server) patchUser(c *gin.Context) {
-	cur, ok := s.resolveUser(c)
+	cur, ok := s.resolveOwnUser(c)
 	if !ok {
 		return
 	}
@@ -130,7 +142,7 @@ func (s *Server) patchUser(c *gin.Context) {
 // deleteUser removes the profile and its linked identities. The last user
 // who can log in cannot be deleted (409 last_login_user).
 func (s *Server) deleteUser(c *gin.Context) {
-	cur, ok := s.resolveUser(c)
+	cur, ok := s.resolveOwnUser(c)
 	if !ok {
 		return
 	}
@@ -144,7 +156,7 @@ func (s *Server) deleteUser(c *gin.Context) {
 // listUserIdentities is read-only: identities are created by the future SSO
 // sign-in flow, not through the API.
 func (s *Server) listUserIdentities(c *gin.Context) {
-	u, ok := s.resolveUser(c)
+	u, ok := s.resolveOwnUser(c)
 	if !ok {
 		return
 	}
@@ -154,20 +166,6 @@ func (s *Server) listUserIdentities(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"identities": items, "count": len(items)})
-}
-
-// resolveOwnUser is resolveUser for endpoints only the user themself may use:
-// another user's uid is 403 (preferences are personal).
-func (s *Server) resolveOwnUser(c *gin.Context) (user.User, bool) {
-	u, ok := s.resolveUser(c)
-	if !ok {
-		return user.User{}, false
-	}
-	if me, ok := currentUser(c); !ok || me.UID != u.UID {
-		c.JSON(http.StatusForbidden, errorBody{Error: "preferences can only be read or changed by their own user"})
-		return user.User{}, false
-	}
-	return u, true
 }
 
 // getPreferences returns the effective preferences (defaults filled in).

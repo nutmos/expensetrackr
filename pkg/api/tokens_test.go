@@ -109,9 +109,15 @@ func TestAPITokenValidation(t *testing.T) {
 func TestAPITokenAuth(t *testing.T) {
 	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 	srv := &Server{Now: func() time.Time { return now }}
-	h, alice, _ := tokenSetup(t, srv)
+	h, alice, bob := tokenSetup(t, srv)
 	write := createTok(t, alice, `{"name":"Expense agent","scopes":["write"]}`)
 	read := createTok(t, alice, `{"name":"Read-only agent","scopes":["read"]}`)
+	uidOf := func(c *authClient) string {
+		var me struct{ UID string }
+		_ = json.Unmarshal(c.req("GET", "/api/auth/me", "", nil).Body.Bytes(), &me)
+		return me.UID
+	}
+	aliceUser, bobUser := "/api/users/"+uidOf(alice), "/api/users/"+uidOf(bob)
 	short := createTok(t, alice, `{"name":"Short-lived","scopes":["read"],"expires_in_days":1}`)
 	revoked := createTok(t, alice, `{"name":"Old script","scopes":["write"]}`)
 	if rec := alice.req("DELETE", "/api/tokens/"+revoked.UID, "", nil); rec.Code != 204 {
@@ -140,6 +146,15 @@ func TestAPITokenAuth(t *testing.T) {
 		{name: "change password", method: "PUT", path: "/api/auth/password", body: `{"current_password":"pw-12345","new_password":"pw-67890"}`, token: write.Token, want: 403},
 		{name: "logout", method: "POST", path: "/api/auth/logout", token: write.Token, want: 403},
 		{name: "register", method: "POST", path: "/api/auth/register", body: `{"username":"carol","password":"pw-12345"}`, token: write.Token, want: 403},
+		// Issue #76: a token reads its own account and its preferences, but
+		// can't change or delete the account; other accounts are 404.
+		{name: "read own profile", method: "GET", path: aliceUser, token: read.Token, want: 200},
+		{name: "own preferences", method: "PUT", path: aliceUser + "/preferences", body: `{"base_currency":"THB"}`, token: write.Token, want: 200},
+		{name: "rename own account", method: "PATCH", path: aliceUser, body: `{"username":"mallory"}`, token: write.Token, want: 403},
+		{name: "replace own account", method: "PUT", path: aliceUser, body: `{"display_name":"x","username":"mallory"}`, token: write.Token, want: 403},
+		{name: "delete own account", method: "DELETE", path: aliceUser, token: write.Token, want: 403},
+		{name: "other account", method: "GET", path: bobUser, token: write.Token, want: 404},
+		{name: "create profile", method: "POST", path: "/api/users", body: `{"display_name":"x"}`, token: write.Token, want: 403},
 	}
 	for _, c := range cases {
 		hdr := bearer(c.token)
