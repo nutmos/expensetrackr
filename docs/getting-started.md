@@ -40,6 +40,25 @@ and creates or upgrades the schema on start. For agents, the
 [expensetrackr-run-server](../skills/expensetrackr-run-server/SKILL.md) skill
 wraps these steps with checks.
 
+### Run the published image
+
+Every commit on `main` that passes CI is published to GitHub Packages as
+**`ghcr.io/nutmos/expensetrackr`** (tags `latest` and `sha-<commit>`, for
+`linux/amd64` and `linux/arm64`) by
+[`.github/workflows/publish-image.yml`](../.github/workflows/publish-image.yml).
+It is the same image `make up` builds locally. To run it against the local
+Postgres:
+
+```bash
+make db-up                       # Postgres from compose.yaml
+docker run --rm --network expensetrackr_default -p 127.0.0.1:8080:8080 \
+  -e EXPENSE_DATABASE_URL='postgres://expense:expense@db:5432/expense?sslmode=disable' \
+  ghcr.io/nutmos/expensetrackr:latest
+```
+
+Point `EXPENSE_DATABASE_URL` at any Postgres to run it elsewhere. Pin
+`sha-<commit>` instead of `latest` for a fixed version.
+
 ### Run from source
 
 ```bash

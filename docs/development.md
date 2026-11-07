@@ -71,6 +71,29 @@ and never touch the development data. Without `EXPENSE_TEST_DATABASE_URL`
 (e.g. plain `go test` without the Makefile) those tests are **skipped** with a
 message; in CI (`CI=true`) a missing URL is a failure instead.
 
+## Container image (CI)
+
+[`.github/workflows/publish-image.yml`](../.github/workflows/publish-image.yml)
+builds the [`Dockerfile`](../Dockerfile) for `linux/amd64` and `linux/arm64`
+and pushes it to `ghcr.io/nutmos/expensetrackr`:
+
+| Trigger | What happens |
+|---|---|
+| The **CI** workflow succeeds on a push to `main` | Builds the commit CI tested and pushes `latest` and `sha-<commit>` |
+| CI fails on `main` | Nothing is published |
+| A pull request changes `Dockerfile`, `.dockerignore`, `go.mod`/`go.sum` or the workflow | Builds both platforms, **pushes nothing** |
+| **Run workflow** in the Actions tab | Publishes the current `main` |
+
+It logs in with the built-in `GITHUB_TOKEN` (`packages: write`); no secrets
+are needed. The Go stage cross-compiles natively for each target
+(`--platform=$BUILDPLATFORM`, `GOOS`/`GOARCH`); QEMU only runs the small
+Alpine stage for arm64. Layers are cached in the GitHub Actions cache.
+
+The package is **private** after its first publish (GitHub's default). To let
+anyone `docker pull` it, open the package
+(github.com/nutmos?tab=packages → `expensetrackr` → Package settings) and change
+its visibility to **Public**. This is a one-time step.
+
 ## Code layout
 
 Paths are relative to the repo root (the module root).
