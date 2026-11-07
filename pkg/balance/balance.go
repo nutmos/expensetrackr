@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"sort"
+	"strings"
 
 	"github.com/nutmos/expensetrackr/pkg/common_type"
 	"github.com/nutmos/expensetrackr/pkg/money"
@@ -69,9 +71,13 @@ func (b *Balance) SetAmounts(scale int, bal, debt, limit *int64) {
 		b.LimitMinor, b.Limit = &v, format(v)
 	}
 	if debt != nil && limit != nil {
-		avail := *limit - *debt
 		over := *debt > *limit
-		b.AvailableMinor, b.Available, b.OverLimit = &avail, format(avail), &over
+		b.OverLimit = &over
+		// ApplyValueDelta keeps limit - debt within int64; a value that still
+		// doesn't fit is left out rather than wrapped around.
+		if avail, ok := subChecked(*limit, *debt); ok {
+			b.AvailableMinor, b.Available = &avail, format(avail)
+		}
 	}
 }
 
@@ -83,6 +89,9 @@ var ErrOverflow = errors.New("amount out of range")
 // minus the debt of a liability, so a positive delta raises an asset's
 // balance or lowers a liability's debt (possibly below zero: in credit). The
 // derived fields (available, over_limit) are recomputed.
+//
+// It returns ErrOverflow, leaving b unchanged, when the new balance or debt,
+// or a liability's available amount (limit - debt), would not fit in int64.
 func (b *Balance) ApplyValueDelta(delta int64) error {
 	if b.Type.IsAsset() && b.BalanceMinor != nil {
 		v, ok := addChecked(*b.BalanceMinor, delta)
@@ -99,6 +108,9 @@ func (b *Balance) ApplyValueDelta(delta int64) error {
 			return ErrOverflow
 		}
 		limit := *b.LimitMinor
+		if _, ok := subChecked(limit, v); !ok {
+			return ErrOverflow
+		}
 		b.SetAmounts(b.Scale, nil, &v, &limit)
 	} else {
 		return fmt.Errorf("balance %q has no amount for type %q", b.UID, b.Type)
@@ -109,6 +121,15 @@ func (b *Balance) ApplyValueDelta(delta int64) error {
 func addChecked(a, b int64) (int64, bool) {
 	c := a + b
 	if (b > 0 && c < a) || (b < 0 && c > a) {
+		return 0, false
+	}
+	return c, true
+}
+
+// subChecked returns a - b and whether it fits in int64.
+func subChecked(a, b int64) (int64, bool) {
+	c := a - b
+	if (b > 0 && c > a) || (b < 0 && c < a) {
 		return 0, false
 	}
 	return c, true
@@ -125,11 +146,13 @@ type Totals struct {
 }
 
 // ComputeTotals sums per currency, exactly in minor units. Currencies are
-// returned in alphabetical order. No exchange-rate conversion is done.
+// returned in alphabetical order. No exchange-rate conversion is done. Sums
+// use arbitrary precision, so they are exact even past the int64 range of a
+// single amount.
 func ComputeTotals(items []Balance) []Totals {
 	type acc struct {
 		scale               int
-		assets, debt, limit int64
+		assets, debt, limit big.Int
 	}
 	sums := map[string]*acc{}
 	for _, b := range items {
@@ -139,23 +162,42 @@ func ComputeTotals(items []Balance) []Totals {
 			sums[b.Currency] = a
 		}
 		if b.BalanceMinor != nil {
-			a.assets += *b.BalanceMinor
+			a.assets.Add(&a.assets, big.NewInt(*b.BalanceMinor))
 		}
 		if b.DebtMinor != nil {
-			a.debt += *b.DebtMinor
+			a.debt.Add(&a.debt, big.NewInt(*b.DebtMinor))
 		}
 		if b.LimitMinor != nil {
-			a.limit += *b.LimitMinor
+			a.limit.Add(&a.limit, big.NewInt(*b.LimitMinor))
 		}
 	}
 	out := make([]Totals, 0, len(sums))
 	for cur, a := range sums {
-		f := func(v int64) string { return money.FormatAmount(v, a.scale) }
+		f := func(v *big.Int) string { return formatBigAmount(v, a.scale) }
 		out = append(out, Totals{
-			Currency: cur, Assets: f(a.assets), Liabilities: f(a.debt), Net: f(a.assets - a.debt),
-			CreditLimit: f(a.limit), AvailableCredit: f(a.limit - a.debt),
+			Currency: cur, Assets: f(&a.assets), Liabilities: f(&a.debt), Net: f(new(big.Int).Sub(&a.assets, &a.debt)),
+			CreditLimit: f(&a.limit), AvailableCredit: f(new(big.Int).Sub(&a.limit, &a.debt)),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Currency < out[j].Currency })
 	return out
+}
+
+// formatBigAmount is money.FormatAmount for an arbitrary-precision amount:
+// minor units with exponent decimal places, e.g. 12345 at 2 -> "123.45".
+func formatBigAmount(minor *big.Int, exponent int) string {
+	if minor.IsInt64() {
+		return money.FormatAmount(minor.Int64(), exponent)
+	}
+	digits := new(big.Int).Abs(minor).String()
+	if exponent > 0 {
+		if len(digits) <= exponent {
+			digits = strings.Repeat("0", exponent-len(digits)+1) + digits
+		}
+		digits = digits[:len(digits)-exponent] + "." + digits[len(digits)-exponent:]
+	}
+	if minor.Sign() < 0 {
+		digits = "-" + digits
+	}
+	return digits
 }

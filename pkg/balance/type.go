@@ -33,7 +33,8 @@ func (t Type) IsAsset() bool { return t.Kind() == KindAsset }
 // IsLiability reports whether t carries a debt and a limit (credit_card, other_liability).
 func (t Type) IsLiability() bool { return t.Kind() == KindLiability }
 
-// Kind is "asset" or "liability" ("" for unknown types).
+// Kind is KindAsset or KindLiability, or KindUnknown ("unknown") for an
+// unknown type.
 func (t Type) Kind() Kind {
 	switch t {
 	case TypePaymentAccount, TypeOtherAsset:
