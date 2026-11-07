@@ -8,6 +8,13 @@ DB       ?= data/expenses.db
 GOLANGCI_LINT ?= golangci-lint
 GOVULNCHECK_VERSION ?= v1.9.0
 
+# Local Postgres (compose.yaml). The URLs point at the databases it creates;
+# set EXPENSE_DATABASE_URL / EXPENSE_TEST_DATABASE_URL to use another server.
+PG_PORT  ?= 5432
+export EXPENSE_PG_PORT ?= $(PG_PORT)
+export EXPENSE_DATABASE_URL ?= postgres://expense:expense@127.0.0.1:$(PG_PORT)/expense?sslmode=disable
+export EXPENSE_TEST_DATABASE_URL ?= postgres://expense:expense@127.0.0.1:$(PG_PORT)/expense_test?sslmode=disable
+
 export GOTOOLCHAIN ?= local
 export CGO_ENABLED ?= 0
 
@@ -55,6 +62,22 @@ lint: ## Run golangci-lint (config in .golangci.yml).
 
 .PHONY: check
 check: fmt-check vet lint test ## fmt-check + vet + lint + test.
+
+.PHONY: db-up
+db-up: ## Start the local Postgres (compose.yaml) and wait until it is ready.
+	docker compose up -d --wait db
+
+.PHONY: db-down
+db-down: ## Stop the local Postgres; its data is kept.
+	docker compose down
+
+.PHONY: db-reset
+db-reset: ## Stop the local Postgres and DELETE its data volume.
+	docker compose down --volumes
+
+.PHONY: db-psql
+db-psql: ## Open psql on the local development database.
+	docker compose exec db psql -U expense expense
 
 .PHONY: clean
 clean: ## Remove build output (bin/). Never touches data/.

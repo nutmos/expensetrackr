@@ -16,6 +16,8 @@ requires a username/password login (server-side sessions); see
   with
 - No CGO (`CGO_ENABLED=0` works)
 - GNU make (optional; the targets are thin wrappers around `go` commands)
+- Docker with Compose v2, for the local Postgres (see [Local Postgres](#local-postgres)).
+  The app is moving from SQLite to Postgres; until that lands it still uses SQLite
 
 ## Repository layout
 
@@ -131,6 +133,10 @@ make test         # go test ./...
 | `fmt`       | `gofmt -s -w cmd pkg`                                       |
 | `fmt-check` | fails if any file needs gofmt                               |
 | `check`     | `fmt-check` + `vet` + `test`                                |
+| `db-up`     | start the local Postgres (`compose.yaml`) and wait until it is ready |
+| `db-down`   | stop it; the data is kept                                   |
+| `db-reset`  | stop it and **delete** its data volume                      |
+| `db-psql`   | `psql` on the local development database                    |
 | `clean`     | `rm -rf bin` (never touches `data/`)                        |
 | `help`      | lists targets (default)                                     |
 
@@ -138,6 +144,30 @@ The Makefile exports `GOTOOLCHAIN=local` and `CGO_ENABLED=0` unless already set.
 
 Handler tests use a throwaway SQLite file under `t.TempDir()`, so they never
 touch the real database.
+
+### Local Postgres
+
+The app is moving from SQLite to Postgres. `compose.yaml` runs
+Postgres 18 for development and tests:
+
+```bash
+make db-up        # start it (needs Docker running) and wait until ready
+make db-psql      # psql on the development database
+make db-down      # stop it; data stays in the "pgdata" volume
+make db-reset     # stop it and delete all local data
+```
+
+It creates two databases, both owned by user `expense` (password `expense`,
+local only, port bound to `127.0.0.1`):
+
+| Database       | URL (exported by the Makefile)                                               | Used for |
+|----------------|------------------------------------------------------------------------------|----------|
+| `expense`      | `EXPENSE_DATABASE_URL` = `postgres://expense:expense@127.0.0.1:5432/expense?sslmode=disable` | running the app |
+| `expense_test` | `EXPENSE_TEST_DATABASE_URL` = `postgres://expense:expense@127.0.0.1:5432/expense_test?sslmode=disable` | `make test` |
+
+Set `PG_PORT` (e.g. `make db-up PG_PORT=55432`) if port 5432 is taken, or
+set the two URLs yourself to use another Postgres server. CI runs the same
+`postgres:18.6-alpine` image as a service for the test jobs.
 
 ## Data model
 

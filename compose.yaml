@@ -1,0 +1,34 @@
+# Postgres for local development and tests (README "Local Postgres").
+# The app is moving from SQLite to Postgres; until that lands, nothing in the
+# app uses this database yet.
+#
+#   make db-up      start it and wait until it accepts connections
+#   make db-down    stop it (the data stays in the "pgdata" volume)
+#   make db-reset   stop it and delete the volume (all local data)
+#   make db-psql    open psql on the development database
+#
+# Credentials are for local use only; the port is bound to 127.0.0.1.
+name: expensetrackr
+
+services:
+  db:
+    image: postgres:18.6-alpine
+    environment:
+      POSTGRES_USER: expense
+      POSTGRES_PASSWORD: expense
+      POSTGRES_DB: expense
+    ports:
+      - "127.0.0.1:${EXPENSE_PG_PORT:-5432}:5432"
+    volumes:
+      # Postgres 18 images keep their data under /var/lib/postgresql/18.
+      - pgdata:/var/lib/postgresql
+      # Runs once, when the volume is created: adds the test database.
+      - ./dev/postgres/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U expense -d expense"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  pgdata:
