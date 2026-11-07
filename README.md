@@ -771,7 +771,9 @@ confirmations use human labels instead. For example, an edit page is titled
   `category_uid`.
 - The form has a **Type** selector (Expense / Income / Transfer / Asset Purchase / Return on Investment; balance
   adjustments cannot be entered). The source
-  dropdown lists only the balance types allowed for that type. Its label
+  dropdown lists only the balance types allowed for that type; each option
+  shows the balance's name, type and current amount, e.g. "Wallet · Payment
+  account · SGD 50.00" (typing a type such as "card" filters to it). Its label
   changes to "Payment account", "Received into", "From (source)" or "Paid from". A **To
   (destination)** dropdown appears only for transfers (any balance) and asset
   purchases (other assets only); for a return on investment it is labelled
