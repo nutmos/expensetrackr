@@ -71,17 +71,18 @@ row inside **one SQL transaction**:
 
 1. Read `categories` and `version`.
 2. Apply the change in Go and check uniqueness, limits and in-use rules.
-3. Write with `UPDATE ... SET version = version + 1 WHERE user_uid = ? AND
-   version = ?`. For a new row it uses `INSERT ... ON CONFLICT DO NOTHING`.
+3. Write with `UPDATE ... SET version = version + 1 WHERE user_uid = $1 AND
+   version = $2`. For a new row it uses `INSERT ... ON CONFLICT DO NOTHING`.
 
-If no row is affected (someone else wrote first), it counts as a conflict.
-It also counts as a conflict if SQLite reports `BUSY`/`BUSY_SNAPSHOT`
-because another connection or process committed after our read. In both
-cases the whole step is **retried once** from a fresh read. If the retry
-also conflicts, the store returns an error (500), and nothing is written or
-lost. This version is internal. Clients do not send it, and the category
-API stays unversioned.
+Before step 1 the transaction takes a **per-user advisory lock**
+(`pg_advisory_xact_lock`), so one user's category writes run one after
+another, across connections and server instances. (The lock is needed
+because the row may not exist yet, so there is nothing to lock with
+`SELECT … FOR UPDATE`.)
 
-The server uses one SQLite connection, so in-process writes are already
-serialized. The version check protects against other processes and against
-future changes to the pool size.
+The version check stays as a second line of defence. If no row is affected
+(a writer that doesn't take the lock wrote first), it counts as a conflict
+and the whole step is **retried once** from a fresh read. If the retry also
+conflicts, the store returns an error (500), and nothing is written or lost.
+This version is internal. Clients do not send it, and the category API stays
+unversioned.

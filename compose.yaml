@@ -1,6 +1,4 @@
 # Postgres for local development and tests (README "Local Postgres").
-# The app is moving from SQLite to Postgres; until that lands, nothing in the
-# app uses this database yet.
 #
 #   make db-up      start it and wait until it accepts connections
 #   make db-down    stop it (the data stays in the "pgdata" volume)

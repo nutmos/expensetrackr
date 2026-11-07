@@ -1,7 +1,8 @@
 # Local runtime files (repo root; see README "Layout").
 /bin/
-/data/
 server.log
+# SQLite files from before the move to Postgres (no longer used; never commit them).
+/data/
 *.db
 *.db-wal
 *.db-shm
