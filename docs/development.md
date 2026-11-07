@@ -89,10 +89,10 @@ are needed. The Go stage cross-compiles natively for each target
 (`--platform=$BUILDPLATFORM`, `GOOS`/`GOARCH`); QEMU only runs the small
 Alpine stage for arm64. Layers are cached in the GitHub Actions cache.
 
-The package is **private** after its first publish (GitHub's default). To let
-anyone `docker pull` it, open the package
-(github.com/nutmos?tab=packages → `expensetrackr` → Package settings) and change
-its visibility to **Public**. This is a one-time step.
+The package is linked to this (public) repository and is **public**: anyone
+can `docker pull ghcr.io/nutmos/expensetrackr:latest` without logging in.
+Visibility is managed in the package settings (your profile → Packages →
+`expensetrackr` → Package settings), not by the workflow.
 
 ## Code layout
 
