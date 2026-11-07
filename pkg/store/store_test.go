@@ -5,66 +5,47 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	_ "github.com/jackc/pgx/v5/stdlib" // registers the "pgx" driver for rawDB
 
 	"github.com/nutmos/expensetrackr/pkg/balance"
 	"github.com/nutmos/expensetrackr/pkg/transaction"
 )
 
-// pragmaInt reads an integer PRAGMA (user_version, application_id) of the
-// database at path.
-func pragmaInt(t *testing.T, path, pragma string) int {
+// rawDB opens a plain connection to the database at url (for direct SQL
+// in tests), closed when the test ends.
+func rawDB(t *testing.T, url string) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", "file:"+path)
+	db, err := sql.Open("pgx", url)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	var v int
-	if err := db.QueryRow(`PRAGMA ` + pragma).Scan(&v); err != nil {
-		t.Fatal(err)
-	}
-	return v
+	t.Cleanup(func() { db.Close() })
+	return db
 }
 
-// rawDB creates a database file at path by running script directly.
-func rawDB(t *testing.T, path, script string) {
+// schemaObjects lists the tables and indexes of the current schema of the
+// database at url, as "table <name>" / "index <name>" -> definition.
+func schemaObjects(t *testing.T, url string) map[string]string {
 	t.Helper()
-	db, err := sql.Open("sqlite", "file:"+path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	if _, err := db.Exec(script); err != nil {
-		t.Fatalf("setup script: %v", err)
-	}
-}
-
-// schemaObjects lists every sqlite_master entry (type, name and normalized
-// SQL) of the database at path, sorted by type and name.
-func schemaObjects(t *testing.T, path string) map[string]string {
-	t.Helper()
-	db, err := sql.Open("sqlite", "file:"+path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	rows, err := db.Query(`SELECT type, name, coalesce(sql, '') FROM sqlite_master`)
+	rows, err := rawDB(t, url).Query(`
+		SELECT 'table ' || tablename, '' FROM pg_tables WHERE schemaname = current_schema()
+		UNION ALL
+		SELECT 'index ' || indexname, indexdef FROM pg_indexes WHERE schemaname = current_schema()`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rows.Close()
 	out := map[string]string{}
 	for rows.Next() {
-		var typ, name, ddl string
-		if err := rows.Scan(&typ, &name, &ddl); err != nil {
+		var name, def string
+		if err := rows.Scan(&name, &def); err != nil {
 			t.Fatal(err)
 		}
-		out[typ+" "+name] = strings.Join(strings.Fields(ddl), " ")
+		out[name] = def
 	}
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
@@ -72,44 +53,33 @@ func schemaObjects(t *testing.T, path string) map[string]string {
 	return out
 }
 
-// baselineObjects are the user tables and indexes of the v1 baseline.
-var baselineObjects = []string{
-	"table transactions", "index idx_transactions_spent_at_unix", "index idx_transactions_balance_uid",
-	"index idx_transactions_uid", "index idx_transactions_type", "index idx_transactions_category_uid",
-	"index idx_transactions_to_balance_uid", "index idx_transactions_import_ref",
-	"table balances", "index idx_balances_type", "index idx_balances_uid",
-	"table users", "index idx_users_username", "index idx_users_email",
-	"table user_identities", "index idx_user_identities_user_uid",
-	"table sessions", "index idx_sessions_user_uid", "index idx_sessions_expires_at",
-	"table user_categories", "table meta", "table fx_rates", "table fx_rate_lookups",
+// schemaVersion is the highest version recorded in schema_migrations.
+func schemaVersion(t *testing.T, url string) int {
+	t.Helper()
+	var v int
+	if err := rawDB(t, url).QueryRow(`SELECT coalesce(max(version), 0) FROM schema_migrations`).Scan(&v); err != nil {
+		t.Fatal(err)
+	}
+	return v
 }
 
-// v2Objects are the tables and indexes added by migration v2 (api_tokens).
-var v2Objects = []string{"table api_tokens", "index idx_api_tokens_user_uid"}
+// baselineTables are the tables of the v1 schema (plus schema_migrations).
+var baselineTables = []string{
+	"users", "user_identities", "sessions", "api_tokens", "user_categories",
+	"balances", "transactions", "fx_rates", "fx_rate_lookups", "schema_migrations",
+}
 
-// v3Objects are indexes added by migration v3 (per-user balances/transactions).
-// The balances/transactions tables themselves are rebuilt in place.
-var v3Objects = []string{"index idx_balances_user_uid", "index idx_transactions_user_uid"}
-
-// v5Dropped are indexes removed by migration v5: they duplicated the
-// sqlite_autoindex behind each table's uid UNIQUE constraint.
-var v5Dropped = []string{"index idx_transactions_uid", "index idx_balances_uid"}
-
-// latestObjects are the user tables and indexes of a fully migrated database.
-var latestObjects = func() []string {
-	var out []string
-	for _, k := range append(append(append([]string{}, baselineObjects...), v2Objects...), v3Objects...) {
-		if !slices.Contains(v5Dropped, k) {
-			out = append(out, k)
-		}
-	}
-	return out
-}()
+// baselineIndexes are the explicitly named indexes and unique constraints
+// the store relies on (constraint names are mapped to errors in pgerr.go).
+var baselineIndexes = []string{
+	"users_username_uq", "users_email_uq", "user_identities_provider_subject_uq",
+	"balances_user_name_uq", "transactions_import_ref_uq", "transactions_user_spent_idx",
+}
 
 func TestFreshDatabaseGetsBaseline(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "fresh.db")
-	st, err := Open(path)
+	url := testURL(t)
+	st, err := Open(url)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,122 +98,119 @@ func TestFreshDatabaseGetsBaseline(t *testing.T) {
 	}
 	st.Close()
 
-	if SchemaVersion != 5 {
-		t.Errorf("SchemaVersion = %d, want 5 (baseline + api_tokens + per-user data + return_on_investment + drop redundant uid indexes)", SchemaVersion)
+	if SchemaVersion != 1 {
+		t.Errorf("SchemaVersion = %d, want 1 (Postgres baseline)", SchemaVersion)
 	}
-	if v := pragmaInt(t, path, "user_version"); v != SchemaVersion {
-		t.Errorf("user_version = %d, want %d", v, SchemaVersion)
+	if v := schemaVersion(t, url); v != SchemaVersion {
+		t.Errorf("schema version = %d, want %d", v, SchemaVersion)
 	}
-	if id := pragmaInt(t, path, "application_id"); id != applicationID {
-		t.Errorf("application_id = %#x, want %#x", id, applicationID)
-	}
-	got := schemaObjects(t, path)
-	var user []string
+	got := schemaObjects(t, url)
+	var tables []string
 	for k := range got {
-		if !strings.Contains(k, " sqlite_") {
-			user = append(user, k)
+		if strings.HasPrefix(k, "table ") {
+			tables = append(tables, strings.TrimPrefix(k, "table "))
 		}
 	}
-	if len(user) != len(latestObjects) {
-		t.Errorf("schema objects = %v, want exactly %v", user, latestObjects)
+	slices.Sort(tables)
+	want := slices.Clone(baselineTables)
+	slices.Sort(want)
+	if !slices.Equal(tables, want) {
+		t.Errorf("tables = %v, want %v", tables, want)
 	}
-	for _, k := range latestObjects {
-		if _, ok := got[k]; !ok {
-			t.Errorf("missing %s", k)
+	for _, ix := range baselineIndexes {
+		if _, ok := got["index "+ix]; !ok {
+			t.Errorf("missing index %s", ix)
 		}
-	}
-	if ddl := got["table transactions"]; !strings.Contains(ddl, "'asset_purchase', 'return_on_investment', 'balance_adjustment'") || !strings.Contains(ddl, "import_ref") {
-		t.Errorf("transactions DDL: %s", ddl)
 	}
 
-	// Reopening a baseline database changes nothing.
-	st, err = Open(path)
+	// Reopening an up-to-date database changes nothing.
+	st, err = Open(url)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
 	st.Close()
-	if again := schemaObjects(t, path); fmt.Sprint(again) != fmt.Sprint(got) {
+	if again := schemaObjects(t, url); fmt.Sprint(again) != fmt.Sprint(got) {
 		t.Errorf("schema changed on reopen:\n got %v\nwant %v", again, got)
 	}
-	if v := pragmaInt(t, path, "user_version"); v != SchemaVersion {
-		t.Errorf("user_version after reopen = %d", v)
+	var rows int
+	if err := rawDB(t, url).QueryRow(`SELECT count(*) FROM schema_migrations`).Scan(&rows); err != nil || rows != SchemaVersion {
+		t.Errorf("schema_migrations rows = %d (%v), want %d", rows, err, SchemaVersion)
 	}
 }
 
-func TestEmptyFileGetsBaseline(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "empty.db")
-	if err := os.WriteFile(path, nil, 0o644); err != nil {
+// TestOpenRejectsNewerSchema: a database from a newer build fails with
+// ErrUnsupportedSchema and is left untouched.
+func TestOpenRejectsNewerSchema(t *testing.T) {
+	url := testURL(t)
+	st, err := Open(url)
+	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := Open(path)
-	if err != nil {
-		t.Fatalf("open empty file: %v", err)
-	}
 	st.Close()
-	if v := pragmaInt(t, path, "user_version"); v != SchemaVersion {
-		t.Errorf("user_version = %d, want %d", v, SchemaVersion)
+	if _, err := rawDB(t, url).Exec(`INSERT INTO schema_migrations (version) VALUES ($1)`, SchemaVersion+1); err != nil {
+		t.Fatal(err)
+	}
+	before := schemaObjects(t, url)
+	st, err = Open(url)
+	if err == nil {
+		st.Close()
+		t.Fatal("Open succeeded, want ErrUnsupportedSchema")
+	}
+	if !errors.Is(err, ErrUnsupportedSchema) || !strings.Contains(err.Error(), "newer than this binary") {
+		t.Errorf("err = %v, want ErrUnsupportedSchema (newer than this binary)", err)
+	}
+	if after := schemaObjects(t, url); fmt.Sprint(after) != fmt.Sprint(before) {
+		t.Errorf("schema modified:\n got %v\nwant %v", after, before)
+	}
+	if v := schemaVersion(t, url); v != SchemaVersion+1 {
+		t.Errorf("version = %d, want %d (untouched)", v, SchemaVersion+1)
 	}
 }
 
-// TestOpenRejectsUnsupportedSchema: databases from before the baseline reset
-// (any user_version, application_id 0), foreign files and newer versions fail
-// with ErrUnsupportedSchema and are left untouched.
-func TestOpenRejectsUnsupportedSchema(t *testing.T) {
-	const oldTable = `CREATE TABLE transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, amount_minor INTEGER NOT NULL);
-INSERT INTO transactions (amount_minor) VALUES (100);
-`
-	cases := []struct {
-		name, script, wantMsg string
-		fresh                 bool // start from a baseline database
-	}{
-		{name: "pre-reset v18", script: oldTable + `PRAGMA user_version = 18;`, wantMsg: "Delete the database file"},
-		{name: "pre-reset v1", script: `CREATE TABLE expenses (id INTEGER PRIMARY KEY);
-PRAGMA user_version = 1;`, wantMsg: "Delete the database file"},
-		{name: "pre-reset v0 with tables", script: `CREATE TABLE expenses (id INTEGER PRIMARY KEY);`, wantMsg: "Delete the database file"},
-		{name: "version but no tables", script: `PRAGMA user_version = 5;`, wantMsg: "Delete the database file"},
-		{name: "foreign application id", script: `PRAGMA application_id = 42;`, wantMsg: "application_id 42"},
-		{name: "newer version", fresh: true, script: fmt.Sprintf(`PRAGMA user_version = %d;`, SchemaVersion+1), wantMsg: "newer than this binary"},
-		{name: "tagged but version 0", fresh: true, script: `PRAGMA user_version = 0;`, wantMsg: "schema version 0"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "old.db")
-			if c.fresh {
-				st, err := Open(path)
-				if err != nil {
-					t.Fatal(err)
-				}
-				st.Close()
-			}
-			rawDB(t, path, c.script)
-			before := schemaObjects(t, path)
-			version := pragmaInt(t, path, "user_version")
-
-			st, err := Open(path)
+// TestConcurrentOpenMigratesOnce: servers starting at the same time against
+// an empty database don't race (the advisory lock in migrate).
+func TestConcurrentOpenMigratesOnce(t *testing.T) {
+	url := testURL(t)
+	const n = 4
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		go func() {
+			st, err := Open(url)
 			if err == nil {
 				st.Close()
-				t.Fatal("Open succeeded, want ErrUnsupportedSchema")
 			}
-			if !errors.Is(err, ErrUnsupportedSchema) || !strings.Contains(err.Error(), c.wantMsg) || !strings.Contains(err.Error(), path) {
-				t.Errorf("err = %v, want ErrUnsupportedSchema mentioning %q and the path", err, c.wantMsg)
-			}
-			if after := schemaObjects(t, path); fmt.Sprint(after) != fmt.Sprint(before) {
-				t.Errorf("schema modified:\n got %v\nwant %v", after, before)
-			}
-			if v := pragmaInt(t, path, "user_version"); v != version {
-				t.Errorf("user_version = %d, want %d (untouched)", v, version)
-			}
-		})
+			errs <- err
+		}()
+	}
+	for i := 0; i < n; i++ {
+		if err := <-errs; err != nil {
+			t.Errorf("concurrent Open: %v", err)
+		}
+	}
+	var rows int
+	if err := rawDB(t, url).QueryRow(`SELECT count(*) FROM schema_migrations`).Scan(&rows); err != nil || rows != SchemaVersion {
+		t.Errorf("schema_migrations rows = %d (%v), want %d", rows, err, SchemaVersion)
+	}
+}
+
+// TestOpenUnreachable: a database that can't be reached is a clear error that
+// never shows the password.
+func TestOpenUnreachable(t *testing.T) {
+	_, err := Open("postgres://someone:s3cret-pw@127.0.0.1:1/nowhere?sslmode=disable&connect_timeout=2")
+	if err == nil {
+		t.Fatal("Open succeeded")
+	}
+	if strings.Contains(err.Error(), "s3cret-pw") || !strings.Contains(err.Error(), "someone@127.0.0.1:1/nowhere") {
+		t.Errorf("err = %v", err)
+	}
+	if _, err := Open("::not a url::"); err == nil {
+		t.Error("malformed url accepted")
 	}
 }
 
 func TestUpdateNotFound(t *testing.T) {
-	st, err := Open(filepath.Join(t.TempDir(), "x.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	_, err = st.UpdateWith(context.Background(), "missing-user", 42, WriteOptions{}, func(cur transaction.Transaction) (transaction.Transaction, error) { return cur, nil })
+	st := openTestStore(t)
+	_, err := st.UpdateWith(context.Background(), "00000000-0000-4000-8000-000000000000", 42, WriteOptions{}, func(cur transaction.Transaction) (transaction.Transaction, error) { return cur, nil })
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("got %v, want ErrNotFound", err)
 	}

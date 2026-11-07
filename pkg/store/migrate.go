@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -9,26 +10,21 @@ import (
 
 // Schema versioning.
 //
-// The schema version is tracked in SQLite's PRAGMA user_version, and every
-// database created by this code is tagged with PRAGMA application_id =
-// applicationID so it can be told apart from databases created before the
-// schema was reset to a single baseline (those used user_version 1..18 for a
-// different layout and have application_id 0).
+// Applied versions are recorded in the table schema_migrations (one row per
+// version). migrations[i] upgrades a database from version i to i+1;
+// migrations[0] creates the baseline (schema.go) in an empty database.
 //
 //	v1  baseline: the complete schema in baselineSchema (schema.go)
-//	v2  api_tokens: personal API tokens (migrate_v2.go)
-//	v3  per-user balances and transactions (migrate_v3.go)
-//	v4  transaction type return_on_investment (migrate_v4.go)
-//	v5  drop redundant uid indexes (migrate_v5.go)
 //
-// migrations[i] upgrades a database from user_version i to i+1; migrations[0]
-// creates the baseline in an empty database. Each step runs in its own SQL
-// transaction together with the user_version bump, so an interrupted upgrade
-// rolls back to the previous version.
+// All pending steps run in one SQL transaction (Postgres DDL is
+// transactional), so a failed upgrade leaves the database as it was. The
+// transaction first takes an advisory lock on the current schema, so two
+// servers (or parallel tests in one schema) starting at once migrate one
+// after the other instead of racing.
 //
 // Adding a migration (v2, v3, ...):
 //
-//  1. Append a func(tx *sql.Tx) error to migrations; never reorder or edit a
+//  1. Append a func(ctx, tx) error to migrations; never reorder or edit a
 //     step that has shipped. SchemaVersion follows automatically.
 //  2. Leave baselineSchema alone: it stays the v1 schema. A brand-new
 //     database runs every step from 0, so it ends up with the baseline plus
@@ -38,110 +34,71 @@ import (
 //  4. Add a row to the version list above and to the README section
 //     "Database schema".
 //
-// SQLite cannot alter a CHECK constraint or column type in place; such a
-// change needs a table rebuild (create new table, INSERT ... SELECT, drop,
-// rename, recreate indexes, keep sqlite_sequence) inside the migration.
-//
-// Opening a database that is not empty but lacks applicationID, or whose
-// version is newer than SchemaVersion, fails with ErrUnsupportedSchema and
-// leaves the file untouched.
-
-// applicationID marks databases created by this code ("EXTR").
-const applicationID = 0x45585452
+// Opening a database whose version is newer than SchemaVersion fails with
+// ErrUnsupportedSchema and leaves it untouched.
 
 // migration upgrades the schema by one version inside a SQL transaction.
-type migration func(tx *sql.Tx) error
+type migration func(ctx context.Context, tx *sql.Tx) error
 
-// migrations[i] upgrades from user_version i to i+1. Append only.
+// migrations[i] upgrades from version i to i+1. Append only.
 var migrations = []migration{
 	// 0 -> 1: baseline schema (empty database only).
 	createBaseline,
-	// 1 -> 2: personal API tokens.
-	createAPITokens,
-	// 2 -> 3: per-user balances and transactions.
-	addUserOwnership,
-	// 3 -> 4: transaction type return_on_investment.
-	addReturnOnInvestmentType,
-	// 4 -> 5: drop indexes that duplicate the uid UNIQUE constraints.
-	dropRedundantUIDIndexes,
 }
 
-// SchemaVersion is the user_version a fully migrated database has.
+// SchemaVersion is the version a fully migrated database has.
 var SchemaVersion = len(migrations)
 
-// ErrUnsupportedSchema is returned by Open for a database this code cannot
-// use: one created before the schema baseline reset (no upgrade path), one
-// from a newer build, or a non-empty file that is not an expense database.
-// The file is not modified.
+// ErrUnsupportedSchema is returned by Open for a database created by a newer
+// build (its schema version is above SchemaVersion). It is not modified.
 var ErrUnsupportedSchema = errors.New("unsupported database schema")
 
-func migrate(db *sql.DB) error {
-	var version, appID int
-	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+func migrate(ctx context.Context, db *sql.DB) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	// One migrator per schema at a time; released at commit or rollback.
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext('expensetrackr.migrate.' || current_schema()))`); err != nil {
+		return fmt.Errorf("migrate: lock: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+		version    integer     PRIMARY KEY CHECK (version >= 1),
+		applied_at timestamptz NOT NULL DEFAULT now()
+	)`); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+	var version int
+	if err := tx.QueryRowContext(ctx, `SELECT coalesce(max(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
 		return fmt.Errorf("read schema version: %w", err)
-	}
-	if err := db.QueryRow(`PRAGMA application_id`).Scan(&appID); err != nil {
-		return fmt.Errorf("read application id: %w", err)
-	}
-	if appID != applicationID {
-		var objects int
-		if err := db.QueryRow(`SELECT count(*) FROM sqlite_master`).Scan(&objects); err != nil {
-			return fmt.Errorf("inspect schema: %w", err)
-		}
-		if version != 0 || objects != 0 || appID != 0 {
-			return fmt.Errorf("%w: found schema version %d (application_id %d), but this build only "+
-				"supports databases created with the baseline schema (version 1 and later); old "+
-				"databases are not upgraded. Delete the database file (and its -wal and -shm files) "+
-				"and restart to create a new one", ErrUnsupportedSchema, version, appID)
-		}
-		// Empty database: fall through and create it from version 0.
-	} else if version < 1 {
-		return fmt.Errorf("%w: database is tagged as an expense database but has schema version %d; "+
-			"delete it and restart to create a new one", ErrUnsupportedSchema, version)
 	}
 	if version > SchemaVersion {
 		return fmt.Errorf("%w: database schema version %d is newer than this binary supports (%d)",
 			ErrUnsupportedSchema, version, SchemaVersion)
 	}
-
+	if version == SchemaVersion {
+		return nil // up to date; the deferred rollback releases the lock
+	}
 	for v := version; v < SchemaVersion; v++ {
-		tx, err := db.Begin()
-		if err != nil {
+		if err := migrations[v](ctx, tx); err != nil {
 			return fmt.Errorf("migration %d: %w", v+1, err)
 		}
-		if err := migrations[v](tx); err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("migration %d: %w", v+1, err)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations (version) VALUES ($1)`, v+1); err != nil {
+			return fmt.Errorf("migration %d: record version: %w", v+1, err)
 		}
-		if err := setVersion(tx, v+1); err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("migration %d: %w", v+1, err)
-		}
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("migration %d: commit: %w", v+1, err)
-		}
-		log.Printf("store: migrated schema to version %d", v+1)
 	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migrate: commit: %w", err)
+	}
+	log.Printf("store: migrated schema from version %d to %d", version, SchemaVersion)
 	return nil
 }
 
-// createBaseline is migration 0 -> 1: the full baseline schema, plus the
-// application_id tag, in an empty database.
-func createBaseline(tx *sql.Tx) error {
-	if _, err := tx.Exec(baselineSchema); err != nil {
+// createBaseline is migration 0 -> 1: the full baseline schema.
+func createBaseline(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, baselineSchema); err != nil {
 		return fmt.Errorf("create baseline schema: %w", err)
-	}
-	// PRAGMA does not accept bound parameters; applicationID is a constant.
-	if _, err := tx.Exec(fmt.Sprintf(`PRAGMA application_id = %d`, applicationID)); err != nil {
-		return fmt.Errorf("set application id: %w", err)
-	}
-	return nil
-}
-
-func setVersion(tx *sql.Tx, v int) error {
-	// PRAGMA does not accept bound parameters; v is a trusted integer.
-	if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, v)); err != nil {
-		return fmt.Errorf("set schema version: %w", err)
 	}
 	return nil
 }

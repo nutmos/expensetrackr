@@ -4,7 +4,6 @@
 GO        ?= go
 BIN      ?= bin/expense-server
 ADDR     ?= 127.0.0.1:8080
-DB       ?= data/expenses.db
 GOLANGCI_LINT ?= golangci-lint
 GOVULNCHECK_VERSION ?= v1.9.0
 
@@ -29,8 +28,8 @@ build: ## Build the server binary to $(BIN).
 	$(GO) build -o $(BIN) ./cmd/server
 
 .PHONY: run
-run: build ## Build, then run the server on $(ADDR) with the DB at $(DB).
-	./$(BIN) -addr $(ADDR) -db $(DB)
+run: build ## Build, then run the server on $(ADDR) against EXPENSE_DATABASE_URL (make db-up first).
+	./$(BIN) -addr $(ADDR)
 
 .PHONY: test
 test: ## Run all tests.

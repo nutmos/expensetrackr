@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -13,7 +12,7 @@ import (
 	"time"
 
 	"github.com/nutmos/expensetrackr/pkg/fx"
-	"github.com/nutmos/expensetrackr/pkg/store"
+	"github.com/nutmos/expensetrackr/pkg/store/storetest"
 
 	"github.com/gin-gonic/gin"
 )
@@ -398,11 +397,7 @@ func TestBulkFXUpstreamDown(t *testing.T) {
 	down := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	down.Close() // connection refused
 	gin.SetMode(gin.TestMode)
-	st, err := store.Open(filepath.Join(t.TempDir(), "fx.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
+	st := storetest.Open(t)
 	client := &fx.Client{BaseURL: down.URL, Cache: st, HTTP: &http.Client{Timeout: time.Second}}
 	h := loggedIn(t, (&Server{Store: st, Static: fstest.MapFS{"index.html": {}}, FX: client}).Router(), st)
 	usd := seedPayable(t, h, "Dollars", "USD")
@@ -431,11 +426,7 @@ func TestBulkFXUpstreamDown(t *testing.T) {
 
 func TestBulkAuthAndCSRF(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	st, err := store.Open(filepath.Join(t.TempDir(), "a.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
+	st := storetest.Open(t)
 	router := (&Server{Store: st, Static: fstest.MapFS{"index.html": {}}}).Router()
 	body := `{"transactions":[{"amount":"1","currency":"THB","balance_uid":"4dc73a4a-a60b-414e-98bc-3c71298a0af5","spent_at":"2026-10-03T09:00:00Z"}]}`
 	if rec, _ := doH(t, router, "POST", "/api/transactions/bulk", body, nil); rec.Code != http.StatusUnauthorized {
@@ -487,11 +478,7 @@ func flakyFrankfurter(t *testing.T, hang bool) (*httptest.Server, *atomic.Int32)
 func newBulkFXServer(t *testing.T, fxURL string, bulkFXTimeout time.Duration) http.Handler {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	st, err := store.Open(filepath.Join(t.TempDir(), "fx.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
+	st := storetest.Open(t)
 	client := &fx.Client{BaseURL: fxURL, Cache: st, HTTP: &http.Client{Timeout: 5 * time.Second},
 		Now: func() time.Time { return time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC) }}
 	srv := &Server{Store: st, Static: fstest.MapFS{"index.html": {}}, FX: client, BulkFXTimeout: bulkFXTimeout}

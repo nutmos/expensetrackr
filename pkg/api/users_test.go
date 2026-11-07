@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
 
 	"github.com/nutmos/expensetrackr/pkg/store"
+	"github.com/nutmos/expensetrackr/pkg/store/storetest"
 	"github.com/nutmos/expensetrackr/pkg/user"
 
 	"github.com/gin-gonic/gin"
@@ -19,11 +19,7 @@ import (
 func newTestServerWithStore(t *testing.T) (http.Handler, *store.Store) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	t.Cleanup(func() { st.Close() })
+	st := storetest.Open(t)
 	static := fstest.MapFS{"index.html": {Data: []byte("<!doctype html><title>Expense Log</title>")}}
 	return loggedIn(t, (&Server{Store: st, Static: static}).Router(), st), st
 }

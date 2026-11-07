@@ -12,9 +12,6 @@ import (
 
 	"github.com/nutmos/expensetrackr/pkg/category"
 	"github.com/nutmos/expensetrackr/pkg/common_type"
-
-	"modernc.org/sqlite"
-	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // Categories are per user (issue #34): all of a user's categories
@@ -50,7 +47,7 @@ type rowQueryer interface {
 func readUserCategories(ctx context.Context, q rowQueryer, userUID string) ([]category.Category, int64, error) {
 	var raw string
 	var version int64
-	err := q.QueryRowContext(ctx, `SELECT categories, version FROM user_categories WHERE user_uid = ?`, userUID).Scan(&raw, &version)
+	err := q.QueryRowContext(ctx, `SELECT categories, version FROM user_categories WHERE user_uid = $1`, userUID).Scan(&raw, &version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return []category.Category{}, 0, nil
 	}
@@ -76,16 +73,14 @@ func writeUserCategories(ctx context.Context, tx *sql.Tx, userUID string, cats [
 	var res sql.Result
 	if version == 0 {
 		res, err = tx.ExecContext(ctx, `INSERT INTO user_categories (user_uid, categories, version, created_at)
-			VALUES (?, ?, 1, ?) ON CONFLICT (user_uid) DO NOTHING`, userUID, string(b), now)
+			VALUES ($1, $2, 1, $3) ON CONFLICT (user_uid) DO NOTHING`, userUID, string(b), now)
 	} else {
-		res, err = tx.ExecContext(ctx, `UPDATE user_categories SET categories = ?, version = version + 1, updated_at = ?
-			WHERE user_uid = ? AND version = ?`, string(b), now, userUID, version)
+		res, err = tx.ExecContext(ctx, `UPDATE user_categories SET categories = $1, version = version + 1, updated_at = $2
+			WHERE user_uid = $3 AND version = $4`, string(b), now, userUID, version)
 	}
-	if isBusy(err) {
-		// Another connection wrote the database after our read (WAL
-		// snapshot is stale): same as a version mismatch.
-		return errCategoryRowConflict
-	}
+	// A concurrent writer that committed after our read leaves the version
+	// changed (UPDATE matches no row) or the row already present (INSERT does
+	// nothing): both are reported as a conflict and retried by the caller.
 	if err != nil {
 		return fmt.Errorf("write categories: %w", err)
 	}
@@ -95,12 +90,6 @@ func writeUserCategories(ctx context.Context, tx *sql.Tx, userUID string, cats [
 		return errCategoryRowConflict
 	}
 	return nil
-}
-
-// isBusy reports SQLITE_BUSY and its extended codes (e.g. BUSY_SNAPSHOT).
-func isBusy(err error) bool {
-	var se *sqlite.Error
-	return errors.As(err, &se) && se.Code()&0xff == sqlite3.SQLITE_BUSY
 }
 
 // modifyCategories runs a read-modify-write of the user's category set in
@@ -120,6 +109,12 @@ func (s *Store) modifyCategories(ctx context.Context, userUID string, fn func(tx
 
 func (s *Store) modifyCategoriesOnce(ctx context.Context, userUID string, fn func(tx *sql.Tx, cats []category.Category) ([]category.Category, error)) error {
 	return s.inTx(ctx, "categories", func(tx *sql.Tx) error {
+		// One writer per user at a time (the row may not exist yet, so an
+		// advisory lock rather than a row lock). Writes still check the
+		// row's version, for writers that don't take this lock.
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext('expensetrackr.categories.' || $1))`, userUID); err != nil {
+			return fmt.Errorf("categories: lock: %w", err)
+		}
 		cats, version, err := readUserCategories(ctx, tx, userUID)
 		if err != nil {
 			return err
@@ -237,7 +232,7 @@ func (s *Store) GetCategoryByUID(ctx context.Context, userUID string, uid common
 
 func countCategoryRefs(ctx context.Context, tx *sql.Tx, userUID string, uid common_type.UID) (int, error) {
 	var n int
-	err := tx.QueryRowContext(ctx, `SELECT count(*) FROM transactions WHERE user_uid = ? AND category_uid = ?`, userUID, string(uid)).Scan(&n)
+	err := tx.QueryRowContext(ctx, `SELECT count(*) FROM transactions WHERE user_uid = $1 AND category_uid = $2`, userUID, string(uid)).Scan(&n)
 	return n, err
 }
 
