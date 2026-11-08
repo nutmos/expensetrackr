@@ -59,7 +59,7 @@ Every balance also has:
   lowercase), unique and **immutable**. Generated on create; clients never set
   it (a `uid` in a POST/PUT body is ignored so round-tripping a previous
   response is fine). Included in every JSON response.
-- a **`name`** (required, up to 100 characters, unique case-insensitively)
+- a **`name`** (required, up to 100 characters; need not be unique)
 - a **base `currency`** (ISO 4217)
 - an optional **`description`** (up to 1000 characters)
 
@@ -92,9 +92,11 @@ overrides and versioning are covered in [docs/balances.md](balances.md).
 - Liabilities also return the derived `available` = `limit − debt` (negative
   when over the limit) and `over_limit`.
 - A CHECK constraint enforces the per-type columns in the database too.
-- Names are unique per user **case-insensitively** (a unique index on
-  `lower(name)`, which folds every script that has case, not only ASCII;
-  Thai has no case).
+- Names are **not unique**: a user may have two balances called "Cash" (for
+  example in two currencies). Transactions refer to balances by `uid`; the
+  name is only a label (copied into `account` / `to_account` when a
+  transaction is saved). Lists sort by type, then name, then creation order.
+  Schema v1 had a unique index on `lower(name)`; v2 drops it.
 
 ## Categories (per user, table `user_categories`)
 
@@ -293,6 +295,7 @@ versioning lives in `pkg/store/migrate.go`.
 | Version | Change |
 |---------|--------|
 | 1       | baseline: `users`, `user_identities`, `sessions`, `api_tokens`, `user_categories`, `balances`, `transactions`, `fx_rates`, `fx_rate_lookups` and their indexes |
+| 2       | balance names no longer unique: drops `balances_user_name_uq` |
 
 **Coming from SQLite?** Earlier versions stored everything in
 `data/expenses.db`. That data is **not migrated**: the Postgres version starts

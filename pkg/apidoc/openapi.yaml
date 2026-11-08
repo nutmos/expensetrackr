@@ -385,7 +385,8 @@ paths:
       description: |
         Assets (`payment_account`, `other_asset`) need `balance` (may be negative). Liabilities
         (`credit_card`, `other_liability`) need `debt` (may be negative, i.e. in credit) and `limit` (≥ 0).
-        Sending an amount that does not apply to the type is a 422. Names are unique case-insensitively (409).
+        Sending an amount that does not apply to the type is a 422. Names need not be unique: two
+        balances may share a name (each has its own `uid`).
         A `version` in the body is ignored.
       requestBody:
         required: true
@@ -413,13 +414,6 @@ paths:
                 payment_account: { $ref: '#/components/examples/BalanceAsset' }
                 credit_card: { $ref: '#/components/examples/BalanceCard' }
         '400': { $ref: '#/components/responses/BadRequest' }
-        '409':
-          description: A balance with this name already exists (case-insensitive).
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-              examples:
-                duplicate_name: { $ref: '#/components/examples/ErrBalanceDuplicateName' }
         '422': { $ref: '#/components/responses/BalanceValidationFailed' }
         '500': { $ref: '#/components/responses/InternalError' }
     get:
@@ -1372,8 +1366,8 @@ components:
             balance_adjustment_readonly: { $ref: '#/components/examples/ErrTxReadOnly' }
     BalanceConflict:
       description: |
-        `version_conflict` (stale version; `current` + `ETag` sent), `balance_in_use` (currency change
-        while transactions reference the balance), or a duplicate name (no `code`).
+        `version_conflict` (stale version; `current` + `ETag` sent) or `balance_in_use` (currency change
+        while transactions reference the balance).
       headers:
         ETag:
           description: Current version (only with `version_conflict`).
@@ -1384,7 +1378,6 @@ components:
           examples:
             version_conflict: { $ref: '#/components/examples/ErrBalanceVersionConflict' }
             balance_in_use: { $ref: '#/components/examples/ErrBalanceInUse' }
-            duplicate_name: { $ref: '#/components/examples/ErrBalanceDuplicateName' }
     CategoryConflict:
       description: Duplicate name within the type among the user's categories (case-insensitive), a type change while transactions use the category, or the per-user limit (500 categories) reached.
       content:
@@ -1579,7 +1572,6 @@ components:
         code:
           type: string
           enum: [version_conflict, balance_in_use]
-          description: Absent for a duplicate name.
         fields:
           type: object
           additionalProperties: { type: string }
@@ -2495,11 +2487,6 @@ components:
         error: balance is used by transactions (2 transaction(s)); its currency cannot change
         fields: { currency: cannot change while transactions reference this balance (no exchange-rate conversion) }
         code: balance_in_use
-    ErrBalanceDuplicateName:
-      summary: Name already used
-      value:
-        error: a balance with this name already exists
-        fields: { name: is already used by another of your balances (names are case-insensitive) }
     ErrCategoryInUseDelete:
       summary: Category still referenced
       value: { error: 'category is used by transactions (1 transaction(s)); it cannot be deleted; reassign or clear category_uid on those transactions first' }

@@ -113,15 +113,12 @@ func writeTransactionError(c *gin.Context, err error) {
 	writeError(c, err, "transaction")
 }
 
-// balanceErrorCases: 409 currency change while in use, 409 duplicate name.
+// balanceErrorCases: 409 currency change while in use. (Balance names may
+// repeat since schema v2.)
 // (Version conflicts are answered by balanceConflict, which needs the store.)
 var balanceErrorCases = []errorCase{
 	{store.ErrBalanceInUse, http.StatusConflict, withText("balance_in_use",
 		map[string]string{"currency": "cannot change while transactions reference this balance (no exchange-rate conversion)"})},
-	{store.ErrDuplicateName, http.StatusConflict, fixed(errorBody{
-		Error:  "a balance with this name already exists",
-		Fields: map[string]string{"name": "is already used by another of your balances (names are case-insensitive)"},
-	})},
 }
 
 func writeBalanceError(c *gin.Context, err error) {

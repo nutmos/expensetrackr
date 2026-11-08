@@ -41,23 +41,31 @@ func TestBalanceCRUDAndConstraints(t *testing.T) {
 		t.Errorf("credit card read back: %+v", got)
 	}
 
-	// Case-insensitive unique name.
-	dup := mustBalance(t, balance.Input{Name: "uob one", Type: "other_asset", Currency: "SGD", Balance: dec("1")})
-	if err := st.CreateBalance(ctx, owner, &dup); !errors.Is(err, ErrDuplicateName) {
-		t.Errorf("duplicate name: got %v", err)
+	// Names may repeat (any case) since schema v2: each balance is its own uid.
+	for _, name := range []string{"UOB One", "uob one"} {
+		dup := mustBalance(t, balance.Input{Name: name, Type: "other_asset", Currency: "SGD", Balance: dec("1")})
+		if err := st.CreateBalance(ctx, owner, &dup); err != nil {
+			t.Fatalf("duplicate name %q: %v", name, err)
+		}
+		if dup.UID == card.UID {
+			t.Errorf("duplicate name %q reused uid %s", name, dup.UID)
+		}
 	}
 
 	cash := mustBalance(t, balance.Input{Name: "Cash", Type: "payment_account", Currency: "THB", Balance: dec("-35")})
 	if err := st.CreateBalance(ctx, owner, &cash); err != nil {
 		t.Fatal(err)
 	}
-	// Renaming onto an existing name (different case) is rejected too.
-	if _, err := st.UpdateBalance(ctx, owner, cash.ID, func(cur balance.Balance) (balance.Balance, error) {
-		in := cur.Input()
-		in.Name = "UOB ONE"
-		return in.Validate()
-	}); !errors.Is(err, ErrDuplicateName) {
-		t.Errorf("rename to duplicate: got %v", err)
+	// Renaming onto an existing name is allowed too; rename back for the
+	// checks below.
+	for _, name := range []string{"UOB ONE", "Cash"} {
+		if _, err := st.UpdateBalance(ctx, owner, cash.ID, func(cur balance.Balance) (balance.Balance, error) {
+			in := cur.Input()
+			in.Name = name
+			return in.Validate()
+		}); err != nil {
+			t.Errorf("rename to %q: %v", name, err)
+		}
 	}
 	// The type is immutable: even a callback that returns another type is refused
 	// and nothing is written.
@@ -76,7 +84,10 @@ func TestBalanceCRUDAndConstraints(t *testing.T) {
 	}
 
 	list, _ := st.ListBalances(ctx, owner, "")
-	if len(list) != 2 || list[0].Type != balance.TypePaymentAccount || list[1].Type != balance.TypeCreditCard {
+	// Cash, the card, then the two "UOB One" assets (same name: both listed).
+	if len(list) != 4 || list[0].Type != balance.TypePaymentAccount || list[1].Type != balance.TypeCreditCard ||
+		list[2].Type != balance.TypeOtherAsset || list[3].Type != balance.TypeOtherAsset ||
+		!strings.EqualFold(list[2].Name, list[3].Name) || list[2].UID == list[3].UID {
 		t.Errorf("list order: %+v", list)
 	}
 	if only, _ := st.ListBalances(ctx, owner, balance.TypeCreditCard); len(only) != 1 {

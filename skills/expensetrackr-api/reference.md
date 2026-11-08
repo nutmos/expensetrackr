@@ -91,8 +91,9 @@ curl -sS -b "$JAR" -c "$JAR" "$BASE/api/balances?type=credit_card" | jq -r '.bal
 `totals[]`: `{currency, assets, liabilities, net, credit_limit, available_credit}`
 (no cross-currency conversion). `payable` and `type` can't be combined (400).
 
-Create (only when the user asks for a new account; names are unique,
-case-insensitively, 409 otherwise):
+Create (only when the user asks for a new account). Names may repeat; if
+the user already has a balance with that name, say so and check they want a
+second one:
 
 ```bash
 curl -sS -b "$JAR" -c "$JAR" -X POST "$BASE/api/balances" -H 'Content-Type: application/json' \

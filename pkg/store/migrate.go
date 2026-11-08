@@ -15,6 +15,7 @@ import (
 // migrations[0] creates the baseline (schema.go) in an empty database.
 //
 //	v1  baseline: the complete schema in baselineSchema (schema.go)
+//	v2  balance names no longer unique (migrate_v2.go)
 //
 // All pending steps run in one SQL transaction (Postgres DDL is
 // transactional), so a failed upgrade leaves the database as it was. The
@@ -44,6 +45,8 @@ type migration func(ctx context.Context, tx *sql.Tx) error
 var migrations = []migration{
 	// 0 -> 1: baseline schema (empty database only).
 	createBaseline,
+	// 1 -> 2: drop the unique index on balance names.
+	allowDuplicateBalanceNames,
 }
 
 // SchemaVersion is the version a fully migrated database has.

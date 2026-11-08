@@ -101,8 +101,8 @@ category_uid() {
 balance_currency() {
   etr_get /api/balances \
     | jq -r --arg n "$1" '
-        .balances[] | select((.name | ascii_downcase) == ($n | ascii_downcase)) | .currency' \
-    | head -n1
+        [.balances[] | select((.name | ascii_downcase) == ($n | ascii_downcase))]
+        | if length == 1 then .[0].currency else empty end'
 }
 
 WALLET_UID=$(balance_uid Wallet)
@@ -110,12 +110,15 @@ CARD_UID=$(balance_uid "Credit Card")
 USD_UID=$(balance_uid "USD Account")
 LAPTOP_UID=$(balance_uid Laptop)
 FOOD_UID=$(category_uid Food expense)
-# empty → ask the user; never invent a uid
+# empty → no such name, or several balances share it: list them and ask
+# the user which; never invent a uid
 ```
 
 Balance types: `payment_account`, `other_asset` (assets, field `balance`);
 `credit_card`, `other_liability` (liabilities, fields `debt`, `limit`,
-`available`). Names are unique per user (case-insensitive).
+`available`). Balance names can repeat; pick by uid, and when a name
+matches more than one balance, ask the user which (show type, currency and
+amount). Category names are unique per type.
 
 ### 2. Pick the transaction type
 

@@ -79,7 +79,9 @@ Then send `-b "$JAR" -c "$JAR"` on every call. Rules every request must follow:
 
 Transactions reference balances and categories by `uid`. Fetch them, then
 pick by name (case-insensitive). The names below (Wallet, Credit Card,
-USD Account, Laptop, Food) are examples; use the user's.
+USD Account, Laptop, Food) are examples; use the user's. Balance names can
+repeat (two "Cash" balances, say): when a name matches more than one, show
+the user each one's type, currency and amount and ask which.
 
 ```bash
 curl -sS -b "$JAR" -c "$JAR" "$BASE/api/balances" \
@@ -87,9 +89,11 @@ curl -sS -b "$JAR" -c "$JAR" "$BASE/api/balances" \
 curl -sS -b "$JAR" -c "$JAR" "$BASE/api/categories" \
   | jq -r '.categories[] | [.uid, .name, .type] | @tsv'
 
-# uid by name (case-insensitive); empty output = no such name
+# uid by name (case-insensitive); empty output = no such name, or several
+# balances share it (list them and ask the user)
 balance_uid() { curl -sS -b "$JAR" -c "$JAR" "$BASE/api/balances" \
-  | jq -r --arg n "$1" '.balances[] | select((.name | ascii_downcase) == ($n | ascii_downcase)) | .uid'; }
+  | jq -r --arg n "$1" '[.balances[] | select((.name | ascii_downcase) == ($n | ascii_downcase))]
+      | if length == 1 then .[0].uid else empty end'; }
 category_uid() { curl -sS -b "$JAR" -c "$JAR" "$BASE/api/categories?type=$2" \
   | jq -r --arg n "$1" '.categories[] | select((.name | ascii_downcase) == ($n | ascii_downcase)) | .uid'; }
 WALLET_UID=$(balance_uid Wallet); CARD_UID=$(balance_uid "Credit Card")
@@ -289,7 +293,7 @@ All errors are JSON `{"error": "...", "fields": {...}, "code": "..."}`.
 | 401 | not logged in / session expired (`unauthenticated`), bad login (`invalid_credentials`), no account yet (`setup_required`) | log in once and retry; on bad credentials stop and tell the user |
 | 403 | `csrf` (Origin / Sec-Fetch-Site), `registration_closed`, wrong current password | drop `Origin`/`Sec-Fetch-Site`; don't retry others |
 | 404 | uid not found (or another user's category), unknown path/method | re-list to get the right uid |
-| 409 | `version_conflict` (re-read, re-apply, retry), `balance_adjustment_readonly`, `balance_in_use` (currency change), duplicate name, category in use | handle per code; tell the user for name/in-use conflicts |
+| 409 | `version_conflict` (re-read, re-apply, retry), `balance_adjustment_readonly`, `balance_in_use` (currency change), duplicate category name, category in use | handle per code; tell the user for name/in-use conflicts |
 | 415 | body not `application/json` | add `Content-Type: application/json` |
 | 422 | validation failed; `fields` says which field and why (e.g. currency ≠ balance currency, wrong balance type, category type mismatch, too many decimals) | fix the named fields; ask the user if the fix needs information you don't have |
 | 428 | `version_required` | resend with `If-Match: "<version>"` |

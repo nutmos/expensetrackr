@@ -113,7 +113,6 @@ func TestBalanceCreateErrors(t *testing.T) {
 		{"negative limit", `{"name":"C","type":"credit_card","currency":"THB","debt":"-1","limit":"-2"}`, 422, []string{"limit"}}, // negative debt (in credit) is fine
 		{"bad type/currency/name", `{"name":"","type":"wallet","currency":"ABC"}`, 422, []string{"name", "type", "currency"}},
 		{"too many decimals", `{"name":"J","type":"payment_account","currency":"JPY","balance":"1.5"}`, 422, []string{"balance"}},
-		{"duplicate name (case-insensitive)", `{"name":"  cash ","type":"other_asset","currency":"USD","balance":"1"}`, 409, []string{"name"}},
 		{"unknown field", `{"name":"Z","type":"payment_account","currency":"THB","balance":"1","color":"red"}`, 400, nil},
 		{"malformed", `{"name":`, 400, nil},
 		{"array", `[]`, 400, nil},
@@ -173,8 +172,12 @@ func TestBalancePut(t *testing.T) {
 	if rec, _ := do(t, h, "PUT", "/api/balances/00000000-0000-4000-8000-000000009999", `{"name":""}`); rec.Code != 404 {
 		t.Errorf("PUT missing + invalid: %d", rec.Code)
 	}
-	if rec, _ := do(t, h, "PUT", path, `{"name":"other","type":"payment_account","currency":"THB","balance":"1"}`); rec.Code != 409 {
-		t.Errorf("PUT duplicate name: %d", rec.Code)
+	// Names may repeat: renaming onto another balance's name is fine.
+	if rec, body := putMerged(t, h, path, `{"name":"other"}`); rec.Code != 200 || body["name"] != "other" {
+		t.Errorf("PUT duplicate name: %d %v", rec.Code, body)
+	}
+	if rec, _ := putMerged(t, h, path, `{"name":"KBank Main"}`); rec.Code != 200 {
+		t.Errorf("PUT rename back: %d", rec.Code)
 	}
 
 	// Full-record PUT with one field changed; sending the stored type is allowed.
@@ -221,7 +224,6 @@ func TestBalancePut(t *testing.T) {
 		{path, `{"colour":"red"}`, 400, false},
 		{path, `{"name":5}`, 400, false},
 		{path, `{"name":null}`, 422, false},
-		{path, `{"name":"OTHER"}`, 409, false},
 		{path, `{"debt":"5"}`, 422, false}, // asset now: debt not used
 	} {
 		put := putMerged

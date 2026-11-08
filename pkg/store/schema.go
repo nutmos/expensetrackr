@@ -39,7 +39,8 @@ package store
 //
 // Table "balances": payment accounts, credit cards, other assets and other
 // liabilities of one user (user_uid).
-//   - name: unique per user, case-insensitively.
+//   - name: a label; unique per user case-insensitively in v1, any name
+//     allowed since v2 (migrate_v2.go).
 //   - balance_minor: asset types only (may be negative: overdraft).
 //   - debt_minor, limit_minor: liability types only; debt may be negative
 //     (in credit) and may exceed the limit; limit >= 0.

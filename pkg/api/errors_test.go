@@ -64,7 +64,6 @@ func TestErrorMapping(t *testing.T) {
 		// balances
 		{"balance in use", writeBalanceError, fmt.Errorf("%w (2 transaction(s)); its currency cannot change", store.ErrBalanceInUse), 409,
 			"balance is used by transactions (2 transaction(s)); its currency cannot change", "balance_in_use", "currency"},
-		{"balance duplicate", writeBalanceError, store.ErrDuplicateName, 409, "a balance with this name already exists", "", "name"},
 		// categories
 		{"category duplicate", writeCategoryError, store.ErrDuplicateCategory, 409, "a category with this name and type already exists", "", "name"},
 		{"category limit", writeCategoryError, store.ErrCategoryLimit, 409, store.ErrCategoryLimit.Error(), "", ""},
@@ -77,7 +76,7 @@ func TestErrorMapping(t *testing.T) {
 		{"last login user", writeUserError, store.ErrLastPasswordUser, 409, store.ErrLastPasswordUser.Error(), "last_login_user", ""},
 
 		// a resource's own sentinel means nothing to another resource
-		{"balance error on users route", writeUserError, store.ErrDuplicateName, 500, "internal server error", "", ""},
+		{"balance error on users route", writeUserError, store.ErrBalanceInUse, 500, "internal server error", "", ""},
 	}
 	for _, c := range cases {
 		status, b := respond(t, c.write, c.err)
