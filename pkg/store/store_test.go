@@ -63,7 +63,7 @@ func schemaVersion(t *testing.T, url string) int {
 	return v
 }
 
-// baselineTables are the tables of the v1 schema (plus schema_migrations).
+// baselineTables are the tables of the schema (plus schema_migrations).
 var baselineTables = []string{
 	"users", "user_identities", "sessions", "api_tokens", "user_categories",
 	"balances", "transactions", "fx_rates", "fx_rate_lookups", "schema_migrations",
@@ -73,7 +73,12 @@ var baselineTables = []string{
 // the store relies on (constraint names are mapped to errors in pgerr.go).
 var baselineIndexes = []string{
 	"users_username_uq", "users_email_uq", "user_identities_provider_subject_uq",
-	"balances_user_name_uq", "transactions_import_ref_uq", "transactions_user_spent_idx",
+	"balances_user_type_idx", "transactions_import_ref_uq", "transactions_user_spent_idx",
+}
+
+// droppedIndexes were in an earlier schema version and must be gone now.
+var droppedIndexes = []string{
+	"balances_user_name_uq", // v2: balance names may repeat
 }
 
 func TestFreshDatabaseGetsBaseline(t *testing.T) {
@@ -98,8 +103,8 @@ func TestFreshDatabaseGetsBaseline(t *testing.T) {
 	}
 	st.Close()
 
-	if SchemaVersion != 1 {
-		t.Errorf("SchemaVersion = %d, want 1 (Postgres baseline)", SchemaVersion)
+	if SchemaVersion != 2 {
+		t.Errorf("SchemaVersion = %d, want 2", SchemaVersion)
 	}
 	if v := schemaVersion(t, url); v != SchemaVersion {
 		t.Errorf("schema version = %d, want %d", v, SchemaVersion)
@@ -122,6 +127,11 @@ func TestFreshDatabaseGetsBaseline(t *testing.T) {
 			t.Errorf("missing index %s", ix)
 		}
 	}
+	for _, ix := range droppedIndexes {
+		if _, ok := got["index "+ix]; ok {
+			t.Errorf("index %s should have been dropped", ix)
+		}
+	}
 
 	// Reopening an up-to-date database changes nothing.
 	st, err = Open(url)
@@ -135,6 +145,92 @@ func TestFreshDatabaseGetsBaseline(t *testing.T) {
 	var rows int
 	if err := rawDB(t, url).QueryRow(`SELECT count(*) FROM schema_migrations`).Scan(&rows); err != nil || rows != SchemaVersion {
 		t.Errorf("schema_migrations rows = %d (%v), want %d", rows, err, SchemaVersion)
+	}
+}
+
+// portableSchema is schemaObjects without the schema name, so two test
+// schemas can be compared.
+func portableSchema(t *testing.T, url string) string {
+	t.Helper()
+	var schema string
+	if err := rawDB(t, url).QueryRow(`SELECT current_schema()`).Scan(&schema); err != nil {
+		t.Fatal(err)
+	}
+	return strings.ReplaceAll(fmt.Sprint(schemaObjects(t, url)), " ON "+schema+".", " ON ")
+}
+
+// buildV1 creates the v1 schema (baseline only) in the database at url, as a
+// v1 server would have left it.
+func buildV1(t *testing.T, url string) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := rawDB(t, url).BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `CREATE TABLE schema_migrations (
+		version    integer     PRIMARY KEY CHECK (version >= 1),
+		applied_at timestamptz NOT NULL DEFAULT now()
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := createBaseline(ctx, tx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations (version) VALUES (1)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestMigrateV1ToV2: a v1 database keeps its balances, loses the unique index
+// on balance names, accepts duplicate names afterwards, and ends up with the
+// same schema as a fresh database.
+func TestMigrateV1ToV2(t *testing.T) {
+	ctx := context.Background()
+	url := testURL(t)
+	buildV1(t, url)
+	if _, ok := schemaObjects(t, url)["index balances_user_name_uq"]; !ok {
+		t.Fatal("v1 setup: balances_user_name_uq missing")
+	}
+	db := rawDB(t, url)
+	const owner = "00000000-0000-4000-8000-000000000001"
+	if _, err := db.Exec(`INSERT INTO users (uid, display_name, created_at) VALUES ($1, 'Owner', now())`, owner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO balances (uid, user_uid, name, type, currency, amount_scale, balance_minor, created_at)
+		VALUES ('00000000-0000-4000-8000-0000000000b1', $1, 'Cash', 'payment_account', 'SGD', 2, 1000, now())`, owner); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := Open(url)
+	if err != nil {
+		t.Fatalf("open v1: %v", err)
+	}
+	defer st.Close()
+	if v := schemaVersion(t, url); v != 2 {
+		t.Errorf("schema version after upgrade = %d, want 2", v)
+	}
+	list, err := st.ListBalances(ctx, owner, "")
+	if err != nil || len(list) != 1 || list[0].Name != "Cash" {
+		t.Fatalf("balances after upgrade: %v %+v", err, list)
+	}
+	dup := mustBalance(t, balance.Input{Name: "CASH", Type: "payment_account", Currency: "SGD", Balance: dec("5")})
+	if err := st.CreateBalance(ctx, owner, &dup); err != nil {
+		t.Errorf("duplicate name after upgrade: %v", err)
+	}
+
+	fresh := testURL(t)
+	fst, err := Open(fresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fst.Close()
+	if got, want := portableSchema(t, url), portableSchema(t, fresh); got != want {
+		t.Errorf("upgraded schema differs from a fresh one:\n got %v\nwant %v", got, want)
 	}
 }
 

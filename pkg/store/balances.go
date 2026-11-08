@@ -12,25 +12,12 @@ import (
 	"github.com/nutmos/expensetrackr/pkg/money"
 )
 
-// ErrDuplicateName is returned when another of the same user's balances
-// already has the same name (compared case-insensitively).
-var ErrDuplicateName = errors.New("a balance with this name already exists")
-
 // ErrBalanceInUse is returned when a balance's currency would change while
 // transactions reference it (their amounts are in the old currency and are
 // reversed against this balance when edited or deleted).
 var ErrBalanceInUse = errors.New("balance is used by transactions")
 
 const balanceCols = `id, uid, name, type, currency, description, amount_scale, balance_minor, debt_minor, limit_minor, created_at, updated_at, version`
-
-// mapBalanceErr turns a violation of the per-user unique name index into
-// ErrDuplicateName.
-func mapBalanceErr(err error) error {
-	if isUniqueViolation(err, "balances_user_name_uq") {
-		return ErrDuplicateName
-	}
-	return err
-}
 
 func nullInt(p *int64) any {
 	if p == nil {
@@ -60,9 +47,6 @@ func (s *Store) CreateBalance(ctx context.Context, userUID string, b *balance.Ba
 		b.UID, userUID, b.Name, string(b.Type), b.Currency, b.Description, scale,
 		nullInt(b.BalanceMinor), nullInt(b.DebtMinor), nullInt(b.LimitMinor), b.CreatedAt).Scan(&b.ID)
 	if err != nil {
-		if mapped := mapBalanceErr(err); mapped == ErrDuplicateName {
-			return mapped
-		}
 		return fmt.Errorf("insert balance: %w", err)
 	}
 	return nil
@@ -147,7 +131,7 @@ func (s *Store) UpdateBalance(ctx context.Context, userUID string, id int64, fn 
 // name/description and currency changes record nothing.
 //
 // Returns ErrNotFound, ErrVersionConflict (opts.Version > 0 and stale),
-// ErrDuplicateName, ErrBalanceInUse (currency change while transactions
+// ErrBalanceInUse (currency change while transactions
 // reference the balance), or fn's error.
 func (s *Store) UpdateBalanceWith(ctx context.Context, userUID string, id int64, opts WriteOptions, fn func(cur balance.Balance) (balance.Balance, error)) (balance.Balance, error) {
 	var saved balance.Balance
@@ -196,9 +180,6 @@ func (s *Store) UpdateBalanceWith(ctx context.Context, userUID string, id int64,
 			next.Name, next.Currency, next.Description, scale,
 			nullInt(next.BalanceMinor), nullInt(next.DebtMinor), nullInt(next.LimitMinor), now, next.Version, id, cur.Version)
 		if err != nil {
-			if mapped := mapBalanceErr(err); mapped == ErrDuplicateName {
-				return mapped
-			}
 			return fmt.Errorf("update balance: %w", err)
 		}
 		if n, err := res.RowsAffected(); err != nil || n != 1 {

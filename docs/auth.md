@@ -196,7 +196,7 @@ A transaction may only reference the owner's balances and categories.
 Migration v3 assigns any pre-existing balances and transactions to the
 earliest-created user (`ORDER BY created_at ASC, id ASC`). If the database
 has such rows but no users, those orphans are deleted so the migration can
-apply `NOT NULL user_uid` without failing. Balance names are unique per user.
+apply `NOT NULL user_uid` without failing.
 
 `/api/users` ownership was added later (issue #76): every user reaches only
 their own account.
