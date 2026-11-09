@@ -105,8 +105,11 @@ confirmations use human labels instead. For example, an edit page is titled
   (destination)** dropdown appears only for transfers (any balance) and asset
   purchases (other assets only); for a return on investment it is labelled
   **Investment** (other assets only).
-- **Category** lists only categories of the selected type (expense categories for
-  asset purchases, income categories for returns on investment) and is hidden for transfers.
+- **Category** is required (except for transfers, where it is hidden) and
+  lists only categories of the selected type (expense categories for asset
+  purchases, income categories for returns on investment). With no category
+  of that type yet, a hint says to add one first. Editing an older
+  transaction saved without a category asks for one before it can be saved.
 - Time is entered in the device's local time zone. A preview shows the exact
   RFC 3339 value that will be saved, with the device's offset for that date.
 - The add page remembers the last expense currency and account. Picking a

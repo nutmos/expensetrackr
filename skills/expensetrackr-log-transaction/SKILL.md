@@ -124,11 +124,11 @@ amount). Category names are unique per type.
 
 | type | when | source `balance_uid` | `to_balance_uid` | category |
 |---|---|---|---|---|
-| `expense` (default if omitted) | spending | `payment_account` or `credit_card` | — | optional, must be `expense` |
-| `income` | money in / cash rebate | `payment_account`, `other_asset` or `credit_card` | — | optional, must be `income` |
+| `expense` (default if omitted) | spending | `payment_account` or `credit_card` | — | **required**, an `expense` category |
+| `income` | money in / cash rebate | `payment_account`, `other_asset` or `credit_card` | — | **required**, an `income` category |
 | `transfer` | move between own balances (incl. paying a card) | any | any other balance | **not allowed** |
-| `asset_purchase` | buy a tracked asset | `payment_account` or `credit_card` | an `other_asset` | optional, `expense` category |
-| `return_on_investment` | dividend / interest from a tracked investment (works like income) | `payment_account` or `credit_card` (received into) | **required**: the `other_asset` it came from (value **not** changed) | optional, `income` category |
+| `asset_purchase` | buy a tracked asset | `payment_account` or `credit_card` | an `other_asset` | **required**, an `expense` category |
+| `return_on_investment` | dividend / interest from a tracked investment (works like income) | `payment_account` or `credit_card` (received into) | **required**: the `other_asset` it came from (value **not** changed) | **required**, an `income` category |
 | `balance_adjustment` | **never** send this | — | — | — |
 
 ### 3. Build the body (exact API rules)
@@ -139,7 +139,7 @@ amount). Category names are unique per type.
 | `currency` | ISO 4217; **must equal the source balance's currency** (422 otherwise). |
 | `balance_uid` | UUID of the source / paying / receiving balance. |
 | `to_balance_uid` | required for `transfer`, `asset_purchase` and `return_on_investment`; must differ from `balance_uid`. |
-| `category_uid` | optional UUID; forbidden on transfers; type must match (see table). |
+| `category_uid` | **required** UUID except on transfers (forbidden there); type must match (see table). If the user didn't name a category and none clearly fits, show the user's categories of that type and ask; don't create one unasked. |
 | `spent_at` | RFC 3339 **with offset**: `2026-10-06T12:30:00+08:00` (no date-only, no naive local time). |
 | `note` | optional, ≤ 1000 characters. |
 | `to_amount` | **transfer only.** Same-currency: omit, or equal `amount`. Cross-currency: omit → server uses Frankfurter (ECB) for the `spent_at` date; or send the amount received in the destination currency (`rate_source: "manual"`). Never invent a received amount. |
@@ -219,9 +219,10 @@ curl -sS -H @"$HDR" -H 'Content-Type: application/json' -X POST "$BASE/api/trans
   | jq '{uid, type, amount, currency, account, note, spent_at, version}'
 
 # Income into Wallet
+SALARY_UID=$(category_uid Salary income)
 curl -sS -H @"$HDR" -H 'Content-Type: application/json' -X POST "$BASE/api/transactions" \
-  --data-binary "$(jq -n --arg b "$WALLET_UID" \
-    '{type:"income", amount:"50000", currency:"THB", balance_uid:$b,
+  --data-binary "$(jq -n --arg b "$WALLET_UID" --arg c "$SALARY_UID" \
+    '{type:"income", amount:"50000", currency:"THB", balance_uid:$b, category_uid:$c,
       spent_at:"2026-10-01T09:00:00+08:00", note:"Salary"}')" \
   | jq '{uid, type, amount, account, note}'
 
@@ -241,23 +242,25 @@ curl -sS -H @"$HDR" -H 'Content-Type: application/json' -X POST "$BASE/api/trans
   | jq '{uid, amount, currency, to_amount, to_currency, exchange_rate, rate_source, rate_date, conversion_rates}'
 ```
 
-Asset purchase (optional; same auth pattern):
+Asset purchase (same auth pattern; an expense category):
 
 ```bash
+ELECTRONICS_UID=$(category_uid Electronics expense)
 curl -sS -H @"$HDR" -H 'Content-Type: application/json' -X POST "$BASE/api/transactions" \
-  --data-binary "$(jq -n --arg b "$CARD_UID" --arg t "$LAPTOP_UID" \
-    '{type:"asset_purchase", amount:"35000", currency:"THB", balance_uid:$b, to_balance_uid:$t,
+  --data-binary "$(jq -n --arg b "$CARD_UID" --arg t "$LAPTOP_UID" --arg c "$ELECTRONICS_UID" \
+    '{type:"asset_purchase", amount:"35000", currency:"THB", balance_uid:$b, to_balance_uid:$t, category_uid:$c,
       spent_at:"2026-10-08T15:00:00+08:00", note:"Laptop"}')" \
   | jq '{uid, type, amount, account, to_account}'
 ```
 
 Return on investment (dividend from Gold paid into Wallet; Gold's value does
-not change, `to_amount` / `to_currency` are not allowed):
+not change, `to_amount` / `to_currency` are not allowed; an income category):
 
 ```bash
+DIVIDENDS_UID=$(category_uid Dividends income)
 curl -sS -H @"$HDR" -H 'Content-Type: application/json' -X POST "$BASE/api/transactions" \
-  --data-binary "$(jq -n --arg b "$WALLET_UID" --arg t "$GOLD_UID" \
-    '{type:"return_on_investment", amount:"250", currency:"THB", balance_uid:$b, to_balance_uid:$t,
+  --data-binary "$(jq -n --arg b "$WALLET_UID" --arg t "$GOLD_UID" --arg c "$DIVIDENDS_UID" \
+    '{type:"return_on_investment", amount:"250", currency:"THB", balance_uid:$b, to_balance_uid:$t, category_uid:$c,
       spent_at:"2026-10-09T10:00:00+08:00", note:"Dividend"}')" \
   | jq '{uid, type, amount, account, to_account}'
 ```
@@ -269,7 +272,7 @@ balance and category **names** to uids, POSTs, and prints a short summary:
 
 ```bash
 scripts/log-tx.sh expense  Wallet 120.50 THB --category Food --at 2026-10-06T12:30:00+08:00 --note Lunch
-scripts/log-tx.sh income   Wallet 50000 THB --at 2026-10-01T09:00:00+08:00 --note Salary
+scripts/log-tx.sh income   Wallet 50000 THB --category Salary --at 2026-10-01T09:00:00+08:00 --note Salary
 scripts/log-tx.sh transfer Wallet "Credit Card" 5000 THB --at 2026-10-07T22:00:00+08:00
 scripts/log-tx.sh transfer "USD Account" Wallet 100 USD --to-amount 3361.50 --at 2026-10-12T10:00:00+08:00
 scripts/log-tx.sh return_on_investment Wallet Gold 250 THB --category Dividends --at 2026-10-09T10:00:00+08:00

@@ -83,10 +83,10 @@ func TestTransactionTypes(t *testing.T) {
 		t.Errorf("put to expense: %d %v", rec.Code, p)
 	}
 	// PUT expense -> transfer needs a destination.
-	if rec, _ := putMerged(t, h, "/api/transactions/"+id, `{"type":"transfer","to_balance_uid":null}`); rec.Code != 422 {
+	if rec, _ := putMerged(t, h, "/api/transactions/"+id, `{"type":"transfer","to_balance_uid":null,"category_uid":null}`); rec.Code != 422 {
 		t.Errorf("put to transfer w/o dest: %d", rec.Code)
 	}
-	rec, p = putMerged(t, h, "/api/transactions/"+id, `{"type":"transfer","to_balance_uid":"`+gold+`"}`)
+	rec, p = putMerged(t, h, "/api/transactions/"+id, `{"type":"transfer","to_balance_uid":"`+gold+`","category_uid":null}`)
 	if rec.Code != 200 || p["to_account"] != "Gold" {
 		t.Errorf("put to transfer: %d %v", rec.Code, p)
 	}

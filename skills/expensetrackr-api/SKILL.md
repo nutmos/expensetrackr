@@ -118,7 +118,7 @@ The balances move automatically in the same DB transaction.
 | `currency` | ISO 4217; **must equal the (source) balance's currency** (422 otherwise) |
 | `balance_uid` | expense / asset_purchase / return_on_investment: `payment_account` or `credit_card`; income: `payment_account`, `other_asset` or `credit_card` (cash rebate); transfer: any |
 | `to_balance_uid` | transfer (any other balance), asset_purchase (an `other_asset`) and return_on_investment (the `other_asset` it came from; not moved) only |
-| `category_uid` | optional; expense and asset_purchase need an `expense` category, income and return_on_investment an `income` one; none on transfers |
+| `category_uid` | **required** except on transfers (forbidden there): expense and asset_purchase need an `expense` category, income and return_on_investment an `income` one. If none clearly fits, ask the user |
 | `spent_at` | RFC 3339 **with offset**: `2026-10-06T21:06:00+08:00` (no date-only, no naive times) |
 | `note` | optional, ≤ 1000 chars |
 
@@ -131,10 +131,11 @@ TX=$(curl -sS -b "$JAR" -c "$JAR" -X POST "$BASE/api/transactions" -H 'Content-T
 echo "$TX" | jq '{type, amount, currency, account, spent_at, version}'
 TX_UID=$(echo "$TX" | jq -r .uid)
 
-# Income into Wallet (category optional)
+# Income into Wallet (an income category)
+SALARY_UID=$(category_uid Salary income)
 curl -sS -b "$JAR" -c "$JAR" -X POST "$BASE/api/transactions" -H 'Content-Type: application/json' \
-  -d "$(jq -n --arg b "$WALLET_UID" \
-        '{type:"income", amount:"50000", currency:"THB", balance_uid:$b, spent_at:"2026-10-01T09:00:00+08:00", note:"Salary"}')" \
+  -d "$(jq -n --arg b "$WALLET_UID" --arg c "$SALARY_UID" \
+        '{type:"income", amount:"50000", currency:"THB", balance_uid:$b, category_uid:$c, spent_at:"2026-10-01T09:00:00+08:00", note:"Salary"}')" \
   | jq '{uid, type, amount, account}'
 
 # Transfer: pay 5000 THB of the credit card from Wallet (same currency)
@@ -144,16 +145,18 @@ curl -sS -b "$JAR" -c "$JAR" -X POST "$BASE/api/transactions" -H 'Content-Type: 
   | jq '{uid, type, amount, account, to_account}'
 
 # Asset purchase: laptop bought on the credit card, tracked as an other_asset
+ELECTRONICS_UID=$(category_uid Electronics expense)
 curl -sS -b "$JAR" -c "$JAR" -X POST "$BASE/api/transactions" -H 'Content-Type: application/json' \
-  -d "$(jq -n --arg b "$CARD_UID" --arg t "$LAPTOP_UID" \
-        '{type:"asset_purchase", amount:"35000", currency:"THB", balance_uid:$b, to_balance_uid:$t, spent_at:"2026-10-08T15:00:00+08:00"}')" \
+  -d "$(jq -n --arg b "$CARD_UID" --arg t "$LAPTOP_UID" --arg c "$ELECTRONICS_UID" \
+        '{type:"asset_purchase", amount:"35000", currency:"THB", balance_uid:$b, to_balance_uid:$t, category_uid:$c, spent_at:"2026-10-08T15:00:00+08:00"}')" \
   | jq '{uid, type, amount, account, to_account}'
 
 # Return on investment: a dividend from Gold paid into Wallet (like income;
 # Gold's value does not change, it is only linked)
+DIVIDENDS_UID=$(category_uid Dividends income)
 curl -sS -b "$JAR" -c "$JAR" -X POST "$BASE/api/transactions" -H 'Content-Type: application/json' \
-  -d "$(jq -n --arg b "$WALLET_UID" --arg t "$GOLD_UID" \
-        '{type:"return_on_investment", amount:"250", currency:"THB", balance_uid:$b, to_balance_uid:$t, spent_at:"2026-10-09T10:00:00+08:00"}')" \
+  -d "$(jq -n --arg b "$WALLET_UID" --arg t "$GOLD_UID" --arg c "$DIVIDENDS_UID" \
+        '{type:"return_on_investment", amount:"250", currency:"THB", balance_uid:$b, to_balance_uid:$t, category_uid:$c, spent_at:"2026-10-09T10:00:00+08:00"}')" \
   | jq '{uid, type, amount, account, to_account}'
 ```
 
@@ -202,9 +205,9 @@ first, show the user the summary, then send the same body for real (atomic by
 default: on 422/503 nothing is written).
 
 ```bash
-BODY=$(jq -n --arg b "$WALLET_UID" '{dry_run:true, transactions:[
-  {type:"expense", amount:"45.00", currency:"THB", balance_uid:$b, spent_at:"2026-10-01T08:15:00+07:00", note:"COFFEE", import_ref:"stmt-2026-10:0001"},
-  {type:"income",  amount:"120.00", currency:"THB", balance_uid:$b, spent_at:"2026-10-02T10:00:00+07:00", note:"REFUND", import_ref:"stmt-2026-10:0002"}]}')
+BODY=$(jq -n --arg b "$WALLET_UID" --arg food "$FOOD_UID" --arg refund "$(category_uid Refunds income)" '{dry_run:true, transactions:[
+  {type:"expense", amount:"45.00", currency:"THB", balance_uid:$b, category_uid:$food, spent_at:"2026-10-01T08:15:00+07:00", note:"COFFEE", import_ref:"stmt-2026-10:0001"},
+  {type:"income",  amount:"120.00", currency:"THB", balance_uid:$b, category_uid:$refund, spent_at:"2026-10-02T10:00:00+07:00", note:"REFUND", import_ref:"stmt-2026-10:0002"}]}')
 curl -sS -b "$JAR" -c "$JAR" -X POST "$BASE/api/transactions/bulk" -H 'Content-Type: application/json' -d "$BODY" \
   | jq '{created, skipped, failed, valid, errors: [.results[] | select(.status=="failed") | {index, error}], balances: [.balances[] | {name, balance, debt}]}'
 # looks right → same body with dry_run:false (expect 201; 200 if everything was already imported)

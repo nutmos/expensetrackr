@@ -106,10 +106,24 @@ func TestTransactionCategories(t *testing.T) {
 	if _, has := e["category"]; rec.Code != 201 || e["category_uid"] != food || has {
 		t.Fatalf("expense with category: %d %v", rec.Code, e)
 	}
-	// No category is fine (null).
-	rec, n := do(t, h, "POST", "/api/transactions", tx(``))
-	if rec.Code != 201 || n["category_uid"] != nil {
-		t.Errorf("no category: %d %v", rec.Code, n)
+	// A category is required for every type but transfer: missing, null or
+	// "" is a 422 on category_uid (doH: sent as is, no default category).
+	for _, c := range []struct{ name, body, msg string }{
+		{"expense, missing", tx(``), "is required for an expense"},
+		{"expense, null", tx(`,"category_uid":null`), "is required for an expense"},
+		{"expense, empty", tx(`,"category_uid":"  "`), "is required for an expense"},
+		{"income", tx(`,"type":"income"`), "is required for an income"},
+		{"asset purchase", tx(`,"type":"asset_purchase","to_balance_uid":"` + card + `"`), "is required for an asset purchase"},
+		{"return on investment", tx(`,"type":"return_on_investment","to_balance_uid":"` + card + `"`), "is required for a return on investment"},
+	} {
+		rec, b := doH(t, h, "POST", "/api/transactions", c.body, nil)
+		if f, _ := b["fields"].(map[string]any); rec.Code != 422 || f["category_uid"] != c.msg {
+			t.Errorf("no category, %s: %d %v", c.name, rec.Code, b)
+		}
+	}
+	// A transfer needs none.
+	if rec, b := doH(t, h, "POST", "/api/transactions", tx(`,"type":"transfer","to_balance_uid":"`+card+`"`), nil); rec.Code != 201 || b["category_uid"] != nil {
+		t.Errorf("transfer without category: %d %v", rec.Code, b)
 	}
 	if rec, b := do(t, h, "POST", "/api/transactions", tx(`,"type":"income","category_uid":"`+salary+`"`)); rec.Code != 201 || b["category_uid"] != salary {
 		t.Errorf("income with category: %d %v", rec.Code, b)
@@ -153,18 +167,24 @@ func TestTransactionCategories(t *testing.T) {
 		t.Errorf("category_uid changed: %v", g)
 	}
 
-	// PUT full record: a type change must also clear the category (omit it); omitting category_uid clears it; then delete works.
-	rec, p := putMerged(t, h, txPath, `{"type":"income","category_uid":null}`)
-	if rec.Code != 200 || p["category_uid"] != nil {
-		t.Errorf("type change drops category: %d %v", rec.Code, p)
+	// PUT full record: a type change must also change the category to one of
+	// the new type; the category can't be cleared; once no transaction uses
+	// it, the category can be deleted.
+	rec, p := putMerged(t, h, txPath, `{"type":"income","category_uid":"`+salary+`"}`)
+	if rec.Code != 200 || p["category_uid"] != salary {
+		t.Errorf("type change with new category: %d %v", rec.Code, p)
 	}
 	rec, p = putMerged(t, h, txPath, `{"type":"expense","category_uid":"`+food+`"}`)
 	if rec.Code != 200 || p["category_uid"] != food {
 		t.Errorf("set category: %d %v", rec.Code, p)
 	}
-	rec, p = putMerged(t, h, txPath, `{"category_uid":null}`)
-	if rec.Code != 200 || p["category_uid"] != nil {
+	rec, p = putMerged(t, h, txPath, `{"category_uid":""}`)
+	if f, _ := p["fields"].(map[string]any); rec.Code != 422 || f["category_uid"] != "is required for an expense" {
 		t.Errorf("clear category: %d %v", rec.Code, p)
+	}
+	other := mkCat(t, h, "Other", "expense")["uid"].(string)
+	if rec, p := putMerged(t, h, txPath, `{"category_uid":"`+other+`"}`); rec.Code != 200 || p["category_uid"] != other {
+		t.Errorf("move to another category: %d %v", rec.Code, p)
 	}
 	if rec, _ := do(t, h, "DELETE", "/api/categories/"+food, ""); rec.Code != 204 {
 		t.Errorf("delete after unreferenced: %d", rec.Code)

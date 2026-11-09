@@ -35,7 +35,7 @@ only on validation and conflict errors.
 
 | Method | Path                 | Success | Notes |
 |--------|----------------------|---------|-------|
-| POST   | `/api/transactions`      | 201 + transaction, `Location` + `ETag` headers | Moves the balance(s) in the same DB transaction. 422 on validation errors (incl. currency ≠ balance currency, `type` `balance_adjustment`), 400 on malformed JSON or unknown fields. Optional `import_ref` (≤ 200 chars, unique per balance; 409 `duplicate_import_ref`) |
+| POST   | `/api/transactions`      | 201 + transaction, `Location` + `ETag` headers | Moves the balance(s) in the same DB transaction. 422 on validation errors (incl. a missing `category_uid` on any type but transfer, currency ≠ balance currency, `type` `balance_adjustment`), 400 on malformed JSON or unknown fields. Optional `import_ref` (≤ 200 chars, unique per balance; 409 `duplicate_import_ref`) |
 | POST   | `/api/transactions/bulk` | 201 / 200 `{"created","skipped","failed","valid","dry_run","atomic","written","results":[...],"balances":[...]}` | Up to 500 items with the POST body shape (+ `import_ref`); `atomic` (default true: 422 and nothing written if any item fails), `dry_run`. Duplicate `import_ref` per balance → `skipped`. 413 over 500 items, 2 MiB body. See [docs/bulk-import.md](bulk-import.md) |
 | GET    | `/api/transactions`      | 200 `{"transactions":[...],"count":n,"next_cursor":...}` | Newest first by spend time. Optional `from`, `to` (RFC 3339 with offset, both inclusive), `limit` (1–5000 per page, default 500), `type` (`expense`/`income`/`transfer`/`asset_purchase`/`return_on_investment`/`balance_adjustment`; 400 if invalid), `category_uid` (UUID; 400 if malformed), `balance_uid` (UUID; source or destination). **Paged:** while `next_cursor` is not null, send it back as `cursor` with the same filters for the next page (keyset pagination, stable under inserts and deletes) |
 | GET    | `/api/transactions/:uid`  | 200 + transaction | `:uid` is the transaction UUID (case-insensitive). **400** if it is not UUID-shaped (including numeric ids such as `/api/transactions/1`), **404** if no such uid. Same for PUT/DELETE |
@@ -94,11 +94,12 @@ curl -s -X POST http://127.0.0.1:8080/api/transactions -H 'Content-Type: applica
 
 curl -s "http://127.0.0.1:8080/api/transactions?category_uid=$CAT_UID"
 curl -s -X DELETE "http://127.0.0.1:8080/api/categories/$CAT_UID"
-# 409 {"error":"category is used by transactions (1 transaction(s)); it cannot be deleted; reassign or clear category_uid on those transactions first"}
+# 409 {"error":"category is used by transactions (1 transaction(s)); it cannot be deleted; move those transactions to another category first"}
 ```
 
 Create a payable balance first (or use an existing `uid`), then log a transaction
-with `balance_uid`. The free-text `account` field is **not** accepted on write
+with `balance_uid` and a `category_uid` (`$CAT_UID` from the Categories example
+above; required for every type but transfer). The free-text `account` field is **not** accepted on write
 (unknown field → 400); responses still include `account` as the name snapshot.
 
 ```bash
@@ -109,12 +110,13 @@ BAL_UID=$(curl -s -X POST http://127.0.0.1:8080/api/balances \
 
 curl -s -X POST http://127.0.0.1:8080/api/transactions \
   -H 'Content-Type: application/json' \
-  -d "{\"amount\":\"120.50\",\"currency\":\"THB\",\"balance_uid\":\"$BAL_UID\",\"spent_at\":\"2026-10-06T21:06:00+08:00\",\"note\":\"Lunch\"}"
+  -d "{\"amount\":\"120.50\",\"currency\":\"THB\",\"balance_uid\":\"$BAL_UID\",\"category_uid\":\"$CAT_UID\",\"spent_at\":\"2026-10-06T21:06:00+08:00\",\"note\":\"Lunch\"}"
 ```
 
 ```json
 {"uid":"5f0c2e9a-7b1d-4c3e-9a8f-2d6b1e4c7a90","amount":"120.50","amount_minor":12050,"currency":"THB",
  "balance_uid":"a1b2c3d4-e5f6-4789-a012-3456789abcde","account":"Wallet",
+ "category_uid":"32b0d51e-e81f-41f0-a77c-38e6ec384153",
  "spent_at":"2026-10-06T21:06:00+08:00","note":"Lunch","created_at":"2026-10-06T13:20:11Z"}
 ```
 
@@ -157,14 +159,15 @@ PUT keeps `uid` and `created_at` and sets `updated_at`:
 ```bash
 curl -s -X PUT http://127.0.0.1:8080/api/transactions/$TX_UID -H 'Content-Type: application/json' \
   -H 'If-Match: "1"' \
-  -d "{\"amount\":\"150\",\"currency\":\"THB\",\"balance_uid\":\"$BAL_UID\",\"spent_at\":\"2026-10-05T09:15:00+07:00\",\"note\":\"pad thai + drink\"}"
+  -d "{\"amount\":\"150\",\"currency\":\"THB\",\"balance_uid\":\"$BAL_UID\",\"category_uid\":\"$CAT_UID\",\"spent_at\":\"2026-10-05T09:15:00+07:00\",\"note\":\"pad thai + drink\"}"
 # 200 {"uid":"…","amount":"150.00","amount_minor":15000,"currency":"THB",...,"updated_at":"2026-10-06T13:18:11Z"}
 ```
 
 To change one field, GET the record, change that field and PUT all editable
 fields back. **Optional fields are cleared by omitting them (or sending
-`""`)**: `note`, `category_uid`, `to_balance_uid` on a transaction,
-`description` on a category or balance. A changed `currency` needs an `amount` that fits the
+`""`)**: `note`, `to_balance_uid` on a transaction, `description` on a
+category or balance. `category_uid` is required on every transaction type
+except transfer, so a PUT must send it. A changed `currency` needs an `amount` that fits the
 new currency's decimals (there is no exchange-rate conversion).
 
 Balances:

@@ -17,7 +17,7 @@ const (
 )
 
 func roiInput() CreateInput {
-	return CreateInput{Type: "Return_On_Investment", Amount: "12.50", Currency: "thb", BalanceUID: roiWalletUID, ToBalanceUID: roiGoldUID, SpentAt: roiSpentAt}
+	return CreateInput{Type: "Return_On_Investment", Amount: "12.50", Currency: "thb", BalanceUID: roiWalletUID, ToBalanceUID: roiGoldUID, CategoryUID: roiCatUID, SpentAt: roiSpentAt}
 }
 
 func fieldMsg(t *testing.T, err error, field string) string {

@@ -22,7 +22,7 @@ Transactions are stored in the Postgres table **`transactions`**, with index
 | payment acct  | `balance_uid`  | `uuid` of of the balance paid from (expense), received into (income, return_on_investment) or moved from (transfer, asset_purchase); no FK |
 | destination   | `to_balance_uid` | `uuid`, transfers, asset purchases and returns on investment only (else `null`); UUID of the destination balance (for a return on investment, the linked `other_asset`); no FK |
 | dest. name    | `to_account`   | denormalized destination name snapshot (transfers, asset purchases and returns on investment only, else `null`)    |
-| category      | `category_uid` | `uuid`, optional (`null` = none); UUID of a category of the same type (expense categories for asset purchases, income categories for returns on investment); never set for transfers; no FK. **The only link to the category**: no name is stored on the transaction |
+| category      | `category_uid` | `uuid`, **required** on new or edited expense, income, asset purchase and return on investment transactions (older rows may be `null`); UUID of a category of the same type (expense categories for asset purchases, income categories for returns on investment); never set for transfers; no FK. **The only link to the category**: no name is stored on the transaction |
 | account name  | `account`      | denormalized balance `name` snapshot at write time (read-only in API)   |
 | spend time    | `spent_at`     | `text` RFC 3339 with offset as entered + `spent_at_utc timestamptz` (same instant) |
 | note          | `note`         | `text`, optional, up to 1000 chars                                     |
@@ -119,11 +119,15 @@ only reference that user's own balances and categories.
 
 Rules linking transactions and categories:
 
-- `category_uid` is optional on expense and income transactions. An expense
-  must use an `expense` category and income an `income` category (422 on
-  `category_uid` otherwise, also for unknown or malformed uids, or a uid of
-  another user's category). A transfer
-  must not have a category (422).
+- `category_uid` is **required** on expense, income, asset purchase and
+  return on investment transactions (422 on `category_uid`, e.g. "is required
+  for an expense", when missing, `null` or `""`). An expense or asset purchase
+  must use an `expense` category, income or a return on investment an
+  `income` category (422 on `category_uid` otherwise, also for unknown or
+  malformed uids, or a uid of another user's category). A transfer must not
+  have a category (422), and balance adjustments never have one.
+- Transactions saved before categories were required may have no category.
+  They are listed as before; editing one requires choosing a category.
 - The transaction stores **only `category_uid`** (no name copy, unlike
   `account`). Clients look the name up from `GET /api/categories` (the web
   page does this), so renaming a category is reflected everywhere at once.
@@ -132,9 +136,9 @@ Rules linking transactions and categories:
 - **Changing a category's type** is rejected with **409** while any
   transaction references it (those transactions would no longer match); an
   unreferenced category may change type freely. Renaming is always allowed.
-- A transaction PUT without `category_uid` (or with `""`) clears it; when
-  changing `type`, omit the old category (it belongs to the old type) or send
-  one of the new type.
+- A transaction PUT is a full replace, so it must send `category_uid` too
+  (except for a transfer). When changing `type`, send a category of the new
+  type; changing to a transfer, omit it.
 
 ## Users (tables `users`, `user_identities`)
 
@@ -200,8 +204,8 @@ types each transaction type accepts:
   an `other_asset` (e.g. a laptop, gold): the source is affected like an
   expense, the asset's balance rises by the same amount. It is a value move
   like a transfer, so list totals count it as neither expense nor income. An
-  optional **expense** category may be set (e.g. Electronics); income
-  categories are rejected (422).
+  **expense** category is required (e.g. Electronics); income categories are
+  rejected (422).
 
 - **Return on Investment** (`return_on_investment`) records investment income
   such as a dividend or interest payment. It behaves like income: the
@@ -210,7 +214,7 @@ types each transaction type accepts:
   it came from in `to_balance_uid`, but that asset's value is **not**
   changed: the return is paid out, not withdrawn from the asset, and it is
   not an unrealized gain. `other_asset` and `other_liability` cannot receive
-  it (422). An optional **income** category may be set (e.g. Dividends);
+  it (422). An **income** category is required (e.g. Dividends);
   expense categories are rejected (422). `to_amount` / `to_currency` are not
   allowed. List totals count it as income.
 

@@ -193,8 +193,13 @@ func (in CreateInput) Validate() (Transaction, error) {
 		exp.ToBalanceUID = &to
 	}
 
+	// A category is required for every type but transfer (balance
+	// adjustments never come through here).
 	cat := common_type.NormalizeUID(in.CategoryUID)
-	if cat == "" { // Do Nothing
+	if cat == "" {
+		if okType && tt.NeedsCategory() {
+			fields["category_uid"] = "is required for " + article(tt) + " " + strings.ReplaceAll(string(tt), "_", " ")
+		}
 	} else if okType && tt == Transfer {
 		fields["category_uid"] = "is not allowed for a transfer"
 	} else if !cat.Valid() {
@@ -295,6 +300,21 @@ func (e *Transaction) AttachDestinationBalance(b balance.Balance) error {
 	uid, name := b.UID, b.Name
 	e.ToBalanceUID, e.ToAccount = &uid, &name
 	return nil
+}
+
+// NeedsCategory reports whether a new or edited transaction of this type must
+// have a category: every type except transfer and balance_adjustment.
+// Transactions saved before categories were required may still have none.
+func (t Type) NeedsCategory() bool {
+	return t != Transfer && t != BalanceAdjustment
+}
+
+// article is "an" before the vowel-initial type names, else "a".
+func article(t Type) string {
+	if strings.ContainsRune("aeiou", rune(string(t)[0])) {
+		return "an"
+	}
+	return "a"
 }
 
 // categoryType is the category type a transaction type needs: expense for

@@ -24,9 +24,20 @@ func newTestServer(t *testing.T) http.Handler {
 // do sends a request. For PUT on a single balance or transaction whose
 // body has no "version", it first GETs the record and sends its ETag as
 // If-Match, like a well-behaved client, so tests that are not about
-// versioning need not handle it. Use doH to control headers exactly.
+// versioning need not handle it. Likewise a transaction body (POST, PUT or
+// a bulk item) with no "category_uid" key gets a default category of the
+// matching type when its type requires one (withDefaultCategory), so tests
+// that are not about categories need not create them. Use doH to send a
+// request exactly as given.
 func do(t *testing.T, h http.Handler, method, path, body string) (*httptest.ResponseRecorder, map[string]any) {
 	t.Helper()
+	switch {
+	case method == "POST" && path == "/api/transactions",
+		method == "PUT" && strings.HasPrefix(path, "/api/transactions/"):
+		body = withDefaultCategory(t, h, body)
+	case method == "POST" && strings.HasPrefix(path, "/api/transactions/bulk"):
+		body = bulkWithDefaultCategory(t, h, body)
+	}
 	var hdr map[string]string
 	if method == "PUT" && !strings.Contains(body, `"version"`) &&
 		(strings.HasPrefix(path, "/api/balances/") || strings.HasPrefix(path, "/api/transactions/")) {
@@ -35,6 +46,94 @@ func do(t *testing.T, h http.Handler, method, path, body string) (*httptest.Resp
 		}
 	}
 	return doH(t, h, method, path, body, hdr)
+}
+
+// defaultCategoryName names the categories withDefaultCategory creates.
+const defaultCategoryName = "Test default"
+
+// defaultCategoryType is the category type a transaction type needs, or ""
+// for none (transfer, balance_adjustment, unknown types). An empty type
+// means expense, like the API.
+func defaultCategoryType(txType string) string {
+	switch strings.ToLower(strings.TrimSpace(txType)) {
+	case "", "expense", "asset_purchase":
+		return "expense"
+	case "income", "return_on_investment":
+		return "income"
+	}
+	return ""
+}
+
+// defaultCategoryUID returns the uid of the user's "Test default" category
+// of type typ, creating it on first use.
+func defaultCategoryUID(t *testing.T, h http.Handler, typ string) string {
+	t.Helper()
+	if _, b := doH(t, h, "GET", "/api/categories?type="+typ, "", nil); b != nil {
+		list, _ := b["categories"].([]any)
+		for _, c := range list {
+			if m, _ := c.(map[string]any); m["name"] == defaultCategoryName && m["type"] == typ {
+				return m["uid"].(string)
+			}
+		}
+	}
+	rec, b := doH(t, h, "POST", "/api/categories", `{"name":"`+defaultCategoryName+`","type":"`+typ+`"}`, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create default %s category: %d %s", typ, rec.Code, rec.Body)
+	}
+	return b["uid"].(string)
+}
+
+// withDefaultCategory adds "category_uid" (a default category of the
+// matching type) to a transaction body that has no such key and whose type
+// requires a category. Anything else (invalid JSON, not an object, an empty
+// object, a transfer, an explicit "category_uid" even if null or "") is
+// returned unchanged.
+func withDefaultCategory(t *testing.T, h http.Handler, body string) string {
+	t.Helper()
+	var m map[string]json.RawMessage
+	if json.Unmarshal([]byte(body), &m) != nil || len(m) == 0 {
+		return body
+	}
+	if _, ok := m["category_uid"]; ok {
+		return body
+	}
+	var txType string
+	if raw, ok := m["type"]; ok && json.Unmarshal(raw, &txType) != nil {
+		return body
+	}
+	typ := defaultCategoryType(txType)
+	if typ == "" {
+		return body
+	}
+	trimmed := strings.TrimSpace(body)
+	return `{"category_uid":"` + defaultCategoryUID(t, h, typ) + `",` + trimmed[1:]
+}
+
+// bulkWithDefaultCategory applies withDefaultCategory to each item of a
+// bulk body {"transactions":[...]}; other bodies are returned unchanged.
+func bulkWithDefaultCategory(t *testing.T, h http.Handler, body string) string {
+	t.Helper()
+	var top map[string]json.RawMessage
+	if json.Unmarshal([]byte(body), &top) != nil {
+		return body
+	}
+	var items []json.RawMessage
+	if raw, ok := top["transactions"]; !ok || json.Unmarshal(raw, &items) != nil {
+		return body
+	}
+	for i, it := range items {
+		items[i] = json.RawMessage(withDefaultCategory(t, h, string(it)))
+	}
+	raw, err := json.Marshal(items)
+	if err != nil {
+		return body
+	}
+	top["transactions"] = raw
+	out, err := json.Marshal(top)
+	if err != nil {
+		return body
+	}
+	return string(out)
 }
 
 // doH sends a request with exactly the given extra headers.

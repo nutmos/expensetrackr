@@ -11,9 +11,9 @@
 #      an other_asset whose value is not changed)
 #
 # Options:
-#   --category NAME       category name (expense category for expense and
-#                         asset_purchase; income category for income and
-#                         return_on_investment)
+#   --category NAME       category name, required except for a transfer
+#                         (expense category for expense and asset_purchase;
+#                         income category for income and return_on_investment)
 #   --at RFC3339          spent_at with offset (required)
 #   --note TEXT           optional note
 #   --to-amount AMOUNT    received amount (cross-currency transfer only; optional)
@@ -36,9 +36,10 @@ fail() { echo "log-tx: $*" >&2; exit 1; }
 usage() {
 	cat >&2 <<'EOF'
 Usage:
-  log-tx.sh expense|income SOURCE AMOUNT CURRENCY --at RFC3339 [--category NAME] [--note TEXT]
-  log-tx.sh transfer|asset_purchase SOURCE DEST AMOUNT CURRENCY --at RFC3339 [--to-amount A] [--to-currency C] [--category NAME] [--note TEXT]
-  log-tx.sh return_on_investment ACCOUNT_OR_CARD ASSET AMOUNT CURRENCY --at RFC3339 [--category NAME] [--note TEXT]
+  log-tx.sh expense|income SOURCE AMOUNT CURRENCY --category NAME --at RFC3339 [--note TEXT]
+  log-tx.sh transfer SOURCE DEST AMOUNT CURRENCY --at RFC3339 [--to-amount A] [--to-currency C] [--note TEXT]
+  log-tx.sh asset_purchase SOURCE ASSET AMOUNT CURRENCY --category NAME --at RFC3339 [--note TEXT]
+  log-tx.sh return_on_investment ACCOUNT_OR_CARD ASSET AMOUNT CURRENCY --category NAME --at RFC3339 [--note TEXT]
 EOF
 	exit 2
 }
@@ -112,6 +113,9 @@ done
 case "$TYPE" in
 transfer)
 	[ -z "$CATEGORY" ] || die "category is not allowed on a transfer"
+	;;
+*)
+	[ -n "$CATEGORY" ] || die "--category NAME is required for $TYPE (ask the user which category)"
 	;;
 esac
 if [ "$TYPE" != transfer ]; then

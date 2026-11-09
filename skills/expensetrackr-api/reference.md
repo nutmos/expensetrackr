@@ -224,10 +224,12 @@ curl -sS -b "$JAR" -c "$JAR" "$BASE/api/transactions?type=expense" \
 
 Same body rules as POST, plus the version (SKILL.md "Edit"). Notes:
 
-- Omitted optional fields are cleared: `note`, `category_uid`,
-  `to_balance_uid`. Omitted `type` means `expense`, so always send `type`.
+- Omitted optional fields are cleared: `note`, `to_balance_uid`. Always send
+  `category_uid` (required except on transfers). Omitted `type` means
+  `expense`, so always send `type`.
 - Changing `type` away from transfer/asset_purchase/return_on_investment: drop `to_balance_uid`;
-  to expense/income: drop or replace `category_uid` with one of the new type.
+  to expense/income: replace `category_uid` with one of the new type; to a
+  transfer: drop it.
 - Cross-currency transfer: omitting `to_amount` keeps the stored conversion if
   amount, currency, both balances and the `spent_at` date are unchanged;
   otherwise the rate is fetched again. Sending `to_amount` makes it manual.
@@ -318,12 +320,15 @@ Real responses (from a test server):
 ```
 
 ```bash
+# 422: category_uid is required (every type but transfer)
+curl -sS -b "$JAR" -c "$JAR" -X POST "$BASE/api/transactions" -H 'Content-Type: application/json' \
+  -d "$(jq -n --arg b "$WALLET_UID" '{amount:"10", currency:"THB", balance_uid:$b, spent_at:"2026-10-06T12:00:00+08:00"}')"
 # 422: currency must match the balance
 curl -sS -b "$JAR" -c "$JAR" -X POST "$BASE/api/transactions" -H 'Content-Type: application/json' \
-  -d "$(jq -n --arg b "$WALLET_UID" '{amount:"10", currency:"USD", balance_uid:$b, spent_at:"2026-10-06T12:00:00+08:00"}')"
+  -d "$(jq -n --arg b "$WALLET_UID" --arg c "$FOOD_UID" '{amount:"10", currency:"USD", balance_uid:$b, category_uid:$c, spent_at:"2026-10-06T12:00:00+08:00"}')"
 # 422: no offset in spent_at, too many decimals for JPY... (fields lists each problem)
 curl -sS -b "$JAR" -c "$JAR" -X POST "$BASE/api/transactions" -H 'Content-Type: application/json' \
-  -d "$(jq -n --arg b "$WALLET_UID" '{amount:"10.5", currency:"JPY", balance_uid:$b, spent_at:"2026-10-06T12:00:00"}')"
+  -d "$(jq -n --arg b "$WALLET_UID" --arg c "$FOOD_UID" '{amount:"10.5", currency:"JPY", balance_uid:$b, category_uid:$c, spent_at:"2026-10-06T12:00:00"}')"
 ```
 
 ## Helper script: `scripts/etr.sh`

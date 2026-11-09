@@ -63,8 +63,9 @@ info:
       a `uid` field is accepted so a response can be sent back, but it is ignored.
       `PUT` is a **full replacement**: send the whole record (all editable fields). There is no `PATCH`
       for transactions, balances or categories (a `PATCH` there is a 404 like any unknown method). To
-      clear an optional field (`note`, `category_uid`, `to_balance_uid`, `description`), omit it or
-      send `""` in the full `PUT` body.
+      clear an optional field (`note`, `to_balance_uid`, `description`), omit it or send `""` in
+      the full `PUT` body. `category_uid` can't be cleared except on a transfer (it is required on
+      every other type).
 
     ## Transaction types
 
@@ -1389,7 +1390,7 @@ components:
                 error: a category with this name and type already exists
                 fields: { name: is already used by another category of this type (names are case-insensitive) }
             in_use:
-              value: { error: 'category is used by transactions (2 transaction(s)); its type cannot change; reassign or clear category_uid on those transactions first' }
+              value: { error: 'category is used by transactions (2 transaction(s)); its type cannot change; move those transactions to another category first' }
             limit:
               value: { error: 'category limit reached (at most 500 categories per user)' }
     UserConflict:
@@ -1800,7 +1801,11 @@ components:
           type: string
           format: uuid
           nullable: true
-          description: Optional. Must be an expense category for an expense or asset_purchase and an income category for income or return_on_investment. Not allowed for transfers.
+          description: |
+            **Required** for expense, income, asset_purchase and return_on_investment (422 "is required
+            for an expense", ... when missing, null or ""): an expense category for an expense or
+            asset_purchase, an income category for income or return_on_investment. Not allowed for
+            transfers. Transactions saved before this rule may still have `null` until edited.
         spent_at:
           type: string
           format: date-time
@@ -2205,8 +2210,8 @@ components:
         atomic: true
         dry_run: false
         transactions:
-          - { type: expense, amount: '45.00', currency: THB, balance_uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5, spent_at: '2026-10-01T08:15:00+07:00', note: 'SAMPLE COFFEE SHOP', import_ref: 'stmt-2026-10:0001' }
-          - { type: income, amount: '30000.00', currency: THB, balance_uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5, spent_at: '2026-10-01T09:00:00+07:00', note: 'SAMPLE PAYROLL', import_ref: 'stmt-2026-10:0002' }
+          - { type: expense, amount: '45.00', currency: THB, balance_uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5, category_uid: 32b0d51e-e81f-41f0-a77c-38e6ec384153, spent_at: '2026-10-01T08:15:00+07:00', note: 'SAMPLE COFFEE SHOP', import_ref: 'stmt-2026-10:0001' }
+          - { type: income, amount: '30000.00', currency: THB, balance_uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5, category_uid: 5d3c1b7a-8f2e-4c61-9a0d-2b7e4f6a1c93, spent_at: '2026-10-01T09:00:00+07:00', note: 'SAMPLE PAYROLL', import_ref: 'stmt-2026-10:0002' }
           - { type: transfer, amount: '5000.00', currency: THB, balance_uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5, to_balance_uid: a8465748-a48b-426a-9466-9a6706d8143a, spent_at: '2026-10-02T12:00:00+07:00', note: 'SAMPLE CARD PAYMENT', import_ref: 'stmt-2026-10:0003' }
     BulkResponseCreated:
       summary: Committed atomic import
@@ -2221,7 +2226,7 @@ components:
         results:
           - index: 0
             status: created
-            transaction: { uid: ea67cb7c-9cef-4323-9b16-59a5139cb582, amount: '45.00', amount_minor: 4500, currency: THB, type: expense, balance_uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5, account: Wallet, to_balance_uid: null, to_account: null, category_uid: null, spent_at: '2026-10-01T08:15:00+07:00', note: SAMPLE COFFEE SHOP, created_at: '2026-10-17T05:31:00Z', updated_at: null, version: 1, adjusts_balances: true, adjustment_direction: null, to_amount: null, to_amount_minor: null, to_currency: null, exchange_rate: null, rate_source: null, rate_date: null, import_ref: 'stmt-2026-10:0001' }
+            transaction: { uid: ea67cb7c-9cef-4323-9b16-59a5139cb582, amount: '45.00', amount_minor: 4500, currency: THB, type: expense, balance_uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5, account: Wallet, to_balance_uid: null, to_account: null, category_uid: 32b0d51e-e81f-41f0-a77c-38e6ec384153, spent_at: '2026-10-01T08:15:00+07:00', note: SAMPLE COFFEE SHOP, created_at: '2026-10-17T05:31:00Z', updated_at: null, version: 1, adjusts_balances: true, adjustment_direction: null, to_amount: null, to_amount_minor: null, to_currency: null, exchange_rate: null, rate_source: null, rate_date: null, import_ref: 'stmt-2026-10:0001' }
         balances: []
     BulkResponseReimport:
       summary: Same import sent again (all skipped)
@@ -2268,6 +2273,7 @@ components:
         amount: 45000
         currency: THB
         balance_uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5
+        category_uid: 5d3c1b7a-8f2e-4c61-9a0d-2b7e4f6a1c93
         spent_at: '2026-10-01T09:00:00+07:00'
         note: Salary
     TransactionInputTransfer:
@@ -2443,7 +2449,7 @@ components:
           account: Wallet
           to_balance_uid: null
           to_account: null
-          category_uid: null
+          category_uid: 32b0d51e-e81f-41f0-a77c-38e6ec384153
           spent_at: '2026-10-06T21:06:00+08:00'
           note: chicken rice
           created_at: '2026-10-08T13:29:10Z'
@@ -2489,4 +2495,4 @@ components:
         code: balance_in_use
     ErrCategoryInUseDelete:
       summary: Category still referenced
-      value: { error: 'category is used by transactions (1 transaction(s)); it cannot be deleted; reassign or clear category_uid on those transactions first' }
+      value: { error: 'category is used by transactions (1 transaction(s)); it cannot be deleted; move those transactions to another category first' }
