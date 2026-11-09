@@ -105,7 +105,7 @@ func TestTransactionVersioningAPI(t *testing.T) {
 	h := newTestServer(t)
 	cash := seedPayable(t, h, "Cash", "THB") // balance 10000.00
 	body := `{"amount":"100","currency":"THB","balance_uid":"` + cash + `","spent_at":"2026-10-08T12:00:00+08:00"}`
-	rec, tx := doH(t, h, "POST", "/api/transactions", body, nil)
+	rec, tx := do(t, h, "POST", "/api/transactions", body) // do adds a category
 	if rec.Code != 201 || tx["version"].(float64) != 1 || tx["adjusts_balances"] != true || rec.Header().Get("ETag") != `"1"` {
 		t.Fatalf("create: %d %v", rec.Code, tx)
 	}
@@ -120,7 +120,7 @@ func TestTransactionVersioningAPI(t *testing.T) {
 		}
 	}
 	// PUT with body version, then the same version again is stale.
-	put := `{"version":1,"amount":"150","currency":"THB","balance_uid":"` + cash + `","spent_at":"2026-10-08T12:00:00+08:00"}`
+	put := `{"version":1,"amount":"150","currency":"THB","balance_uid":"` + cash + `","category_uid":"` + tx["category_uid"].(string) + `","spent_at":"2026-10-08T12:00:00+08:00"}`
 	if rec, b := doH(t, h, "PUT", path, put, nil); rec.Code != 200 || b["version"].(float64) != 2 || rec.Header().Get("ETag") != `"2"` {
 		t.Fatalf("PUT: %d %v", rec.Code, b)
 	}
@@ -155,7 +155,7 @@ func TestTransactionsMoveBalancesAPI(t *testing.T) {
 	usd := seedPayable(t, h, "Dollars", "USD")
 	get := func(uid string) map[string]any { _, b := doH(t, h, "GET", "/api/balances/"+uid, "", nil); return b }
 	post := func(body string) (*int, map[string]any) {
-		rec, b := doH(t, h, "POST", "/api/transactions", body, nil)
+		rec, b := do(t, h, "POST", "/api/transactions", body) // do adds a category
 		return &rec.Code, b
 	}
 	at := `,"spent_at":"2026-10-08T12:00:00+08:00"}`

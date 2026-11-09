@@ -145,11 +145,11 @@
             <small class="muted"><span id="balance-hint">Payment accounts and credit cards.</span> <a href="/balances">Manage balances</a></small>
             <small class="err" data-for="balance_uid"></small>
           </label>
-          <label id="category-field">Category (optional)
-            <select id="category_uid" name="category_uid">
-              <option value="">No category</option>
+          <label id="category-field">Category
+            <select id="category_uid" name="category_uid" required>
+              <option value="">Select a category…</option>
             </select>
-            <small class="muted"><a href="/categories">Manage categories</a></small>
+            <small class="muted"><span id="category-hint"></span> <a href="/categories">Manage categories</a></small>
             <small class="err" data-for="category_uid"></small>
           </label>
           <label id="to-field" hidden><span id="to-label">To (destination)</span>

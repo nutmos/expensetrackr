@@ -76,9 +76,23 @@ func (f *fixture) want(b balance.Balance, amount string, version int64) {
 	}
 }
 
+// testCategoryUID stands in for a category in store tests: the store keeps
+// category_uid as given (the API checks it against the user's categories).
+const testCategoryUID = "cccccccc-0000-4000-8000-000000000001"
+
+// testCategoryFor is testCategoryUID for a transaction type that requires a
+// category, else "".
+func testCategoryFor(typ string) string {
+	if tt, ok := transaction.ParseType(typ); ok && tt.NeedsCategory() {
+		return testCategoryUID
+	}
+	return ""
+}
+
 func (f *fixture) tx(typ, amount, currency string, from balance.Balance, to *balance.Balance) transaction.Transaction {
 	f.t.Helper()
 	in := transaction.CreateInput{Type: typ, Amount: transaction.DecimalInput(amount), Currency: currency, BalanceUID: string(from.UID), SpentAt: "2026-10-08T12:00:00+08:00"}
+	in.CategoryUID = testCategoryFor(typ)
 	if to != nil {
 		in.ToBalanceUID = string(to.UID)
 	}

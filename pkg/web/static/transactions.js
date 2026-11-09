@@ -381,17 +381,22 @@
     updateFx();
   }
 
-  // Category dropdown: only categories of the selected type; hidden for transfers.
+  // Category dropdown: only categories of the selected type; hidden for
+  // transfers. Required for every other type (the server reports a missing
+  // one under category_uid).
   function fillCategories(t, keep) {
     const sel = $("#category_uid");
     const want = keep ?? sel.value;
     $("#category-field").hidden = t === "transfer";
-    sel.replaceChildren(Object.assign(document.createElement("option"), { value: "", textContent: "No category" }));
+    sel.replaceChildren(Object.assign(document.createElement("option"), { value: "", textContent: "Select a category…" }));
+    let n = 0;
     for (const c of allCategories) {
       if (c.type !== CATEGORY_TYPE[t]) continue;
       sel.append(Object.assign(document.createElement("option"), { value: c.uid, textContent: c.name }));
+      n++;
     }
     sel.value = want && [...sel.options].some((o) => o.value === want) ? want : "";
+    $("#category-hint").textContent = n || t === "transfer" ? "" : `No ${CATEGORY_TYPE[t]} categories yet; add one first.`;
   }
 
   // ---- Form page: /transactions/new and /transactions/<uid>/edit ------------
@@ -843,7 +848,7 @@
   // Searchable dropdowns (issue #24); the Type select stays a plain select.
   Combobox.enhance($("#balance_uid"));
   Combobox.enhance($("#to_balance_uid"));
-  Combobox.enhance($("#category_uid"), { clearable: true });
+  Combobox.enhance($("#category_uid"));
   Combobox.enhance($("#currency")); // issue #25; search matches code and name
 
   spentAtInput.addEventListener("input", updatePreview);

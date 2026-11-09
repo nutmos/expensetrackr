@@ -13,7 +13,7 @@ categories are private to them.
 ## Features
 
 - **Transactions** of five kinds: expenses, income, transfers, asset purchases
-  and returns on investment, each optionally with a category.
+  and returns on investment. Every kind except transfers has a category.
 - **Balances** (bank accounts, cards, assets, loans) that move automatically
   with every transaction, with manual corrections recorded.
 - **Multiple currencies**: exact amounts (no floats) in any ISO 4217 currency,

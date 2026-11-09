@@ -33,11 +33,12 @@ func TestParseTimestamp(t *testing.T) {
 
 func TestValidateNormalizes(t *testing.T) {
 	in := CreateInput{
-		Amount:     "120.5",
-		Currency:   " thb ",
-		BalanceUID: "  A1B2C3D4-E5F6-4789-A012-3456789ABCDE ",
-		SpentAt:    "2026-10-06T21:06:00.999+08:00",
-		Note:       " lunch ",
+		Amount:      "120.5",
+		Currency:    " thb ",
+		BalanceUID:  "  A1B2C3D4-E5F6-4789-A012-3456789ABCDE ",
+		CategoryUID: "CCCCCCCC-0000-4000-8000-000000000001",
+		SpentAt:     "2026-10-06T21:06:00.999+08:00",
+		Note:        " lunch ",
 	}
 	e, err := in.Validate()
 	if err != nil {
@@ -51,6 +52,46 @@ func TestValidateNormalizes(t *testing.T) {
 	}
 	if e.Note != "lunch" || e.SpentAt != "2026-10-06T21:06:00+08:00" {
 		t.Errorf("bad trim/spent_at: %+v", e)
+	}
+}
+
+// testCategoryUID is any well-formed category uid (Validate checks only the
+// shape; the API checks it against the user's categories).
+const testCategoryUID = "cccccccc-0000-4000-8000-000000000001"
+
+// A category is required for every type except transfer; balance
+// adjustments can't be created here at all.
+func TestValidateCategoryRequired(t *testing.T) {
+	const bal, dest = "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"
+	for _, c := range []struct {
+		typ, to, cat, want string
+	}{
+		{"", "", "", "is required for an expense"},
+		{"expense", "", "  ", "is required for an expense"},
+		{"income", "", "", "is required for an income"},
+		{"asset_purchase", dest, "", "is required for an asset purchase"},
+		{"return_on_investment", dest, "", "is required for a return on investment"},
+		{"transfer", dest, "", ""},
+		{"expense", "", testCategoryUID, ""},
+		{"transfer", dest, testCategoryUID, "is not allowed for a transfer"},
+	} {
+		_, err := CreateInput{Type: c.typ, Amount: "1", Currency: "THB", BalanceUID: bal, ToBalanceUID: c.to,
+			CategoryUID: c.cat, SpentAt: "2026-10-06T21:06:00+08:00"}.Validate()
+		var got string
+		var ve *ValidationError
+		if errors.As(err, &ve) {
+			got = ve.Fields["category_uid"]
+		} else if err != nil {
+			t.Fatalf("%s: %v", c.typ, err)
+		}
+		if got != c.want {
+			t.Errorf("type %q category %q: category_uid error %q, want %q", c.typ, c.cat, got, c.want)
+		}
+	}
+	for tt, want := range map[Type]bool{Expense: true, Income: true, AssetPurchase: true, ReturnOnInvestment: true, Transfer: false, BalanceAdjustment: false} {
+		if tt.NeedsCategory() != want {
+			t.Errorf("%s.NeedsCategory() = %v", tt, !want)
+		}
 	}
 }
 
@@ -85,7 +126,7 @@ func TestDecimalInputAcceptsStringOrNumber(t *testing.T) {
 func TestAttachPaymentBalance(t *testing.T) {
 	e, err := CreateInput{
 		Amount: "10", Currency: "THB", BalanceUID: "11111111-1111-4111-8111-111111111111",
-		SpentAt: "2026-10-06T21:06:00+08:00",
+		CategoryUID: testCategoryUID, SpentAt: "2026-10-06T21:06:00+08:00",
 	}.Validate()
 	if err != nil {
 		t.Fatal(err)
@@ -147,8 +188,9 @@ func TestAttachPaymentBalanceIncome(t *testing.T) {
 		t.Helper()
 		e, err := CreateInput{
 			Type: "income", Amount: "10", Currency: "THB",
-			BalanceUID: "11111111-1111-4111-8111-111111111111",
-			SpentAt:    "2026-10-06T21:06:00+08:00",
+			BalanceUID:  "11111111-1111-4111-8111-111111111111",
+			CategoryUID: testCategoryUID,
+			SpentAt:     "2026-10-06T21:06:00+08:00",
 		}.Validate()
 		if err != nil {
 			t.Fatal(err)

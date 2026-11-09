@@ -32,7 +32,7 @@ func TestPerUserStoreIsolation(t *testing.T) {
 	if err := st.CreateBalance(ctx, bob.UID, &bPay); err != nil {
 		t.Fatal(err) // same name, different user: allowed
 	}
-	e, err := transaction.CreateInput{Amount: "10", Currency: "THB", BalanceUID: string(aPay.UID), SpentAt: "2026-10-08T12:00:00+08:00"}.Validate()
+	e, err := transaction.CreateInput{Amount: "10", Currency: "THB", BalanceUID: string(aPay.UID), CategoryUID: testCategoryUID, SpentAt: "2026-10-08T12:00:00+08:00"}.Validate()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestPerUserStoreIsolation(t *testing.T) {
 		}
 	}
 	// Create against alice's balance as bob → validation "does not match".
-	cross, err := transaction.CreateInput{Amount: "1", Currency: "THB", BalanceUID: string(aPay.UID), SpentAt: "2026-10-08T12:00:00+08:00"}.Validate()
+	cross, err := transaction.CreateInput{Amount: "1", Currency: "THB", BalanceUID: string(aPay.UID), CategoryUID: testCategoryUID, SpentAt: "2026-10-08T12:00:00+08:00"}.Validate()
 	if err != nil {
 		t.Fatal(err)
 	}

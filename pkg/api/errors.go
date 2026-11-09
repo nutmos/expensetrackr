@@ -133,7 +133,7 @@ var categoryErrorCases = []errorCase{
 	})},
 	{store.ErrCategoryLimit, http.StatusConflict, withText("", nil)},
 	{store.ErrCategoryInUse, http.StatusConflict, func(err error) errorBody {
-		return errorBody{Error: err.Error() + "; reassign or clear category_uid on those transactions first"}
+		return errorBody{Error: err.Error() + "; move those transactions to another category first"}
 	}},
 }
 

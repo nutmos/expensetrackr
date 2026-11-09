@@ -68,7 +68,7 @@ func TestErrorMapping(t *testing.T) {
 		{"category duplicate", writeCategoryError, store.ErrDuplicateCategory, 409, "a category with this name and type already exists", "", "name"},
 		{"category limit", writeCategoryError, store.ErrCategoryLimit, 409, store.ErrCategoryLimit.Error(), "", ""},
 		{"category in use", writeCategoryError, fmt.Errorf("%w (1 transaction(s)); it cannot be deleted", store.ErrCategoryInUse), 409,
-			"category is used by transactions (1 transaction(s)); it cannot be deleted; reassign or clear category_uid on those transactions first", "", ""},
+			"category is used by transactions (1 transaction(s)); it cannot be deleted; move those transactions to another category first", "", ""},
 		// users
 		{"username taken", writeUserError, store.ErrDuplicateUsername, 409, store.ErrDuplicateUsername.Error(), "", "username"},
 		{"email taken", writeUserError, store.ErrDuplicateEmail, 409, store.ErrDuplicateEmail.Error(), "", "email"},

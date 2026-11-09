@@ -57,7 +57,7 @@ func TestBalanceAdjustmentAPI(t *testing.T) {
 
 	// An ordinary expense: listed with type expense; adjustments are in the
 	// unfiltered list too; other filters exclude them.
-	if rec, b := doH(t, h, "POST", "/api/transactions", `{"amount":"10","currency":"THB","balance_uid":"`+cash+`","spent_at":"2026-10-08T12:00:00+08:00"}`, nil); rec.Code != 201 {
+	if rec, b := do(t, h, "POST", "/api/transactions", `{"amount":"10","currency":"THB","balance_uid":"`+cash+`","spent_at":"2026-10-08T12:00:00+08:00"}`); rec.Code != 201 {
 		t.Fatalf("expense: %d %v", rec.Code, b)
 	}
 	if n := len(list("")); n != 3 {
