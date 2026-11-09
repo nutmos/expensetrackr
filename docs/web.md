@@ -16,7 +16,8 @@ path, and `router.js` shows the view for `location.pathname`:
 | URL                          | Page |
 |------------------------------|------|
 | `/`, `/transactions`         | Transactions list (browse only). Date filters live in the query: `/transactions?from=2026-10-01&to=2026-10-31` |
-| `/transactions/new`          | Add a transaction |
+| `/transactions/new`          | Add a transaction, step 1: pick the type (Expense, Income, Transfer, Asset Purchase, Return on Investment) |
+| `/transactions/new?type=<type>` | Add a transaction, step 2: the form with that type selected (it can still be changed there). An unknown `type` shows the picker |
 | `/transactions/<uid>/edit`   | Edit a transaction (same form) |
 | `/balances`, `/balances/new`, `/balances/<uid>/edit` | Balances list / add / edit |
 | `/categories`, `/categories/new`, `/categories/<uid>/edit` | Categories list / add / edit |

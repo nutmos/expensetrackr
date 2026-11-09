@@ -396,16 +396,39 @@
 
   // ---- Form page: /transactions/new and /transactions/<uid>/edit ------------
 
-  async function enterForm(params) {
+  // Types a new transaction can have (balance_adjustment is recorded only by
+  // manual balance edits). /transactions/new without one of these shows the
+  // type picker first.
+  const NEW_TYPES = new Set(["expense", "income", "transfer", "asset_purchase", "return_on_investment"]);
+  // Form heading for each type on /transactions/new?type=<type>.
+  const NEW_TITLE = { expense: "Add an expense", income: "Add income", transfer: "Add a transfer", asset_purchase: "Add an asset purchase", return_on_investment: "Add a return on investment" };
+
+  // Show the type picker or the form (exactly one).
+  function showPicker(on) {
+    $("#tx-type-picker").hidden = !on;
+    $("#form-title").hidden = on;
+    form.hidden = on;
+  }
+
+  async function enterForm(params, query) {
     const my = ++gen;
     editing = null;
+    const newType = query ? query.get("type") : null;
+    if (!params.uid && !NEW_TYPES.has(newType)) {
+      // Step 1 of adding: pick the type, then the form opens with it set.
+      showPicker(true);
+      const first = $("#tx-type-picker .type-choice");
+      if (first) first.focus();
+      return;
+    }
+    showPicker(false);
     form.reset();
     App.clearErrors(form);
     App.hideConflict(conflictBox);
     setStatus("");
     form.hidden = false;
     $("#submit-btn").disabled = false;
-    $("#type").value = "expense";
+    $("#type").value = newType && NEW_TYPES.has(newType) ? newType : "expense";
     $("#note").value = "";
     $("#amount").value = "";
     $("#currency").value = "";
@@ -414,7 +437,7 @@
     fxQuote = null;
     renderConversion(null);
     if (!params.uid) {
-      $("#form-title").textContent = "Add a transaction";
+      $("#form-title").textContent = NEW_TITLE[currentType()] || "Add a transaction";
       $("#submit-btn").textContent = "Save transaction";
       await Promise.all([loadBalancesList(), loadCategoriesList(), App.fillCurrencySelect($("#currency"))]);
       if (my !== gen) return;
@@ -842,6 +865,16 @@
   spentAtInput.addEventListener("change", () => { if (!fxManual) updateFx(); });
   $("#to_amount").addEventListener("input", () => { fxManual = true; fxGen++; const p = fxPair(); if (p) showManualRate(p); });
   $("#fx-reset").addEventListener("click", () => { fxAuto(); updateFx(true); });
+  // Picking a type replaces the picker in history, so Back (and Cancel /
+  // Save, which return to the list) skip it.
+  $("#tx-type-picker").addEventListener("click", (ev) => {
+    if (ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+    const a = ev.target.closest("a.type-choice");
+    if (!a) return;
+    ev.preventDefault();
+    const u = new URL(a.href, location.href);
+    App.navigate(u.pathname + u.search, { replace: true });
+  });
   $("#now-btn").addEventListener("click", setNow);
   $("#cancel-btn").addEventListener("click", cancelForm);
   form.addEventListener("submit", submitTransaction);
@@ -856,6 +889,6 @@
   const list = { view: "#view-transactions", section: "transactions", title: "", enter: enterList };
   App.route("/transactions", list);
   const formRoute = { view: "#view-transaction-form", section: "transactions", enter: enterForm, onEscape: cancelForm };
-  App.route("/transactions/new", { ...formRoute, title: "Add transaction" });
+  App.route("/transactions/new", { ...formRoute, title: "Add transaction" }); // type picker, or the form with ?type=
   App.route("/transactions/:uid/edit", { ...formRoute, title: "Edit transaction" });
 })();
