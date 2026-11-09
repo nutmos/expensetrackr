@@ -146,3 +146,8 @@ td.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-spa
 #token-table td.time { white-space: nowrap; }
 .load-more { text-align: center; margin: 12px 0 4px; }
 .load-more:has(button[hidden]) { display: none; }
+.type-choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.type-choice { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 8px; color: var(--fg); text-decoration: none; background: #fff; }
+.type-choice:hover, .type-choice:focus-visible { border-color: var(--accent); background: #eff4ff; outline: none; }
+.type-choice strong { font-size: 1rem; }
+.type-choice .muted { font-size: 0.85rem; }

@@ -103,10 +103,20 @@
     </section>
     </div>
 
-    <!-- /transactions/new and /transactions/:uid/edit -->
+    <!-- /transactions/new (type picker), /transactions/new?type=<type> and /transactions/:uid/edit (form) -->
     <div id="view-transaction-form" class="view" hidden>
     <section class="card form-card">
       <p class="back"><a href="/transactions" class="back-link">← Transactions</a></p>
+      <div id="tx-type-picker" hidden>
+        <h2>What kind of transaction?</h2>
+        <div class="type-choices">
+          <a class="type-choice" href="/transactions/new?type=expense"><strong>Expense</strong><span class="muted">Spending from an account or credit card</span></a>
+          <a class="type-choice" href="/transactions/new?type=income"><strong>Income</strong><span class="muted">Money received, such as salary or a cash rebate</span></a>
+          <a class="type-choice" href="/transactions/new?type=transfer"><strong>Transfer</strong><span class="muted">Move money between your balances, or pay off a card</span></a>
+          <a class="type-choice" href="/transactions/new?type=asset_purchase"><strong>Asset Purchase</strong><span class="muted">Buy something you keep as an asset, like a laptop</span></a>
+          <a class="type-choice" href="/transactions/new?type=return_on_investment"><strong>Return on Investment</strong><span class="muted">Dividends, interest or other investment returns</span></a>
+        </div>
+      </div>
       <h2 id="form-title">Add a transaction</h2>
       <form id="transaction-form" novalidate>
         <div class="grid">
