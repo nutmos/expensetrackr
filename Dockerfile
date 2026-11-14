@@ -11,7 +11,7 @@
 # for the target (TARGETOS/TARGETARCH, set by BuildKit), so a multi-platform
 # build (.github/workflows/publish-image.yml: linux/amd64 + linux/arm64)
 # compiles natively instead of under emulation.
-FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.4-alpine AS build
 ARG TARGETOS TARGETARCH
 WORKDIR /src
 ENV CGO_ENABLED=0 GOTOOLCHAIN=local
@@ -22,7 +22,7 @@ COPY cmd ./cmd
 COPY pkg ./pkg
 RUN GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/expense-server ./cmd/server
 
-FROM alpine:3.22
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates \
  && adduser -D -H -u 10001 expense
 COPY --from=build /out/expense-server /usr/local/bin/expense-server
