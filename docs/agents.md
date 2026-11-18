@@ -11,7 +11,7 @@ see [MCP server](mcp.md).
 skill (the `SKILL.md` convention used by Claude Agent Skills, Cursor and
 similar tools) that teaches an LLM agent to use this API: login and CSRF
 rules, looking up balance/category uids, logging expenses, income, transfers
-(incl. cross-currency), asset purchases and returns on investment, bulk statement imports, editing with `If-Match`, error
+(incl. cross-currency), asset purchases, returns on investment and debt repayments, bulk statement imports, editing with `If-Match`, error
 handling and safety rules. Details are in its
 [`reference.md`](../skills/expensetrackr-api/reference.md); the helper
 [`scripts/etr.sh`](../skills/expensetrackr-api/scripts/etr.sh) wraps curl with a

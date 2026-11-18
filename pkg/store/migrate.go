@@ -16,6 +16,7 @@ import (
 //
 //	v1  baseline: the complete schema in baselineSchema (schema.go)
 //	v2  balance names no longer unique (migrate_v2.go)
+//	v3  transaction type repay_debt allowed (migrate_v3.go)
 //
 // All pending steps run in one SQL transaction (Postgres DDL is
 // transactional), so a failed upgrade leaves the database as it was. The
@@ -47,6 +48,8 @@ var migrations = []migration{
 	createBaseline,
 	// 1 -> 2: drop the unique index on balance names.
 	allowDuplicateBalanceNames,
+	// 2 -> 3: allow transaction type repay_debt.
+	allowRepayDebtType,
 }
 
 // SchemaVersion is the version a fully migrated database has.

@@ -243,7 +243,7 @@ func parseListFilter(c *gin.Context) (store.ListFilter, map[string]string) {
 		if t, ok := transaction.ParseFilterType(raw); ok {
 			f.Type = t
 		} else {
-			fields["type"] = "must be one of: expense, income, transfer, asset_purchase, return_on_investment, balance_adjustment"
+			fields["type"] = "must be one of: expense, income, transfer, asset_purchase, return_on_investment, repay_debt, balance_adjustment"
 		}
 	}
 

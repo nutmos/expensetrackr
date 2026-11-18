@@ -17,7 +17,7 @@ func (e Transaction) Effects() []Effect {
 		return nil
 	case Income, ReturnOnInvestment: // ROI: the linked asset is not moved
 		return []Effect{{BalanceUID: e.BalanceUID, Field: "balance_uid", Delta: amt}}
-	case Transfer, AssetPurchase:
+	case Transfer, AssetPurchase, RepayDebt:
 		out := []Effect{{BalanceUID: e.BalanceUID, Field: "balance_uid", Delta: -amt}}
 		if e.ToBalanceUID != nil {
 			to := amt

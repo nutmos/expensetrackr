@@ -157,10 +157,11 @@ index on `(balance_uid, import_ref) WHERE import_ref IS NOT NULL`.
      statement credit on a card lowers its debt; a rebate larger than the
      debt leaves the card in credit, same as an overpaying transfer).
      `other_liability` is still rejected for income.
-   - **credit card payments** and moves between your own accounts:
-     `type: "transfer"`, from the paying account to the card or other
-     account. On a card statement, the "PAYMENT – THANK YOU" line is the
-     destination side of a transfer that may already have been imported from
+   - **credit card payments** and **loan instalments** from a bank account:
+     `type: "repay_debt"`, from the `payment_account` to the `credit_card` or
+     `other_liability` (same currency, no category). Other moves between your
+     own accounts: `type: "transfer"`. On a card statement, the "PAYMENT – THANK YOU" line is the
+     destination side of a repayment that may already have been imported from
      the bank statement. Import it once only, from one side.
    - buying something tracked as an `other_asset`: `type: "asset_purchase"`
    - a dividend or interest from an investment tracked as an `other_asset`:

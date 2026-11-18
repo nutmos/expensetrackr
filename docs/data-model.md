@@ -17,12 +17,12 @@ Transactions are stored in the Postgres table **`transactions`**, with index
 | amount        | `amount`       | `amount_minor bigint` + `amount_scale smallint` (see below)             |
 | amount (raw)  | `amount_minor` | the integer itself, e.g. `12050`                                       |
 | currency      | `currency`     | `char(3)`, ISO 4217 alphabetic code, upper-cased (`THB`, `SGD`, `USD`, …) |
-| type          | `type`         | `text NOT NULL DEFAULT 'expense'`: `expense`, `income`, `transfer`, `asset_purchase`, `return_on_investment`, or `balance_adjustment` (server-created only; see "Transaction types") |
+| type          | `type`         | `text NOT NULL DEFAULT 'expense'`: `expense`, `income`, `transfer`, `asset_purchase`, `return_on_investment`, `repay_debt`, or `balance_adjustment` (server-created only; see "Transaction types") |
 | adj. direction | `adjustment_direction` | `text`, `increase` / `decrease` on `balance_adjustment` rows, `NULL` (JSON `null`) otherwise |
-| payment acct  | `balance_uid`  | `uuid` of of the balance paid from (expense), received into (income, return_on_investment) or moved from (transfer, asset_purchase); no FK |
-| destination   | `to_balance_uid` | `uuid`, transfers, asset purchases and returns on investment only (else `null`); UUID of the destination balance (for a return on investment, the linked `other_asset`); no FK |
-| dest. name    | `to_account`   | denormalized destination name snapshot (transfers, asset purchases and returns on investment only, else `null`)    |
-| category      | `category_uid` | `uuid`, **required** on new or edited expense, income, asset purchase and return on investment transactions (older rows may be `null`); UUID of a category of the same type (expense categories for asset purchases, income categories for returns on investment); never set for transfers; no FK. **The only link to the category**: no name is stored on the transaction |
+| payment acct  | `balance_uid`  | `uuid` of of the balance paid from (expense), received into (income, return_on_investment) or moved from (transfer, asset_purchase, repay_debt); no FK |
+| destination   | `to_balance_uid` | `uuid`, transfers, asset purchases, returns on investment and debt repayments only (else `null`); UUID of the destination balance (for a return on investment, the linked `other_asset`; for a debt repayment, the `credit_card` / `other_liability` repaid); no FK |
+| dest. name    | `to_account`   | denormalized destination name snapshot (transfers, asset purchases, returns on investment and debt repayments only, else `null`)    |
+| category      | `category_uid` | `uuid`, **required** on new or edited expense, income, asset purchase and return on investment transactions (older rows may be `null`); UUID of a category of the same type (expense categories for asset purchases, income categories for returns on investment); never set for transfers or debt repayments; no FK. **The only link to the category**: no name is stored on the transaction |
 | account name  | `account`      | denormalized balance `name` snapshot at write time (read-only in API)   |
 | spend time    | `spent_at`     | `text` RFC 3339 with offset as entered + `spent_at_utc timestamptz` (same instant) |
 | note          | `note`         | `text`, optional, up to 1000 chars                                     |
@@ -124,8 +124,9 @@ Rules linking transactions and categories:
   for an expense", when missing, `null` or `""`). An expense or asset purchase
   must use an `expense` category, income or a return on investment an
   `income` category (422 on `category_uid` otherwise, also for unknown or
-  malformed uids, or a uid of another user's category). A transfer must not
-  have a category (422), and balance adjustments never have one.
+  malformed uids, or a uid of another user's category). A transfer or a debt
+  repayment must not have a category (422), and balance adjustments never
+  have one.
 - Transactions saved before categories were required may have no category.
   They are listed as before; editing one requires choosing a category.
 - The transaction stores **only `category_uid`** (no name copy, unlike
@@ -173,6 +174,7 @@ adjusts its balances automatically:
 | `transfer` | source: asset `balance −= amount`, liability `debt += amount` (drawing a loan / cash advance) | destination: asset `balance += amount`, liability `debt −= amount` (card payment / loan repayment) |
 | `asset_purchase` ("Asset Purchase") | like an expense: asset `balance −= amount`; card `debt += amount` | the `other_asset` bought: `balance += amount` |
 | `return_on_investment` ("Return on Investment") | like income: account `balance += amount`; card `debt −= amount` (may go negative = in credit) | the linked `other_asset`: **unchanged** (link only) |
+| `repay_debt` ("Repay Debt") | the `payment_account` paid from: `balance −= amount` | the `credit_card` / `other_liability` repaid: `debt −= amount` (may go negative = in credit) |
 | `balance_adjustment` ("Balance Adjustment") | none: records a manual balance edit that already set the value | n/a |
 
 **Balance adjustments** are created only by the server, in the same database
@@ -199,6 +201,7 @@ types each transaction type accepts:
 | `transfer` | any balance type (source)                     | **required**; any existing balance type, different from `balance_uid` |
 | `asset_purchase` | `payment_account` or `credit_card` (paid from) | **required**; an `other_asset` balance (422 for any other type), different from `balance_uid` |
 | `return_on_investment` | `payment_account` or `credit_card` (received into) | **required**; the `other_asset` the return came from (422 for any other type), different from `balance_uid`; its value is not changed |
+| `repay_debt` | `payment_account` (paid from) | **required**; a `credit_card` or `other_liability` balance (422 for any other type), different from `balance_uid` |
 
 - **Asset Purchase** (`asset_purchase`) records buying something you track as
   an `other_asset` (e.g. a laptop, gold): the source is affected like an
@@ -218,15 +221,25 @@ types each transaction type accepts:
   expense categories are rejected (422). `to_amount` / `to_currency` are not
   allowed. List totals count it as income.
 
+- **Repay Debt** (`repay_debt`) records paying down a debt: money leaves a
+  `payment_account` and the debt of a `credit_card` (paying the card bill) or
+  an `other_liability` (a loan instalment) goes down by the same amount; an
+  overpayment leaves it in credit (negative debt). It moves value like a
+  transfer, so it has **no category** (422 if one is sent) and list totals
+  count it as neither expense nor income. Both balances must be in the
+  transaction's currency (`to_amount` / `to_currency` are not allowed); use a
+  transfer for a cross-currency repayment.
+
 - Omitting `type` on POST or PUT means `expense`, so older clients keep working.
   A PUT is a full replace, so a PUT of a transfer must send `"type":"transfer"`.
 - Why: income lands in a spendable account, an asset (salary, dividends), or
   a credit card as a cash rebate / statement credit (which lowers its debt;
   `other_liability` stays disallowed for income). Paying a card or loan from
-  another account is still a transfer. Transfers may also move money into an
+  a payment account is a **repay_debt** (a transfer still works too, e.g.
+  for a cross-currency repayment or paying one liability from another). Transfers may also move money into an
   `other_asset` (savings) or draw from a credit card / loan.
 - The transaction's `currency` must equal the currency of its source balance
-  (and, for an asset purchase, of its destination too; the asset linked by a
+  (and, for an asset purchase or a debt repayment, of its destination too; the asset linked by a
   return on investment may be in any currency, since it is not moved); 422 otherwise.
 - A **transfer** may go between balances in different currencies: `amount` /
   `currency` are the source side; `to_amount` / `to_currency` (destination
@@ -235,7 +248,7 @@ types each transaction type accepts:
   omit it and the server converts with the Frankfurter (ECB) rate of the
   `spent_at` date. Same-currency transfers: `to_amount` must be omitted or
   equal `amount`. See [docs/exchange-rates.md](exchange-rates.md).
-- A PUT changing `type` away from `transfer` / `asset_purchase` / `return_on_investment` must omit `to_balance_uid` (or
+- A PUT changing `type` away from `transfer` / `asset_purchase` / `return_on_investment` / `repay_debt` must omit `to_balance_uid` (or
   send `""`), else 422; changing to one of them requires `to_balance_uid`
   (or a 422).
 
@@ -300,6 +313,7 @@ versioning lives in `pkg/store/migrate.go`.
 |---------|--------|
 | 1       | baseline: `users`, `user_identities`, `sessions`, `api_tokens`, `user_categories`, `balances`, `transactions`, `fx_rates`, `fx_rate_lookups` and their indexes |
 | 2       | balance names no longer unique: drops `balances_user_name_uq` |
+| 3       | transaction type `repay_debt` allowed: widens `transactions_type_check` |
 
 **Coming from SQLite?** Earlier versions stored everything in
 `data/expenses.db`. That data is **not migrated**: the Postgres version starts

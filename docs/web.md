@@ -16,7 +16,7 @@ path, and `router.js` shows the view for `location.pathname`:
 | URL                          | Page |
 |------------------------------|------|
 | `/`, `/transactions`         | Transactions list (browse only). Date filters live in the query: `/transactions?from=2026-10-01&to=2026-10-31` |
-| `/transactions/new`          | Add a transaction, step 1: pick the type (Expense, Income, Transfer, Asset Purchase, Return on Investment) |
+| `/transactions/new`          | Add a transaction, step 1: pick the type (Expense, Income, Transfer, Asset Purchase, Return on Investment, Repay Debt) |
 | `/transactions/new?type=<type>` | Add a transaction, step 2: the form with that type selected (it can still be changed there). An unknown `type` shows the picker |
 | `/transactions/<uid>/edit`   | Edit a transaction (same form) |
 | `/balances`, `/balances/new`, `/balances/<uid>/edit` | Balances list / add / edit |
@@ -93,17 +93,17 @@ confirmations use human labels instead. For example, an edit page is titled
 
 - The list is newest first, with a date filter (whole days in the device's time
   zone), a Type filter and per-currency totals. Expenses and income are summed
-  separately (returns on investment count as income); transfers, asset purchases and
-  balance adjustments are excluded from both.
+  separately (returns on investment count as income); transfers, asset purchases, debt
+  repayments and balance adjustments are excluded from both.
 - **Balance Adjustment** rows (recorded by manual balance edits) have their
   own style and label, a signed amount (+/−), and "Automatic" instead of
   Edit/Delete; their edit URL shows a read-only message.
 - Columns: time (shown in the device's time zone, with the stored value on
   hover, and an "edited" marker), Type, Amount,
-  Currency, Account ("from → to" for transfers and asset purchases, "investment → account" for returns on investment), Category, Note.
+  Currency, Account ("from → to" for transfers, asset purchases and debt repayments, "investment → account" for returns on investment), Category, Note.
 - The category name is looked up client-side from `/api/categories` by
   `category_uid`.
-- The form has a **Type** selector (Expense / Income / Transfer / Asset Purchase / Return on Investment; balance
+- The form has a **Type** selector (Expense / Income / Transfer / Asset Purchase / Return on Investment / Repay Debt; balance
   adjustments cannot be entered). The source
   dropdown lists only the balance types allowed for that type, grouped under
   headings (Payment accounts, Credit cards, Other assets, Other liabilities).
@@ -112,8 +112,11 @@ confirmations use human labels instead. For example, an edit page is titled
   changes to "Payment account", "Received into", "From (source)" or "Paid from". A **To
   (destination)** dropdown appears only for transfers (any balance) and asset
   purchases (other assets only); for a return on investment it is labelled
-  **Investment** (other assets only).
-- **Category** is required (except for transfers, where it is hidden) and
+  **Investment** (other assets only), and for a debt repayment **Debt
+  repaid** (credit cards and other liabilities only; paid from a payment
+  account).
+- **Category** is required (except for transfers and debt repayments, where
+  it is hidden) and
   lists only categories of the selected type (expense categories for asset
   purchases, income categories for returns on investment). With no category
   of that type yet, a hint says to add one first. Editing an older

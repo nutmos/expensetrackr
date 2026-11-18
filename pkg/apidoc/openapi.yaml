@@ -67,8 +67,8 @@ info:
       `PUT` is a **full replacement**: send the whole record (all editable fields). There is no `PATCH`
       for transactions, balances or categories (a `PATCH` there is a 404 like any unknown method). To
       clear an optional field (`note`, `to_balance_uid`, `description`), omit it or send `""` in
-      the full `PUT` body. `category_uid` can't be cleared except on a transfer (it is required on
-      every other type).
+      the full `PUT` body. `category_uid` can't be cleared except on a transfer or repay_debt (it is
+      required on every other type).
 
     ## Transaction types
 
@@ -79,6 +79,7 @@ info:
     | `transfer` | any balance | **required**, any balance ≠ source | source −amount, destination +amount (debt moves the other way) |
     | `asset_purchase` | `payment_account` or `credit_card` | **required**, an `other_asset` ≠ source | source like an expense (balance −amount / card debt +amount), destination asset balance +amount |
     | `return_on_investment` | `payment_account` or `credit_card` | **required**, the `other_asset` it came from ≠ source | like income (balance +amount / card debt −amount, may go negative); the linked asset is **not** changed (dividend / interest) |
+    | `repay_debt` | `payment_account` | **required**, a `credit_card` or `other_liability` | account balance −amount, destination debt −amount (may go negative = in credit); same currency only, no category |
     | `balance_adjustment` | the edited balance | — | none (**read-only**, server-created) |
 
     The transaction `currency` must equal the currency of its balance(s) (422 otherwise); the asset
@@ -208,7 +209,7 @@ paths:
               example:
                 error: invalid query parameters
                 fields:
-                  type: 'must be one of: expense, income, transfer, asset_purchase, return_on_investment, balance_adjustment'
+                  type: 'must be one of: expense, income, transfer, asset_purchase, return_on_investment, repay_debt, balance_adjustment'
                   limit: must be an integer between 1 and 5000
                   cursor: is not a cursor from this API (use next_cursor from the previous page)
         '500': { $ref: '#/components/responses/InternalError' }
@@ -1586,13 +1587,14 @@ components:
       description: |
         `expense`, `income`, `transfer`, `asset_purchase` (payment account / credit card → other asset;
         a value move, not counted as expense or income), `return_on_investment` (income into a payment
-        account / credit card, linked to the other asset it came from, whose value does not change), or the
+        account / credit card, linked to the other asset it came from, whose value does not change),
+        `repay_debt` (payment account → credit card / other liability, debt down; no category), or the
         read-only, server-created `balance_adjustment`.
-      enum: [expense, income, transfer, asset_purchase, return_on_investment, balance_adjustment]
+      enum: [expense, income, transfer, asset_purchase, return_on_investment, repay_debt, balance_adjustment]
     TransactionWriteType:
       type: string
       description: Types a client may write. Empty or omitted means `expense`. `balance_adjustment` is a 422.
-      enum: [expense, income, transfer, asset_purchase, return_on_investment]
+      enum: [expense, income, transfer, asset_purchase, return_on_investment, repay_debt]
       default: expense
     AdjustmentDirection:
       type: string
@@ -1621,7 +1623,7 @@ components:
         balance_uid:
           type: string
           format: uuid
-          description: Paying (expense), receiving (income, return_on_investment), source (transfer, asset_purchase) or adjusted (balance_adjustment) balance. May point to a deleted balance.
+          description: Paying (expense), receiving (income, return_on_investment), source (transfer, asset_purchase, repay_debt) or adjusted (balance_adjustment) balance. May point to a deleted balance.
           example: 4dc73a4a-a60b-414e-98bc-3c71298a0af5
         account:
           type: string
@@ -1631,12 +1633,12 @@ components:
           type: string
           format: uuid
           nullable: true
-          description: Transfer or asset_purchase destination, or the other_asset a return_on_investment is tied to (not moved); `null` for other types.
+          description: Transfer, asset_purchase or repay_debt destination, or the other_asset a return_on_investment is tied to (not moved); `null` for other types.
           example: null
         to_account:
           type: string
           nullable: true
-          description: Snapshot of the destination balance's name; `null` unless transfer, asset_purchase or return_on_investment.
+          description: Snapshot of the destination balance's name; `null` unless transfer, asset_purchase, return_on_investment or repay_debt.
           example: null
         category_uid:
           type: string
@@ -1783,7 +1785,7 @@ components:
           type: string
           format: uuid
           nullable: true
-          description: Required for `transfer` (any balance, any currency — see `to_amount`) `asset_purchase` (must be an `other_asset` in the same currency) and `return_on_investment` (the `other_asset` the return came from; any currency, its value is not changed); ≠ `balance_uid`. Not allowed otherwise.
+          description: Required for `transfer` (any balance, any currency — see `to_amount`) `asset_purchase` (must be an `other_asset` in the same currency) and `return_on_investment` (the `other_asset` the return came from; any currency, its value is not changed) and `repay_debt` (a `credit_card` or `other_liability` in the same currency, whose debt goes down); ≠ `balance_uid`. Not allowed otherwise.
         to_amount:
           allOf:
             - $ref: '#/components/schemas/DecimalInput'
@@ -1808,7 +1810,7 @@ components:
             **Required** for expense, income, asset_purchase and return_on_investment (422 "is required
             for an expense", ... when missing, null or ""): an expense category for an expense or
             asset_purchase, an income category for income or return_on_investment. Not allowed for
-            transfers. Transactions saved before this rule may still have `null` until edited.
+            transfers or repay_debt. Transactions saved before this rule may still have `null` until edited.
         spent_at:
           type: string
           format: date-time

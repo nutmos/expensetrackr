@@ -1,6 +1,6 @@
 ---
 name: expensetrackr-api
-description: Use the expensetrackr HTTP JSON API to log expenses, income, transfers (including cross-currency), asset purchases and returns on investment (dividends, interest), check account balances, list or filter transactions, and manage categories in a running expensetrackr server. Use it whenever the user asks to record, look up, correct or delete their money movements or balances in expensetrackr.
+description: Use the expensetrackr HTTP JSON API to log expenses, income, transfers (including cross-currency), asset purchases, returns on investment (dividends, interest) and debt repayments (credit card bills, loan instalments), check account balances, list or filter transactions, and manage categories in a running expensetrackr server. Use it whenever the user asks to record, look up, correct or delete their money movements or balances in expensetrackr.
 ---
 
 # expensetrackr API
@@ -113,12 +113,12 @@ The balances move automatically in the same DB transaction.
 
 | field | rule |
 |---|---|
-| `type` | `expense` (default), `income`, `transfer`, `asset_purchase`, `return_on_investment` |
+| `type` | `expense` (default), `income`, `transfer`, `asset_purchase`, `return_on_investment`, `repay_debt` |
 | `amount` | decimal **string**, > 0, at most the currency's decimals (`"120.50"` THB, `"1500"` JPY); never negative |
 | `currency` | ISO 4217; **must equal the (source) balance's currency** (422 otherwise) |
-| `balance_uid` | expense / asset_purchase / return_on_investment: `payment_account` or `credit_card`; income: `payment_account` or `credit_card` (cash rebate); transfer: any |
-| `to_balance_uid` | transfer (any other balance), asset_purchase (an `other_asset`) and return_on_investment (the `other_asset` it came from; not moved) only |
-| `category_uid` | **required** except on transfers (forbidden there): expense and asset_purchase need an `expense` category, income and return_on_investment an `income` one. If none clearly fits, ask the user |
+| `balance_uid` | expense / asset_purchase / return_on_investment: `payment_account` or `credit_card`; income: `payment_account` or `credit_card` (cash rebate); repay_debt: `payment_account`; transfer: any |
+| `to_balance_uid` | transfer (any other balance), asset_purchase (an `other_asset`) and return_on_investment (the `other_asset` it came from; not moved) and repay_debt (the `credit_card` / `other_liability` paid down) only |
+| `category_uid` | **required** except on transfers and repay_debt (forbidden there): expense and asset_purchase need an `expense` category, income and return_on_investment an `income` one. If none clearly fits, ask the user |
 | `spent_at` | RFC 3339 **with offset**: `2026-10-06T21:06:00+08:00` (no date-only, no naive times) |
 | `note` | optional, ≤ 1000 chars |
 
@@ -138,10 +138,11 @@ curl -sS -b "$JAR" -c "$JAR" -X POST "$BASE/api/transactions" -H 'Content-Type: 
         '{type:"income", amount:"50000", currency:"THB", balance_uid:$b, category_uid:$c, spent_at:"2026-10-01T09:00:00+08:00", note:"Salary"}')" \
   | jq '{uid, type, amount, account}'
 
-# Transfer: pay 5000 THB of the credit card from Wallet (same currency)
+# Repay debt: pay 5000 THB of the credit card from Wallet (same currency, no
+# category; Wallet balance -5000, card debt -5000). A loan (other_liability) works the same.
 curl -sS -b "$JAR" -c "$JAR" -X POST "$BASE/api/transactions" -H 'Content-Type: application/json' \
   -d "$(jq -n --arg b "$WALLET_UID" --arg t "$CARD_UID" \
-        '{type:"transfer", amount:"5000", currency:"THB", balance_uid:$b, to_balance_uid:$t, spent_at:"2026-10-07T22:00:00+08:00"}')" \
+        '{type:"repay_debt", amount:"5000", currency:"THB", balance_uid:$b, to_balance_uid:$t, spent_at:"2026-10-07T22:00:00+08:00"}')" \
   | jq '{uid, type, amount, account, to_account}'
 
 # Asset purchase: laptop bought on the credit card, tracked as an other_asset
@@ -231,11 +232,11 @@ curl -sS -b "$JAR" -c "$JAR" \
   | jq -r '.count, (.transactions[] | [.spent_at, .type, .amount, .currency, .account, .note] | @tsv)'
 ```
 
-Other filters: `category_uid=<uid>`, `type=income|transfer|asset_purchase|return_on_investment|balance_adjustment`.
+Other filters: `category_uid=<uid>`, `type=income|transfer|asset_purchase|return_on_investment|repay_debt|balance_adjustment`.
 `limit` is 1–5000 (default **500**; if `count` equals the limit there may be
 more — narrow the date range). There is no server-side sum: total the
 `amount` strings per currency yourself, count returns on investment as income,
-and exclude transfers, asset purchases and balance adjustments from
+and exclude transfers, asset purchases, debt repayments and balance adjustments from
 spending/income totals. Category names are not
 on transactions; join `category_uid` with `GET /api/categories`.
 

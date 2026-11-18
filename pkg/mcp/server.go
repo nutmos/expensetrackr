@@ -44,13 +44,13 @@ const maxMessageSize = 4 << 20
 
 // instructions is sent to the client in the initialize result; clients
 // usually add it to the model's context.
-const instructions = `Tools for the user's expensetrackr ledger (expenses, income, transfers, asset purchases, returns on investment).
+const instructions = `Tools for the user's expensetrackr ledger (expenses, income, transfers, asset purchases, returns on investment, debt repayments).
 Rules:
 - Never invent amounts, accounts, categories or dates; ask the user when one is missing or ambiguous.
 - Resolve names to uids with list_balances and list_categories; talk to the user in names, not uids.
 - Amounts are decimal strings (e.g. "120.50"); currency must equal the source balance's currency.
 - spent_at and the from/to filters are RFC 3339 with a UTC offset (e.g. 2026-10-06T12:30:00+08:00); ask for the user's offset if unknown.
-- category_uid is required for every type except transfer (expense/asset_purchase: an expense category; income/return_on_investment: an income category).
+- category_uid is required for every type except transfer and repay_debt, where it is not allowed (expense/asset_purchase: an expense category; income/return_on_investment: an income category).
 - balance_adjustment rows are written by the server when a balance is corrected; they cannot be created, edited or deleted here.
 - Confirm with the user before deleting a transaction.`
 

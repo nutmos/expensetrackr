@@ -116,6 +116,7 @@
     transfer: ["payment_account", "credit_card", "other_asset", "other_liability"],
     asset_purchase: ["payment_account", "credit_card"],
     return_on_investment: ["payment_account", "credit_card"],
+    repay_debt: ["payment_account"],
   };
   // Which balance types may be the destination (to_balance_uid).
   const DEST_TYPES = {
@@ -123,26 +124,31 @@
     asset_purchase: ["other_asset"],
     // Link only: the investment the return came from; its value does not change.
     return_on_investment: ["other_asset"],
+    repay_debt: ["credit_card", "other_liability"],
   };
   const DEST_HINT = {
     transfer: "Any balance (e.g. pay a credit card, save to an asset, repay a loan).",
     asset_purchase: "Other assets only (the asset you bought).",
     return_on_investment: "Other assets only (the investment this return is tied to).",
+    repay_debt: "Credit cards and other liabilities (its debt goes down).",
   };
-  const DEST_LABEL = { return_on_investment: "Investment" };
+  const DEST_LABEL = { return_on_investment: "Investment", repay_debt: "Debt repaid" };
   // Category type used by each transaction type (asset purchases use expense
   // categories; returns on investment use income categories).
   const CATEGORY_TYPE = { expense: "expense", income: "income", asset_purchase: "expense", return_on_investment: "income" };
-  const SOURCE_LABEL = { expense: "Payment account", income: "Received into", transfer: "From (source)", asset_purchase: "Paid from", return_on_investment: "Received into" };
+  // Types that never have a category (the server rejects one).
+  const NO_CATEGORY = new Set(["transfer", "repay_debt"]);
+  const SOURCE_LABEL = { expense: "Payment account", income: "Received into", transfer: "From (source)", asset_purchase: "Paid from", return_on_investment: "Received into", repay_debt: "Paid from" };
   const SOURCE_HINT = {
     expense: "Payment accounts and credit cards.",
     income: "Payment accounts and credit cards (e.g. cash rebates).",
     transfer: "Any balance.",
     asset_purchase: "Payment accounts and credit cards.",
     return_on_investment: "Payment accounts and credit cards.",
+    repay_debt: "Payment accounts.",
   };
   // Display names of transaction types (the API uses the lowercase values).
-  const TYPE_LABEL = { expense: "Expense", income: "Income", transfer: "Transfer", asset_purchase: "Asset Purchase", return_on_investment: "Return on Investment", balance_adjustment: "Balance Adjustment" };
+  const TYPE_LABEL = { expense: "Expense", income: "Income", transfer: "Transfer", asset_purchase: "Asset Purchase", return_on_investment: "Return on Investment", repay_debt: "Repay Debt", balance_adjustment: "Balance Adjustment" };
   // Account column text: "from → to"; a return on investment flows from the
   // linked investment into the receiving account.
   function accountText(e) {
@@ -383,12 +389,12 @@
   }
 
   // Category dropdown: only categories of the selected type; hidden for
-  // transfers. Required for every other type (the server reports a missing
-  // one under category_uid).
+  // transfers and debt repayments (NO_CATEGORY). Required for every other
+  // type (the server reports a missing one under category_uid).
   function fillCategories(t, keep) {
     const sel = $("#category_uid");
     const want = keep ?? sel.value;
-    $("#category-field").hidden = t === "transfer";
+    $("#category-field").hidden = NO_CATEGORY.has(t);
     sel.replaceChildren(Object.assign(document.createElement("option"), { value: "", textContent: "Select a category…" }));
     let n = 0;
     for (const c of allCategories) {
@@ -397,7 +403,7 @@
       n++;
     }
     sel.value = want && [...sel.options].some((o) => o.value === want) ? want : "";
-    $("#category-hint").textContent = n || t === "transfer" ? "" : `No ${CATEGORY_TYPE[t]} categories yet; add one first.`;
+    $("#category-hint").textContent = n || NO_CATEGORY.has(t) ? "" : `No ${CATEGORY_TYPE[t]} categories yet; add one first.`;
   }
 
   // ---- Form page: /transactions/new and /transactions/<uid>/edit ------------
@@ -405,9 +411,9 @@
   // Types a new transaction can have (balance_adjustment is recorded only by
   // manual balance edits). /transactions/new without one of these shows the
   // type picker first.
-  const NEW_TYPES = new Set(["expense", "income", "transfer", "asset_purchase", "return_on_investment"]);
+  const NEW_TYPES = new Set(["expense", "income", "transfer", "asset_purchase", "return_on_investment", "repay_debt"]);
   // Form heading for each type on /transactions/new?type=<type>.
-  const NEW_TITLE = { expense: "Add an expense", income: "Add income", transfer: "Add a transfer", asset_purchase: "Add an asset purchase", return_on_investment: "Add a return on investment" };
+  const NEW_TITLE = { expense: "Add an expense", income: "Add income", transfer: "Add a transfer", asset_purchase: "Add an asset purchase", return_on_investment: "Add a return on investment", repay_debt: "Repay a debt" };
 
   // Show the type picker or the form (exactly one).
   function showPicker(on) {
@@ -524,7 +530,7 @@
       note: $("#note").value.trim(),
     };
     if (DEST_TYPES[type]) payload.to_balance_uid = $("#to_balance_uid").value.trim();
-    if (type !== "transfer" && $("#category_uid").value) payload.category_uid = $("#category_uid").value;
+    if (!NO_CATEGORY.has(type) && $("#category_uid").value) payload.category_uid = $("#category_uid").value;
     // Received amount: sent only when typed by the user; otherwise the server
     // converts with the market rate (and keeps a saved conversion on edit if
     // nothing it depends on changed).
@@ -602,7 +608,7 @@
 
   // Per-currency totals of the shown rows, exact via BigInt minor units.
   // Expenses and income are summed separately (returns on investment count as
-  // income); transfers, asset purchases and balance adjustments (manual
+  // income); transfers, asset purchases, debt repayments and balance adjustments (manual
   // corrections, not spending or income) are excluded.
   function renderTotals(items) {
     const sums = new Map(); // currency -> {scale, expense, income}
@@ -621,7 +627,7 @@
     const title = document.createElement("div");
     title.className = "totals-title";
     title.textContent = "Totals of the loaded rows";
-    title.title = "Transfers, asset purchases and balance adjustments are excluded; returns on investment count as received.";
+    title.title = "Transfers, asset purchases, debt repayments and balance adjustments are excluded; returns on investment count as received.";
     totalsEl.append(title);
     for (const [code, { scale, expense, income }] of sums) {
       const row = document.createElement("div");

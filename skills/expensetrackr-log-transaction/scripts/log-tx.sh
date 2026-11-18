@@ -9,9 +9,11 @@
 #   log-tx.sh return_on_investment ACCOUNT_OR_CARD ASSET AMOUNT CURRENCY [options]
 #     (dividend/interest received into ACCOUNT_OR_CARD, linked to ASSET,
 #      an other_asset whose value is not changed)
+#   log-tx.sh repay_debt PAYMENT_ACCOUNT CARD_OR_LIABILITY AMOUNT CURRENCY [options]
+#     (pays down a credit_card / other_liability from a payment_account)
 #
 # Options:
-#   --category NAME       category name, required except for a transfer
+#   --category NAME       category name, required except for transfer and repay_debt
 #                         (expense category for expense and asset_purchase;
 #                         income category for income and return_on_investment)
 #   --at RFC3339          spent_at with offset (required)
@@ -40,6 +42,7 @@ Usage:
   log-tx.sh transfer SOURCE DEST AMOUNT CURRENCY --at RFC3339 [--to-amount A] [--to-currency C] [--note TEXT]
   log-tx.sh asset_purchase SOURCE ASSET AMOUNT CURRENCY --category NAME --at RFC3339 [--note TEXT]
   log-tx.sh return_on_investment ACCOUNT_OR_CARD ASSET AMOUNT CURRENCY --category NAME --at RFC3339 [--note TEXT]
+  log-tx.sh repay_debt PAYMENT_ACCOUNT CARD_OR_LIABILITY AMOUNT CURRENCY --at RFC3339 [--note TEXT]
 EOF
 	exit 2
 }
@@ -51,9 +54,9 @@ command -v curl >/dev/null || die "curl is required"
 TYPE="${1:-}"
 shift || true
 case "$TYPE" in
-expense | income | transfer | asset_purchase | return_on_investment) ;;
+expense | income | transfer | asset_purchase | return_on_investment | repay_debt) ;;
 "" | -h | --help) usage ;;
-*) die "unknown type '$TYPE' (expense|income|transfer|asset_purchase|return_on_investment)" ;;
+*) die "unknown type '$TYPE' (expense|income|transfer|asset_purchase|return_on_investment|repay_debt)" ;;
 esac
 
 SOURCE=""
@@ -66,7 +69,7 @@ expense | income)
 	SOURCE=$1 AMOUNT=$2 CURRENCY=$3
 	shift 3
 	;;
-transfer | asset_purchase | return_on_investment)
+transfer | asset_purchase | return_on_investment | repay_debt)
 	[ $# -ge 4 ] || usage
 	SOURCE=$1 DEST=$2 AMOUNT=$3 CURRENCY=$4
 	shift 4
@@ -111,8 +114,8 @@ done
 
 [ -n "$SPENT_AT" ] || die "--at RFC3339-with-offset is required (e.g. 2026-10-06T12:30:00+08:00)"
 case "$TYPE" in
-transfer)
-	[ -z "$CATEGORY" ] || die "category is not allowed on a transfer"
+transfer | repay_debt)
+	[ -z "$CATEGORY" ] || die "category is not allowed on a $TYPE"
 	;;
 *)
 	[ -n "$CATEGORY" ] || die "--category NAME is required for $TYPE (ask the user which category)"
