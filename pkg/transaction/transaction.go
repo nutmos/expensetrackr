@@ -67,18 +67,15 @@ func IsPayableType(t balance.Type) bool {
 // SourceAllowed reports whether a balance type may be used as balance_uid for
 // a transaction type:
 //   - expense:  payment_account, credit_card (money is spent from it)
-//   - income:   payment_account, other_asset, credit_card (money received /
-//     cash rebate credited back; other_liability stays disallowed)
+//   - income:   payment_account, credit_card (money received / cash rebate
+//     credited back; other_asset and other_liability are not receivers)
 //   - transfer: any balance type (source of the move)
 //   - asset_purchase: payment_account, credit_card (money is spent from it)
 //   - return_on_investment: payment_account, credit_card (the return is
 //     received there; the linked other_asset is not a receiver)
 func SourceAllowed(tt Type, bt balance.Type) bool {
-	if tt == Expense || tt == AssetPurchase || tt == ReturnOnInvestment {
+	if tt == Expense || tt == Income || tt == AssetPurchase || tt == ReturnOnInvestment {
 		return IsPayableType(bt)
-	}
-	if tt == Income {
-		return IsIncomeSourceType(bt)
 	}
 	if tt == Transfer {
 		return bt.Valid()
@@ -86,16 +83,9 @@ func SourceAllowed(tt Type, bt balance.Type) bool {
 	return false
 }
 
-// IsIncomeSourceType reports whether a balance type may receive income
-// (payment accounts, other assets, and credit cards for cash rebates/credits).
-// other_liability is not allowed.
-func IsIncomeSourceType(bt balance.Type) bool {
-	return bt == balance.TypePaymentAccount || bt == balance.TypeOtherAsset || bt == balance.TypeCreditCard
-}
-
 const (
 	errSourceExpense       = "must refer to a payment_account or credit_card balance"
-	errSourceIncome        = "must refer to a payment_account, other_asset or credit_card balance (income)"
+	errSourceIncome        = "must refer to a payment_account or credit_card balance (income)"
 	errSourceAssetPurchase = "must refer to a payment_account or credit_card balance (asset purchase source)"
 	errSourceROI           = "must refer to a payment_account or credit_card balance (return on investment)"
 	errSourceGeneric       = "must refer to an existing balance"

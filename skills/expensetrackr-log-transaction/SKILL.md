@@ -125,7 +125,7 @@ amount). Category names are unique per type.
 | type | when | source `balance_uid` | `to_balance_uid` | category |
 |---|---|---|---|---|
 | `expense` (default if omitted) | spending | `payment_account` or `credit_card` | — | **required**, an `expense` category |
-| `income` | money in / cash rebate | `payment_account`, `other_asset` or `credit_card` | — | **required**, an `income` category |
+| `income` | money in / cash rebate | `payment_account` or `credit_card` | — | **required**, an `income` category |
 | `transfer` | move between own balances (incl. paying a card) | any | any other balance | **not allowed** |
 | `asset_purchase` | buy a tracked asset | `payment_account` or `credit_card` | an `other_asset` | **required**, an `expense` category |
 | `return_on_investment` | dividend / interest from a tracked investment (works like income) | `payment_account` or `credit_card` (received into) | **required**: the `other_asset` it came from (value **not** changed) | **required**, an `income` category |

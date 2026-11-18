@@ -116,7 +116,7 @@ The balances move automatically in the same DB transaction.
 | `type` | `expense` (default), `income`, `transfer`, `asset_purchase`, `return_on_investment` |
 | `amount` | decimal **string**, > 0, at most the currency's decimals (`"120.50"` THB, `"1500"` JPY); never negative |
 | `currency` | ISO 4217; **must equal the (source) balance's currency** (422 otherwise) |
-| `balance_uid` | expense / asset_purchase / return_on_investment: `payment_account` or `credit_card`; income: `payment_account`, `other_asset` or `credit_card` (cash rebate); transfer: any |
+| `balance_uid` | expense / asset_purchase / return_on_investment: `payment_account` or `credit_card`; income: `payment_account` or `credit_card` (cash rebate); transfer: any |
 | `to_balance_uid` | transfer (any other balance), asset_purchase (an `other_asset`) and return_on_investment (the `other_asset` it came from; not moved) only |
 | `category_uid` | **required** except on transfers (forbidden there): expense and asset_purchase need an `expense` category, income and return_on_investment an `income` one. If none clearly fits, ask the user |
 | `spent_at` | RFC 3339 **with offset**: `2026-10-06T21:06:00+08:00` (no date-only, no naive times) |
