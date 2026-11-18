@@ -50,6 +50,11 @@ curl, Python `requests` and similar send neither header, so they pass. A
 browser-like client that adds `Origin` must use the same host spelling as the
 URL (`http://127.0.0.1:8080` ≠ `http://localhost:8080`).
 
+Every response also carries `X-Content-Type-Options: nosniff`,
+`X-Frame-Options: DENY`, `Referrer-Policy: same-origin` and a
+`Content-Security-Policy` (`default-src 'self'`, no framing). They only
+matter to browsers; API clients can ignore them.
+
 ## Conventions
 
 - **uids**: lowercase UUID v4, server-assigned. Path uids that are not

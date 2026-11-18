@@ -54,7 +54,7 @@ type errorBody struct {
 // Router builds the Gin engine with all routes.
 func (s *Server) Router() *gin.Engine {
 	r := gin.New()
-	r.Use(gin.Logger(), gin.Recovery())
+	r.Use(gin.Logger(), gin.Recovery(), securityHeaders)
 	_ = r.SetTrustedProxies(nil)
 	r.Use(csrfGuard)
 

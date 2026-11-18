@@ -23,6 +23,9 @@ info:
     State-changing requests must not be cross-site (`Origin` must match the host and
     `Sec-Fetch-Site` must be `same-origin`/`none` when sent; 403 otherwise) and a request body
     must be `application/json` (415). See docs/auth.md.
+    Every response carries `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+    `Referrer-Policy: same-origin` and a `Content-Security-Policy` (`default-src 'self'`,
+    `frame-ancestors 'none'`; looser for Swagger UI under `/swagger/`).
 
     ## Conventions
 

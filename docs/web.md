@@ -33,6 +33,14 @@ in the binary, and the Swagger UI assets are vendored (`swagger-ui-dist`
 (`pkg/api/openapi_test.go`) fails when a `/api` route is missing from the
 spec, or a spec operation has no route.
 
+**Content Security Policy.** Every response carries a strict CSP
+(`default-src 'self'`, no inline script or style, no framing) plus
+`X-Content-Type-Options`, `X-Frame-Options` and `Referrer-Policy` (see
+[auth.md](auth.md#security-headers)). Keep page code in `/static/*.js` and
+`style.css`: inline `<script>`, `<style>`, `style=""` and `on…=""` attributes
+are blocked. `el.style.x = …` from JS is fine. Swagger UI has its own, looser
+CSP (inline styles and `data:` images).
+
 **Currency dropdowns.** The transaction and balance forms pick the currency
 from a searchable dropdown (the shared `combobox.js`) filled from
 `GET /api/currencies`, so the page offers exactly the codes the server accepts
