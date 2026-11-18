@@ -1,7 +1,7 @@
-:root { --fg: #1d2330; --muted: #6b7280; --border: #d9dee7; --accent: #2563eb; --err: #b91c1c; --bg: #f5f7fb; }
+:root { --fg: #1d2330; --muted: #6b7280; --border: #d9dee7; --accent: #2563eb; --err: #b91c1c; --bg: #f5f7fb; --ok: #15803d; }
 * { box-sizing: border-box; }
 body { margin: 0; font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--fg); background: var(--bg); }
-main { max-width: 980px; margin: 0 auto; padding: 24px 16px 48px; }
+main { max-width: 1080px; margin: 0 auto; padding: 24px 16px 48px; }
 h1 { margin: 0 0 16px; font-size: 1.6rem; }
 h2 { margin: 0 0 12px; font-size: 1.15rem; }
 .card { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 18px; margin-bottom: 20px; }
@@ -15,7 +15,8 @@ input.invalid { border-color: var(--err); }
 .actions { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
 button, a.button { font: inherit; padding: 8px 14px; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: #fff; cursor: pointer; }
 button.secondary, a.button.secondary { background: #fff; color: var(--accent); }
-button.danger { background: #fff; color: var(--err); border-color: var(--err); padding: 4px 10px; font-size: 0.85rem; }
+button.danger { background: #fff; color: var(--err); border-color: var(--border); padding: 4px 10px; font-size: 0.85rem; }
+button.danger:hover:not(:disabled) { border-color: var(--err); background: #fef2f2; filter: none; }
 button:disabled { opacity: 0.6; cursor: default; }
 select:disabled { opacity: 0.7; cursor: not-allowed; background: var(--bg); }
 #form-status.ok { color: #15803d; }
@@ -31,7 +32,7 @@ th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--bor
 th { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 td.time { white-space: nowrap; font-variant-numeric: tabular-nums; }
-td.note { color: var(--muted); max-width: 280px; overflow-wrap: anywhere; }
+td.note { color: var(--muted); min-width: 10em; max-width: 280px; overflow-wrap: break-word; }
 #totals { margin-top: 10px; }
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field-label { font-weight: 600; font-size: 0.9rem; }
@@ -151,3 +152,65 @@ td.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-spa
 .type-choice:hover, .type-choice:focus-visible { border-color: var(--accent); background: #eff4ff; outline: none; }
 .type-choice strong { font-size: 1rem; }
 .type-choice .muted { font-size: 0.85rem; }
+
+/* ---- UI polish -------------------------------------------------------- */
+a { color: var(--accent); }
+a:not(.button):not(.tab):not(.type-choice):hover { text-decoration-thickness: 2px; }
+select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+select.invalid { border-color: var(--err); }
+/* Amounts: money in is green; expenses stay in the normal text colour. */
+.amt-income, .amt-return_on_investment { color: var(--ok); }
+td.num { white-space: nowrap; }
+td.acct, td.cat { min-width: 7em; }
+/* Totals under the transaction list: one line per currency. */
+.totals { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 4px; }
+.totals:empty { display: none; }
+.totals-title { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); font-weight: 600; cursor: help; }
+.totals-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 20px; font-variant-numeric: tabular-nums; }
+.totals-cur { min-width: 5.5em; font-weight: 600; }
+/* Balance groups: the same column widths in every group, so the tables line up. */
+.balance-table { table-layout: fixed; min-width: 640px; }
+.balance-table .col-name { width: 24%; }
+.balance-table .col-cur { width: 11%; }
+.balance-table th.num { width: 13%; }
+.balance-table .col-actions { width: 140px; }
+.balance-table td { overflow-wrap: break-word; }
+
+@media (max-width: 640px) {
+  main { padding: 16px 12px 40px; }
+  h1 { font-size: 1.3rem; }
+  .app-header { margin-bottom: 10px; }
+  .user-bar { font-size: 0.9rem; }
+  .user-bar button { padding: 5px 10px; }
+  /* Tabs scroll sideways instead of wrapping. */
+  .tabs { overflow-x: auto; scrollbar-width: none; margin-left: -12px; margin-right: -12px; padding: 0 12px; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab { padding: 8px 12px; white-space: nowrap; }
+  .card { padding: 14px; border-radius: 8px; }
+  .list-header h2 { flex: 1; }
+  .list-header .filters { order: 1; width: 100%; }
+  .filters label { flex: 1 1 40%; }
+  .filters input, .filters select { width: 100%; }
+  /* Transaction cards: Edit/Delete sit at the right, beside category and note. */
+  #transaction-table tr { grid-template-areas: "time amount" "type amount" "acct cur" "cat actions" "note actions"; }
+  #transaction-table td.actions-cell { margin-top: 0; align-self: end; text-align: right; }
+  #transaction-table td.acct, #transaction-table td.cat { min-width: 0; }
+  #transaction-table td.note { min-width: 0; }
+  /* Balance rows become cards: name and currency left, amounts right. */
+  .balance-table { min-width: 0; table-layout: auto; }
+  .balance-table thead { display: none; }
+  .balance-table, .balance-table tbody { display: block; }
+  .balance-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .balance-table td { border: 0; padding: 1px 0; }
+  .balance-table td:nth-child(1) { grid-column: 1; grid-row: 1; font-weight: 600; }
+  .balance-table td:nth-child(2) { grid-column: 1; grid-row: 2; color: var(--muted); font-size: 0.85rem; }
+  .balance-table td.num { grid-column: 2; }
+  .balance-table td.num:nth-child(3) { grid-row: 1; font-weight: 600; }
+  .balance-table td.num:nth-child(4) { grid-row: 2; font-size: 0.85rem; }
+  .balance-table td.num:nth-child(5) { grid-row: 3; font-size: 0.85rem; }
+  .balance-table[data-type="credit_card"] td.num::before, .balance-table[data-type="other_liability"] td.num::before { content: attr(data-label) " "; color: var(--muted); font-weight: 400; font-size: 0.8rem; }
+  .balance-table td.note { display: none; }
+  .balance-table td.actions-cell { grid-column: 1; grid-row: 3; margin-top: 6px; }
+  th, td { padding: 8px 6px; }
+}

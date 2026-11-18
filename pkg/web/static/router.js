@@ -259,8 +259,20 @@
     setCurrency(sel, keep);
   }
 
+  // "3361.50" -> "3,361.50" in the viewer's locale (display only; keeps the
+  // API's digits and scale). Signs (-, +, −) are kept. Empty stays empty.
+  function fmtAmount(v) {
+    const s = String(v ?? "").trim();
+    if (!s) return s;
+    const m = /^([+\-\u2212]?)(\d+(?:\.\d+)?)$/.exec(s);
+    if (!m) return s;
+    const scale = (m[2].split(".")[1] || "").length;
+    const opts = { minimumFractionDigits: scale, maximumFractionDigits: scale };
+    try { return m[1] + new Intl.NumberFormat(undefined, opts).format(m[2]); } catch (_) { return s; }
+  }
+
   window.App = {
-    loadCurrencies, currencyText, setCurrency, fillCurrencySelect,
+    loadCurrencies, currencyText, setCurrency, fillCurrencySelect, fmtAmount,
     $, cell, button, link, clearErrors, showFieldErrors, setStatus,
     setFlash, takeFlash, route, navigate, returnToList, replaceQuery, ifMatch, showConflict, hideConflict,
     isUUID: (s) => UUID_RE.test(s),
