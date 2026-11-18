@@ -73,7 +73,7 @@ only on validation and conflict errors.
 | GET    | `/api/healthz`       | 200 `{"status":"ok"}` | |
 | GET    | `/api/openapi.yaml`  | 200 the OpenAPI 3.0 document | Hand-written spec, embedded in the binary |
 | GET    | `/api/openapi.json`  | 200 the same document as JSON | |
-| GET    | `/swagger/`, `/swagger` | Swagger UI (HTML) | `/swagger` redirects to `/swagger/`. Assets are vendored and embedded (offline; no CDN) |
+| GET    | `/swagger/`, `/swagger` | Swagger UI (HTML) | `/swagger` redirects to `/swagger/`. Assets are vendored and embedded (offline; no CDN). Own, looser CSP (inline styles, `data:` images) |
 | GET    | `/`, `/transactions`, `/balances`, `/categories`, `/settings` | HTML page (list) | Same `index.html` for every page path; the client-side router picks the view. Static assets under `/static/` |
 | GET    | `/favicon.ico` | 204 | No icon; answered so browsers do not log a 404 |
 | GET    | `/<res>/new`, `/<res>/:uid/edit` | HTML page (add / edit form) | `<res>` = `transactions`, `balances` or `categories`. `:uid` must be UUID-shaped (any case), else 404; an unknown uid is reported by the page itself. Other paths → 404 JSON |

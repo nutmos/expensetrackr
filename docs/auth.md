@@ -17,6 +17,7 @@ in the flow (the `users.email` column stays, optional). SSO (Apple / Google via
 | Registration | Open only on **first run** (no user has a password yet). Afterwards only a logged-in user can register more accounts (403 `registration_closed` otherwise). |
 | Brute force | In-memory throttle per *username + client IP*: 5 failures within 15 minutes → 429 with `Retry-After` for 5 minutes. Reset on success and on restart. |
 | CSRF | Origin / `Sec-Fetch-Site` check + JSON-only request bodies (see below). |
+| Security headers | Every response: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: same-origin` and a strict `Content-Security-Policy` (see "Security headers"). |
 | API tokens | `Authorization: Bearer ext_...` for scripts and agents; hash-only storage, `read`/`write` scopes, session-only token management (see "API tokens"). |
 
 ## Endpoints (`/api/auth`)
@@ -63,6 +64,28 @@ Requests with an `Authorization: Bearer` token skip steps 1–2 (see "CSRF and
 Bearer requests").
 `SameSite=Lax` on the cookie is a further layer. The login endpoint is guarded
 too (prevents login CSRF).
+
+## Security headers
+
+`securityHeaders` (`pkg/api/headers.go`, issue #82) sets these on **every**
+response — pages, static files, JSON and errors:
+
+| Header | Value | Why |
+|--------|-------|-----|
+| `X-Content-Type-Options` | `nosniff` | No MIME sniffing of JSON or assets |
+| `X-Frame-Options` | `DENY` | No framing by any site (clickjacking); CSP `frame-ancestors 'none'` says the same for modern browsers |
+| `Referrer-Policy` | `same-origin` | Page URLs are never sent to other sites (e.g. the Frankfurter link) |
+| `Content-Security-Policy` | `default-src 'self'; base-uri 'none'; object-src 'none'; form-action 'self'; frame-ancestors 'none'` | Second layer against XSS: only same-origin scripts, styles, images and `fetch`; no inline script or style, no `eval` |
+
+The web app keeps to that policy: no inline `<script>`/`<style>` or `style=""`
+attributes, all JS and CSS under `/static/`, user data rendered with
+`textContent`. Anything that needs an inline script or style breaks under
+this CSP and must move into a static file instead.
+
+Swagger UI (`/swagger/…`) replaces the CSP with
+`apidoc.UIContentSecurityPolicy`, which additionally allows inline styles
+(`style-src 'self' 'unsafe-inline'`) and `data:` images, as the vendored
+bundle needs both. Scripts there are still same-origin only.
 
 ## Table `sessions`
 

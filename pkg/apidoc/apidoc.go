@@ -28,6 +28,12 @@ const SwaggerUIVersion = "5.33.1"
 // UIPath is where Swagger UI is mounted.
 const UIPath = "/swagger"
 
+// UIContentSecurityPolicy is the CSP for everything under /swagger/. It
+// replaces the app's stricter policy because Swagger UI needs inline styles
+// (our index.html <style> block and the bundle's style attributes) and
+// data: images (icons in swagger-ui.css). Scripts stay same-origin only.
+const UIContentSecurityPolicy = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; object-src 'none'; form-action 'self'; frame-ancestors 'none'"
+
 //go:embed openapi.yaml
 var specYAML []byte
 
@@ -90,6 +96,7 @@ func RegisterUI(r gin.IRoutes) {
 		c.Redirect(http.StatusMovedPermanently, UIPath+"/")
 	})
 	r.GET(UIPath+"/*filepath", func(c *gin.Context) {
+		c.Header("Content-Security-Policy", UIContentSecurityPolicy)
 		name := strings.TrimPrefix(path.Clean(c.Param("filepath")), "/")
 		if name == "" || name == "." {
 			name = "index.html"
