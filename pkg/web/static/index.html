@@ -71,6 +71,7 @@
               <option value="transfer">Transfer</option>
               <option value="asset_purchase">Asset Purchase</option>
               <option value="return_on_investment">Return on Investment</option>
+              <option value="repay_debt">Repay Debt</option>
               <option value="balance_adjustment">Balance Adjustment</option>
             </select>
           </label>
@@ -115,6 +116,7 @@
           <a class="type-choice" href="/transactions/new?type=transfer"><strong>Transfer</strong><span class="muted">Move money between your balances, or pay off a card</span></a>
           <a class="type-choice" href="/transactions/new?type=asset_purchase"><strong>Asset Purchase</strong><span class="muted">Buy something you keep as an asset, like a laptop</span></a>
           <a class="type-choice" href="/transactions/new?type=return_on_investment"><strong>Return on Investment</strong><span class="muted">Dividends, interest or other investment returns</span></a>
+          <a class="type-choice" href="/transactions/new?type=repay_debt"><strong>Repay Debt</strong><span class="muted">Pay down a credit card or loan from an account</span></a>
         </div>
       </div>
       <h2 id="form-title">Add a transaction</h2>
@@ -135,6 +137,7 @@
               <option value="transfer">Transfer</option>
               <option value="asset_purchase">Asset Purchase</option>
               <option value="return_on_investment">Return on Investment</option>
+              <option value="repay_debt">Repay Debt</option>
             </select>
             <small class="err" data-for="type"></small>
           </label>
@@ -179,7 +182,7 @@
           <input id="note" name="note" type="text" maxlength="1000" placeholder="Lunch with team">
           <small class="err" data-for="note"></small>
         </label>
-        <p class="muted small" id="auto-adjust-note">Saving updates the selected balance(s) automatically: an expense lowers an account’s balance or raises a card’s debt, income raises a balance, a transfer moves the amount from source to destination, an asset purchase pays like an expense and raises the asset’s value. The currency must match the (source) balance’s currency; a transfer between balances in different currencies credits the received amount, converted at the ECB reference rate from <a href="https://frankfurter.dev" target="_blank" rel="noopener">Frankfurter</a> unless you type it yourself.</p>
+        <p class="muted small" id="auto-adjust-note">Saving updates the selected balance(s) automatically: an expense lowers an account’s balance or raises a card’s debt, income raises a balance, a transfer moves the amount from source to destination, an asset purchase pays like an expense and raises the asset’s value, a debt repayment lowers the account’s balance and the card’s or loan’s debt. The currency must match the (source) balance’s currency; a transfer between balances in different currencies credits the received amount, converted at the ECB reference rate from <a href="https://frankfurter.dev" target="_blank" rel="noopener">Frankfurter</a> unless you type it yourself.</p>
         <div class="conflict" id="conflict" role="alert" hidden>
           <p class="conflict-msg"></p>
           <button type="button" class="conflict-reload">Reload latest transaction</button>

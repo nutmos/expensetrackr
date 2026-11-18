@@ -143,20 +143,20 @@ func decimalSchema(desc string) map[string]any {
 	return map[string]any{"type": []string{"string", "number"}, "description": desc}
 }
 
-var writableTypes = []string{"expense", "income", "transfer", "asset_purchase", "return_on_investment"}
+var writableTypes = []string{"expense", "income", "transfer", "asset_purchase", "return_on_investment", "repay_debt"}
 
 const (
 	descAmount     = `Amount as a decimal string, > 0, with at most the currency's minor digits, e.g. "120.50" (THB), "1500" (JPY). Never negative: the type gives the direction.`
 	descCurrency   = "ISO 4217 code, e.g. THB. Must equal the currency of the source balance (balance_uid)."
-	descBalance    = "uid of the source balance: the paying balance (expense, asset_purchase), receiving balance (income, return_on_investment) or the balance money leaves (transfer). From list_balances."
-	descToBalance  = "uid of the destination balance. Required for transfer (any other balance), asset_purchase (an other_asset) and return_on_investment (the other_asset the return came from; its value is not changed). Not allowed otherwise."
-	descCategory   = "uid of the category, from list_categories. Required for every type except transfer (not allowed there): an expense category for expense and asset_purchase, an income category for income and return_on_investment."
+	descBalance    = "uid of the source balance: the paying balance (expense, asset_purchase), receiving balance (income, return_on_investment) or the balance money leaves (transfer; repay_debt: a payment_account). From list_balances."
+	descToBalance  = "uid of the destination balance. Required for transfer (any other balance), asset_purchase (an other_asset) and return_on_investment (the other_asset the return came from; its value is not changed) and repay_debt (the credit_card or other_liability being paid down). Not allowed otherwise."
+	descCategory   = "uid of the category, from list_categories. Required for every type except transfer and repay_debt (not allowed there): an expense category for expense and asset_purchase, an income category for income and return_on_investment."
 	descSpentAt    = "When it happened: RFC 3339 with a UTC offset, e.g. 2026-10-06T12:30:00+08:00. Use the user's offset; ask if unknown."
 	descNote       = "Optional free text, at most 1000 characters."
 	descToAmount   = "Transfer only: the amount received by the destination, in its currency. Same currency: omit (or equal amount). Cross-currency: the amount the user says was received (manual rate); omit to convert at the ECB rate of the spent_at date. Never invent it."
 	descToCurrency = "Transfer only, optional: must equal the destination balance's currency."
 	descImportRef  = "Optional idempotency key (at most 200 characters, unique per balance), e.g. a bank statement line id. Usually omit."
-	descType       = "Transaction type. expense (spending), income (money in), transfer (between the user's own balances, incl. paying a credit card), asset_purchase (buying a tracked asset), return_on_investment (dividend/interest from a tracked asset)."
+	descType       = "Transaction type. expense (spending), income (money in), transfer (between the user's own balances, incl. paying a credit card), asset_purchase (buying a tracked asset), return_on_investment (dividend/interest from a tracked asset), repay_debt (paying down a credit card or loan from a payment account)."
 )
 
 // ---- list_balances ----------------------------------------------------------
@@ -489,10 +489,10 @@ func mergeUpdate(cur map[string]any, changes map[string]string) (map[string]stri
 	typ := strings.ToLower(strings.TrimSpace(body["type"]))
 	_, explicitTo := changes["to_balance_uid"]
 	_, explicitCat := changes["category_uid"]
-	if typ != "transfer" && typ != "asset_purchase" && typ != "return_on_investment" && !explicitTo {
+	if typ != "transfer" && typ != "asset_purchase" && typ != "return_on_investment" && typ != "repay_debt" && !explicitTo {
 		delete(body, "to_balance_uid")
 	}
-	if typ == "transfer" && !explicitCat {
+	if (typ == "transfer" || typ == "repay_debt") && !explicitCat {
 		delete(body, "category_uid")
 	}
 

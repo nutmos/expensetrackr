@@ -27,14 +27,19 @@ func rawDB(t *testing.T, url string) *sql.DB {
 	return db
 }
 
-// schemaObjects lists the tables and indexes of the current schema of the
-// database at url, as "table <name>" / "index <name>" -> definition.
+// schemaObjects lists the tables, indexes and CHECK constraints of the
+// current schema of the database at url, as "table <name>" / "index <name>" /
+// "check <table>.<name>" -> definition.
 func schemaObjects(t *testing.T, url string) map[string]string {
 	t.Helper()
 	rows, err := rawDB(t, url).Query(`
 		SELECT 'table ' || tablename, '' FROM pg_tables WHERE schemaname = current_schema()
 		UNION ALL
-		SELECT 'index ' || indexname, indexdef FROM pg_indexes WHERE schemaname = current_schema()`)
+		SELECT 'index ' || indexname, indexdef FROM pg_indexes WHERE schemaname = current_schema()
+		UNION ALL
+		SELECT 'check ' || cl.relname || '.' || co.conname, pg_get_constraintdef(co.oid)
+		FROM pg_constraint co JOIN pg_class cl ON cl.oid = co.conrelid
+		WHERE co.contype = 'c' AND cl.relnamespace = current_schema()::regnamespace`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,8 +108,8 @@ func TestFreshDatabaseGetsBaseline(t *testing.T) {
 	}
 	st.Close()
 
-	if SchemaVersion != 2 {
-		t.Errorf("SchemaVersion = %d, want 2", SchemaVersion)
+	if SchemaVersion != 3 {
+		t.Errorf("SchemaVersion = %d, want 3", SchemaVersion)
 	}
 	if v := schemaVersion(t, url); v != SchemaVersion {
 		t.Errorf("schema version = %d, want %d", v, SchemaVersion)
@@ -211,8 +216,8 @@ func TestMigrateV1ToV2(t *testing.T) {
 		t.Fatalf("open v1: %v", err)
 	}
 	defer st.Close()
-	if v := schemaVersion(t, url); v != 2 {
-		t.Errorf("schema version after upgrade = %d, want 2", v)
+	if v := schemaVersion(t, url); v != SchemaVersion {
+		t.Errorf("schema version after upgrade = %d, want %d", v, SchemaVersion)
 	}
 	list, err := st.ListBalances(ctx, owner, "")
 	if err != nil || len(list) != 1 || list[0].Name != "Cash" {

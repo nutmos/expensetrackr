@@ -189,6 +189,7 @@ Balance effects (automatic):
 | transfer | asset −amount / liability debt +amount | asset +to_amount / liability debt −to_amount (card payment, loan repayment) |
 | asset_purchase | like expense | `other_asset` +amount (same currency required) |
 | return_on_investment | like income (account +amount / card debt −amount) | linked `other_asset`: unchanged (any currency) |
+| repay_debt | `payment_account` −amount | `credit_card` / `other_liability` debt −amount (same currency required; no category) |
 | balance_adjustment | none (server-created record of a manual edit) | – |
 
 `adjusts_balances` is `false` for rows created before automatic balances
@@ -199,7 +200,7 @@ existed; editing/deleting those doesn't move balances.
 | param | meaning |
 |---|---|
 | `from`, `to` | RFC 3339 with offset, inclusive; encode `+` as `%2B` (a raw `+` also works) |
-| `type` | `expense`, `income`, `transfer`, `asset_purchase`, `return_on_investment`, `balance_adjustment` |
+| `type` | `expense`, `income`, `transfer`, `asset_purchase`, `return_on_investment`, `repay_debt`, `balance_adjustment` |
 | `category_uid` | one category |
 | `limit` | 1–5000, default 500 |
 
@@ -230,11 +231,11 @@ curl -sS -b "$JAR" -c "$JAR" "$BASE/api/transactions?type=expense" \
 Same body rules as POST, plus the version (SKILL.md "Edit"). Notes:
 
 - Omitted optional fields are cleared: `note`, `to_balance_uid`. Always send
-  `category_uid` (required except on transfers). Omitted `type` means
+  `category_uid` (required except on transfers and repay_debt). Omitted `type` means
   `expense`, so always send `type`.
-- Changing `type` away from transfer/asset_purchase/return_on_investment: drop `to_balance_uid`;
+- Changing `type` away from transfer/asset_purchase/return_on_investment/repay_debt: drop `to_balance_uid`;
   to expense/income: replace `category_uid` with one of the new type; to a
-  transfer: drop it.
+  transfer or repay_debt: drop it.
 - Cross-currency transfer: omitting `to_amount` keeps the stored conversion if
   amount, currency, both balances and the `spent_at` date are unchanged;
   otherwise the rate is fetched again. Sending `to_amount` makes it manual.
@@ -312,7 +313,7 @@ Real responses (from a test server):
 ```text
 400 {"error":"unknown field \"amount_minor\""}
 400 {"error":"uid must be a UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)"}
-400 {"error":"invalid query parameters","fields":{"type":"must be one of: expense, income, transfer, asset_purchase, return_on_investment, balance_adjustment"}}
+400 {"error":"invalid query parameters","fields":{"type":"must be one of: expense, income, transfer, asset_purchase, return_on_investment, repay_debt, balance_adjustment"}}
 401 {"error":"authentication required","code":"unauthenticated"}
 403 {"error":"cross-origin request rejected","code":"csrf"}
 404 {"error":"transaction not found"}

@@ -42,7 +42,7 @@ func ParseType(s string) (Type, bool) {
 	switch t := normalizeType(s); t {
 	case "":
 		return Expense, true
-	case Expense, Income, Transfer, AssetPurchase, ReturnOnInvestment:
+	case Expense, Income, Transfer, AssetPurchase, ReturnOnInvestment, RepayDebt:
 		return t, true
 	}
 	return "", false
@@ -52,7 +52,7 @@ func ParseType(s string) (Type, bool) {
 // balance_adjustment. Empty is not valid here (the caller skips the filter).
 func ParseFilterType(s string) (Type, bool) {
 	switch t := normalizeType(s); t {
-	case Expense, Income, Transfer, AssetPurchase, ReturnOnInvestment, BalanceAdjustment:
+	case Expense, Income, Transfer, AssetPurchase, ReturnOnInvestment, RepayDebt, BalanceAdjustment:
 		return t, true
 	}
 	return "", false
@@ -73,7 +73,11 @@ func IsPayableType(t balance.Type) bool {
 //   - asset_purchase: payment_account, credit_card (money is spent from it)
 //   - return_on_investment: payment_account, credit_card (the return is
 //     received there; the linked other_asset is not a receiver)
+//   - repay_debt: payment_account only (the money that pays the debt)
 func SourceAllowed(tt Type, bt balance.Type) bool {
+	if tt == RepayDebt {
+		return bt == balance.TypePaymentAccount
+	}
 	if tt == Expense || tt == Income || tt == AssetPurchase || tt == ReturnOnInvestment {
 		return IsPayableType(bt)
 	}
@@ -88,6 +92,7 @@ const (
 	errSourceIncome        = "must refer to a payment_account or credit_card balance (income)"
 	errSourceAssetPurchase = "must refer to a payment_account or credit_card balance (asset purchase source)"
 	errSourceROI           = "must refer to a payment_account or credit_card balance (return on investment)"
+	errSourceRepayDebt     = "must refer to a payment_account balance (the account the repayment is paid from)"
 	errSourceGeneric       = "must refer to an existing balance"
 )
 
@@ -104,19 +109,25 @@ func sourceRule(tt Type) string {
 	if tt == ReturnOnInvestment {
 		return errSourceROI
 	}
+	if tt == RepayDebt {
+		return errSourceRepayDebt
+	}
 	return errSourceGeneric
 }
 
 // DestinationAllowed reports whether a balance type may be used as
 // to_balance_uid: any type for a transfer (e.g. paying a credit card, saving
 // into an other asset, repaying a loan), only other_asset for an asset
-// purchase and for the investment a return on investment is tied to.
+// purchase and for the investment a return on investment is tied to, and
+// only a liability (credit_card, other_liability) for a debt repayment.
 func DestinationAllowed(tt Type, bt balance.Type) bool {
 	switch tt {
 	case Transfer:
 		return bt.Valid()
 	case AssetPurchase, ReturnOnInvestment:
 		return bt == balance.TypeOtherAsset
+	case RepayDebt:
+		return bt == balance.TypeCreditCard || bt == balance.TypeOtherLiability
 	}
 	return false
 }
@@ -153,7 +164,7 @@ func (in CreateInput) Validate() (Transaction, error) {
 	if normalizeType(in.Type) == BalanceAdjustment {
 		fields["type"] = ErrAdjustmentType
 	} else if !okType {
-		fields["type"] = "must be one of: expense, income, transfer, asset_purchase, return_on_investment"
+		fields["type"] = "must be one of: expense, income, transfer, asset_purchase, return_on_investment, repay_debt"
 	}
 	exp.Type = tt
 
@@ -171,7 +182,7 @@ func (in CreateInput) Validate() (Transaction, error) {
 	if !okType { // Do Nothing
 	} else if !tt.HasDestination() {
 		if to != "" {
-			fields["to_balance_uid"] = "is only allowed when type is transfer, asset_purchase or return_on_investment"
+			fields["to_balance_uid"] = "is only allowed when type is transfer, asset_purchase, return_on_investment or repay_debt"
 		}
 	} else if to == "" {
 		fields["to_balance_uid"] = "is required for a " + strings.ReplaceAll(string(tt), "_", " ")
@@ -183,15 +194,15 @@ func (in CreateInput) Validate() (Transaction, error) {
 		exp.ToBalanceUID = &to
 	}
 
-	// A category is required for every type but transfer (balance
-	// adjustments never come through here).
+	// A category is required for every type but transfer and repay_debt,
+	// where it is not allowed (balance adjustments never come through here).
 	cat := common_type.NormalizeUID(in.CategoryUID)
 	if cat == "" {
 		if okType && tt.NeedsCategory() {
 			fields["category_uid"] = "is required for " + article(tt) + " " + strings.ReplaceAll(string(tt), "_", " ")
 		}
-	} else if okType && tt == Transfer {
-		fields["category_uid"] = "is not allowed for a transfer"
+	} else if okType && !tt.NeedsCategory() {
+		fields["category_uid"] = "is not allowed for " + article(tt) + " " + strings.ReplaceAll(string(tt), "_", " ")
 	} else if !cat.Valid() {
 		fields["category_uid"] = "must be a UUID (the uid of a category)"
 	} else {
@@ -261,6 +272,7 @@ func (e *Transaction) AttachPaymentBalance(b balance.Balance) error {
 const (
 	errDestAssetPurchase = "must refer to an other_asset balance (asset purchase destination)"
 	errDestROI           = "must refer to an other_asset balance (the investment this return is tied to)"
+	errDestRepayDebt     = "must refer to a credit_card or other_liability balance (the debt being repaid)"
 	errDestGeneric       = "must refer to an existing balance"
 )
 
@@ -272,6 +284,9 @@ func destinationRule(tt Type) string {
 	if tt == ReturnOnInvestment {
 		return errDestROI
 	}
+	if tt == RepayDebt {
+		return errDestRepayDebt
+	}
 	return errDestGeneric
 }
 
@@ -279,7 +294,7 @@ func destinationRule(tt Type) string {
 // e.Type (see DestinationAllowed) and sets the destination snapshot.
 func (e *Transaction) AttachDestinationBalance(b balance.Balance) error {
 	if !e.Type.HasDestination() || e.ToBalanceUID == nil {
-		return fieldError("to_balance_uid", "is only allowed when type is transfer, asset_purchase or return_on_investment")
+		return fieldError("to_balance_uid", "is only allowed when type is transfer, asset_purchase, return_on_investment or repay_debt")
 	}
 	if b.UID == "" || !e.ToBalanceUID.Matches(b.UID.String()) {
 		return fieldError("to_balance_uid", "does not match any balance")
@@ -293,10 +308,11 @@ func (e *Transaction) AttachDestinationBalance(b balance.Balance) error {
 }
 
 // NeedsCategory reports whether a new or edited transaction of this type must
-// have a category: every type except transfer and balance_adjustment.
-// Transactions saved before categories were required may still have none.
+// have a category: every type except transfer, repay_debt and
+// balance_adjustment (which may not have one). Transactions saved before
+// categories were required may still have none.
 func (t Type) NeedsCategory() bool {
-	return t != Transfer && t != BalanceAdjustment
+	return t != Transfer && t != RepayDebt && t != BalanceAdjustment
 }
 
 // article is "an" before the vowel-initial type names, else "a".
