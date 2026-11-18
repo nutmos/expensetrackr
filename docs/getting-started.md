@@ -8,7 +8,7 @@ flags, and the local Postgres used for development.
 ## Requirements
 
 - Go 1.26+ (`go.mod` sets the minimum `go 1.26.0` and the toolchain
-  `go1.27.3`, which CI installs through `actions/setup-go`). Keep your local Go on the latest patch release:
+  `go1.27.4`, which CI installs through `actions/setup-go`). Keep your local Go on the latest patch release:
   `make vulncheck` reports standard-library vulnerabilities of the Go you build
   with
 - No CGO (`CGO_ENABLED=0` works)

@@ -11,7 +11,7 @@
 # for the target (TARGETOS/TARGETARCH, set by BuildKit), so a multi-platform
 # build (.github/workflows/publish-image.yml: linux/amd64 + linux/arm64)
 # compiles natively instead of under emulation.
-FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.4-alpine AS build
 ARG TARGETOS TARGETARCH
 WORKDIR /src
 ENV CGO_ENABLED=0 GOTOOLCHAIN=local
