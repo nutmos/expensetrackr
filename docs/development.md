@@ -18,6 +18,7 @@ Dockerfile       server image (multi-stage: Go build -> small Alpine, non-root)
 compose.yaml     local stack: Postgres ("db") + the server ("app")
 dev/             files for the local stack (Postgres init script)
 cmd/server/      the expense-server binary (main package)
+cmd/mcp/         the expense-mcp binary: MCP server (stdio) for LLM clients
 pkg/             library packages (api, store, transaction, balance, category, user,
                  money, validate), pkg/web (embedded web page) and pkg/apidoc
                  (embedded OpenAPI spec + offline Swagger UI)
@@ -44,6 +45,7 @@ make test         # go test ./...
 | Target      | Does                                                        |
 |-------------|-------------------------------------------------------------|
 | `build`     | `go build -o bin/expense-server ./cmd/server`               |
+| `build-mcp` | `go build -o bin/expense-mcp ./cmd/mcp` (MCP server, [docs/mcp.md](mcp.md)) |
 | `run`       | `build`, then `./bin/expense-server -addr $(ADDR)` against `EXPENSE_DATABASE_URL` (default: the local Postgres) |
 | `test`      | `go test ./...`                                             |
 | `test-race` | `go test -race ./...` with `CGO_ENABLED=1` (needs a C compiler) |
@@ -136,6 +138,10 @@ pkg/api/                           Gin routes and handlers
   users.go                         /api/users routes (+ read-only /identities)
   pages.go                         web page routes (list / new / edit paths → index.html)
   *_test.go                        handler tests (throwaway DB per test)
+pkg/mcp/                           MCP server over stdio, a client of the HTTP API (docs/mcp.md)
+  server.go                        JSON-RPC 2.0 loop: initialize, ping, tools/list, tools/call
+  client.go                        HTTP client (Bearer token, If-Match, API errors with hints)
+  tools.go                         the tools: list balances / categories / transactions, get, create, update (partial), delete
 pkg/web/embed.go                   embeds web/static into the binary
 pkg/web/static/                    index.html (all views), style.css, router.js (history router + shared helpers),
                                    transactions.js, balances.js, categories.js (list + form page each), settings.js

@@ -3,6 +3,9 @@
 [← Back to the README](../README.md) · [All docs](README.md)
 
 Agent skills shipped in [`skills/`](../skills) and how agents authenticate.
+For MCP clients (Claude Desktop, Claude Code, Cursor, ...) there is also an
+MCP server with tools to list, get, create, update and delete transactions:
+see [MCP server](mcp.md).
 
 [`skills/expensetrackr-api/`](../skills/expensetrackr-api/SKILL.md) is an agent
 skill (the `SKILL.md` convention used by Claude Agent Skills, Cursor and
