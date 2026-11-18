@@ -139,5 +139,13 @@ confirmations use human labels instead. For example, an edit page is titled
 - **Delete** of a category still used by transactions shows the 409 message
   on the list.
 
+**Display.** Amounts on the lists and totals use the viewer's locale for
+thousands separators (e.g. `141,200.00`); the digits and scale are the API's,
+and forms and API calls use plain numbers. Income and return-on-investment
+amounts are green. The transaction totals show one line per currency
+("Spent … Received …"). Balance groups share column widths, so their tables
+line up. On narrow screens (≤ 640 px) the tabs scroll sideways, and both
+transactions and balances show as compact cards instead of wide tables.
+
 User data is only inserted with `textContent` / input `.value` (never
 `innerHTML`), so HTML in notes or names is shown as text.

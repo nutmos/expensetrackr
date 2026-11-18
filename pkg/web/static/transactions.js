@@ -11,6 +11,7 @@
   const tbody = $("#transaction-table tbody");
   const listStatus = $("#list-status");
   const totalsEl = $("#totals");
+  const fmtAmount = App.fmtAmount;
   const loadMoreBtn = $("#tx-load-more");
   // The list loads PAGE_SIZE rows at a time; "Load more" fetches the next
   // page with the API's next_cursor (issue #86).
@@ -614,11 +615,35 @@
       cur[kind] += BigInt(e.amount_minor);
       sums.set(e.currency, cur);
     }
-    const parts = [];
+    // One line per currency: "🇹🇭 THB  Spent 8,680.00  Received 66,200.00".
+    totalsEl.replaceChildren();
+    if (!sums.size) return;
+    const title = document.createElement("div");
+    title.className = "totals-title";
+    title.textContent = "Totals of the loaded rows";
+    title.title = "Transfers, asset purchases and balance adjustments are excluded; returns on investment count as received.";
+    totalsEl.append(title);
     for (const [code, { scale, expense, income }] of sums) {
-      parts.push(`${App.currencyText(code)}: expenses ${formatMinor(expense, scale)}, income ${formatMinor(income, scale)}`);
+      const row = document.createElement("div");
+      row.className = "totals-row";
+      const cur = document.createElement("span");
+      cur.className = "totals-cur";
+      cur.textContent = App.currencyText(code);
+      row.append(cur);
+      for (const [label, v, cls] of [["Spent", expense, "amt-expense"], ["Received", income, "amt-income"]]) {
+        const item = document.createElement("span");
+        item.className = "totals-item";
+        const l = document.createElement("span");
+        l.className = "muted";
+        l.textContent = label + " ";
+        const n = document.createElement("strong");
+        n.className = cls;
+        n.textContent = fmtAmount(formatMinor(v, scale));
+        item.append(l, n);
+        row.append(item);
+      }
+      totalsEl.append(row);
     }
-    totalsEl.textContent = parts.length ? "Totals (loaded rows, transfers, asset purchases and balance adjustments excluded): " + parts.join(" · ") : "";
   }
 
   // Category name for a transaction, looked up client-side by category_uid
@@ -689,7 +714,7 @@
     // An adjustment shows its direction as a sign: + the edited balance
     // or debt went up, − it went down.
     const fxRow = e.to_amount && e.to_currency;
-    const amountTd = cell(isAdj ? (e.adjustment_direction === "decrease" ? "−" : "+") + e.amount : fxRow ? "" : e.amount, "num");
+    const amountTd = cell(isAdj ? (e.adjustment_direction === "decrease" ? "−" : "+") + fmtAmount(e.amount) : fxRow ? "" : fmtAmount(e.amount), "num amt-" + t);
     if (fxRow) {
       // "1,000.00 THB" / "→ 39.70 SGD" (each kept on one line, may wrap
       // between them), then both rates from the API's conversion_rates.
@@ -820,14 +845,6 @@
     }
   }
   loadMoreBtn.addEventListener("click", loadMore);
-
-  // "3361.50" -> "3,361.50" (display only; digits as stored).
-  function fmtAmount(v) {
-    // The API already formats amounts in the currency's scale; keep its digits.
-    const scale = (String(v).split(".")[1] || "").length;
-    const opts = { minimumFractionDigits: scale, maximumFractionDigits: scale };
-    try { return new Intl.NumberFormat(undefined, opts).format(v); } catch (_) { return v; }
-  }
 
   async function deleteTransaction(e) {
     const acct = accountText(e) || "unknown account";

@@ -186,7 +186,7 @@
   }
 
   function moneyCell(value) {
-    const td = cell(value ?? "", "num");
+    const td = cell(App.fmtAmount(value ?? ""), "num");
     if (value && value.startsWith("-")) td.classList.add("neg");
     return td;
   }
@@ -206,6 +206,7 @@
         continue;
       }
       const table = document.createElement("table");
+      table.className = "balance-table";
       table.dataset.type = t.id;
       const head = t.kind === "asset"
         ? ["Name", "Currency", "Balance", "Description", ""]
@@ -216,7 +217,10 @@
         const th = document.createElement("th");
         th.textContent = label;
         if (["Balance", "Debt", "Limit", "Available"].includes(label)) th.className = "num";
-        if (i === head.length - 1) th.setAttribute("aria-label", "Actions");
+        if (label === "Name") th.className = "col-name";
+        if (label === "Currency") th.className = "col-cur";
+        if (label === "Description") th.className = "col-desc";
+        if (i === head.length - 1) { th.className = "col-actions"; th.setAttribute("aria-label", "Actions"); }
         htr.append(th);
       });
       thead.append(htr);
@@ -247,6 +251,8 @@
           button("Delete", "danger", () => remove(b)),
         );
         tr.append(actions);
+        // Column names for the narrow-screen card layout (style.css).
+        [...tr.children].forEach((td, i) => { if (head[i]) td.dataset.label = head[i]; });
         tbody.append(tr);
       }
       table.append(thead, tbody);
