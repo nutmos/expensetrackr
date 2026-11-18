@@ -20,12 +20,15 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
 COPY pkg ./pkg
-RUN GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/expense-server ./cmd/server
+RUN GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/expense-server ./cmd/server \
+ && GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/expense-mcp ./cmd/mcp
 
 FROM alpine:3.22
 RUN apk add --no-cache ca-certificates \
  && adduser -D -H -u 10001 expense
 COPY --from=build /out/expense-server /usr/local/bin/expense-server
+# MCP server for LLM clients (docs/mcp.md): docker run -i --entrypoint /usr/local/bin/expense-mcp ...
+COPY --from=build /out/expense-mcp /usr/local/bin/expense-mcp
 USER expense
 # Inside the container the server must listen on every interface; compose
 # publishes it on 127.0.0.1 only. GIN_MODE=release silences debug output.

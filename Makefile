@@ -3,6 +3,7 @@
 
 GO        ?= go
 BIN      ?= bin/expense-server
+MCP_BIN  ?= bin/expense-mcp
 ADDR     ?= 127.0.0.1:8080
 GOLANGCI_LINT ?= golangci-lint
 GOVULNCHECK_VERSION ?= v1.9.0
@@ -26,6 +27,10 @@ help: ## Show this help.
 .PHONY: build
 build: ## Build the server binary to $(BIN).
 	$(GO) build -o $(BIN) ./cmd/server
+
+.PHONY: build-mcp
+build-mcp: ## Build the MCP server (stdio, for LLM clients) to $(MCP_BIN); see docs/mcp.md.
+	$(GO) build -o $(MCP_BIN) ./cmd/mcp
 
 .PHONY: run
 run: build ## Build, then run the server on $(ADDR) against EXPENSE_DATABASE_URL (make db-up first).

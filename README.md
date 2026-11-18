@@ -20,7 +20,8 @@ categories are private to them.
   and cross-currency transfers at ECB rates or your own.
 - **Bulk import** of up to 500 transactions at once, safe to retry.
 - **Web page** for everyday use, a **JSON API** with Swagger UI, **API tokens**
-  for scripts, and **agent skills** for AI assistants.
+  for scripts, **agent skills** for AI assistants, and an **MCP server** that
+  lets LLM clients read and update transactions.
 
 ## Quick start
 
@@ -51,6 +52,7 @@ Run the tests with `make test`. Details, flags and requirements:
 | [API](docs/api.md) | Every endpoint and `curl` examples (live spec at `/swagger/`) |
 | [Web page](docs/web.md) | How the built-in web page works |
 | [AI agents](docs/agents.md) | Agent skills (run the server, use the API, log a transaction) and API tokens |
+| [MCP server](docs/mcp.md) | `expense-mcp`: read and update transactions from Claude, Cursor and other MCP clients |
 | [Authentication](docs/auth.md) | Login, sessions, API tokens, CSRF, throttling |
 | [Balances](docs/balances.md) · [Categories](docs/categories.md) · [User profiles](docs/user-profile.md) | Details of each resource |
 | [Exchange rates](docs/exchange-rates.md) · [Currencies](docs/currencies.md) · [Bulk import](docs/bulk-import.md) | Cross-currency transfers, currency codes, importing statements |
