@@ -130,7 +130,6 @@ func TestBalanceSignRules(t *testing.T) {
 		{"expense from payment_account: balance down", "expense", "30", "pay", "", []want{{"pay", "970.00", true}}},
 		{"expense on credit_card: debt up", "expense", "30", "card", "", []want{{"card", "130.00", true}}},
 		{"income into payment_account: balance up", "income", "50", "pay", "", []want{{"pay", "1050.00", true}}},
-		{"income into other_asset: balance up", "income", "50", "gold", "", []want{{"gold", "550.00", true}}},
 		{"income into credit_card: debt down", "income", "40", "card", "", []want{{"card", "60.00", true}}},
 		{"income rebate over debt: card in credit", "income", "150", "card", "", []want{{"card", "-50.00", true}}},
 		{"transfer asset->card (card payment): debt down", "transfer", "100", "pay", "card", []want{{"pay", "900.00", true}, {"card", "0.00", true}}},

@@ -111,7 +111,7 @@
   // Which balance types may be the source (balance_uid) for each type.
   const SOURCE_TYPES = {
     expense: ["payment_account", "credit_card"],
-    income: ["payment_account", "other_asset", "credit_card"],
+    income: ["payment_account", "credit_card"],
     transfer: ["payment_account", "credit_card", "other_asset", "other_liability"],
     asset_purchase: ["payment_account", "credit_card"],
     return_on_investment: ["payment_account", "credit_card"],
@@ -135,7 +135,7 @@
   const SOURCE_LABEL = { expense: "Payment account", income: "Received into", transfer: "From (source)", asset_purchase: "Paid from", return_on_investment: "Received into" };
   const SOURCE_HINT = {
     expense: "Payment accounts and credit cards.",
-    income: "Payment accounts, other assets and credit cards (e.g. cash rebates).",
+    income: "Payment accounts and credit cards (e.g. cash rebates).",
     transfer: "Any balance.",
     asset_purchase: "Payment accounts and credit cards.",
     return_on_investment: "Payment accounts and credit cards.",

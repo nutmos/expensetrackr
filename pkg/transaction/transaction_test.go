@@ -167,7 +167,7 @@ func TestSourceAllowed(t *testing.T) {
 		{"expense other_asset", Expense, balance.TypeOtherAsset, false},
 		{"expense other_liability", Expense, balance.TypeOtherLiability, false},
 		{"income payment_account", Income, balance.TypePaymentAccount, true},
-		{"income other_asset", Income, balance.TypeOtherAsset, true},
+		{"income other_asset", Income, balance.TypeOtherAsset, false},
 		{"income credit_card", Income, balance.TypeCreditCard, true},
 		{"income other_liability", Income, balance.TypeOtherLiability, false},
 		{"asset_purchase credit_card", AssetPurchase, balance.TypeCreditCard, true},
@@ -203,7 +203,7 @@ func TestAttachPaymentBalanceIncome(t *testing.T) {
 		wantErr bool
 	}{
 		{"payment_account", balance.TypePaymentAccount, false},
-		{"other_asset", balance.TypeOtherAsset, false},
+		{"other_asset", balance.TypeOtherAsset, true},
 		{"credit_card", balance.TypeCreditCard, false},
 		{"other_liability", balance.TypeOtherLiability, true},
 	}

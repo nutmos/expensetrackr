@@ -75,7 +75,7 @@ Fields a type doesn't use are `null`.
 | type | input amounts | notes |
 |---|---|---|
 | `payment_account` | `balance` (may be ≤ 0) | can pay expenses, receive income |
-| `other_asset` | `balance` | receives income, asset purchases, transfers; linked (not moved) by returns on investment |
+| `other_asset` | `balance` | receives asset purchases and transfers; linked (not moved) by returns on investment |
 | `credit_card` | `debt`, `limit` (≥ 0) | can pay expenses; can receive income (cash rebate / credit, debt −= amount); `available = limit − debt`, `over_limit` |
 | `other_liability` | `debt`, `limit` | loans; only transfers in/out (not income) |
 

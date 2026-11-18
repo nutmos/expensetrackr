@@ -195,7 +195,7 @@ types each transaction type accepts:
 | `type`     | `balance_uid` must be                         | `to_balance_uid` |
 |------------|-----------------------------------------------|------------------|
 | `expense`  | `payment_account` or `credit_card` (spent from) | not allowed (422) |
-| `income`   | `payment_account`, `other_asset` or `credit_card` (received into / cash rebate) | not allowed (422) |
+| `income`   | `payment_account` or `credit_card` (received into / cash rebate) | not allowed (422) |
 | `transfer` | any balance type (source)                     | **required**; any existing balance type, different from `balance_uid` |
 | `asset_purchase` | `payment_account` or `credit_card` (paid from) | **required**; an `other_asset` balance (422 for any other type), different from `balance_uid` |
 | `return_on_investment` | `payment_account` or `credit_card` (received into) | **required**; the `other_asset` the return came from (422 for any other type), different from `balance_uid`; its value is not changed |
