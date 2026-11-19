@@ -121,6 +121,11 @@ confirmations use human labels instead. For example, an edit page is titled
   purchases, income categories for returns on investment). With no category
   of that type yet, a hint says to add one first. Editing an older
   transaction saved without a category asks for one before it can be saved.
+- **Foreign currency amount (optional)**, shown for expenses, income, asset
+  purchases and returns on investment: an amount plus a currency picker for
+  what it cost or paid in another currency (e.g. a USD purchase charged to a
+  THB card). It is for reference only; the list shows it in small text under
+  the amount, and it is not part of the totals or balances.
 - Time is entered in the device's local time zone. A preview shows the exact
   RFC 3339 value that will be saved, with the device's offset for that date.
 - The add page remembers the last expense currency and account. Picking a

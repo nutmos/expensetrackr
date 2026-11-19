@@ -155,6 +155,8 @@ const (
 	descNote       = "Optional free text, at most 1000 characters."
 	descToAmount   = "Transfer only: the amount received by the destination, in its currency. Same currency: omit (or equal amount). Cross-currency: the amount the user says was received (manual rate); omit to convert at the ECB rate of the spent_at date. Never invent it."
 	descToCurrency = "Transfer only, optional: must equal the destination balance's currency."
+	descForeignAmt = "Optional, expense / income / asset_purchase / return_on_investment only: the amount in another currency, for reference (e.g. 25.00 when a USD purchase was charged as THB to the account). Never affects balances; amount stays the amount in the balance currency. Send with foreign_currency. Only when the user gives it."
+	descForeignCur = "ISO 4217 code of foreign_amount, e.g. USD. Required with foreign_amount; must differ from currency."
 	descImportRef  = "Optional idempotency key (at most 200 characters, unique per balance), e.g. a bank statement line id. Usually omit."
 	descType       = "Transaction type. expense (spending), income (money in), transfer (between the user's own balances, incl. paying a credit card), asset_purchase (buying a tracked asset), return_on_investment (dividend/interest from a tracked asset), repay_debt (paying down a credit card or loan from a payment account)."
 )
@@ -321,6 +323,9 @@ type txFields struct {
 	ToAmount     *decimal `json:"to_amount"`
 	ToCurrency   *string  `json:"to_currency"`
 	ImportRef    *string  `json:"import_ref"`
+	// Optional foreign-currency amount (reference only).
+	ForeignAmount   *decimal `json:"foreign_amount"`
+	ForeignCurrency *string  `json:"foreign_currency"`
 }
 
 // given returns the fields that were set, keyed by API name.
@@ -347,22 +352,26 @@ func (f txFields) given() map[string]string {
 	putD("to_amount", f.ToAmount)
 	put("to_currency", f.ToCurrency)
 	put("import_ref", f.ImportRef)
+	putD("foreign_amount", f.ForeignAmount)
+	put("foreign_currency", f.ForeignCurrency)
 	return m
 }
 
 func txProperties() map[string]any {
 	return map[string]any{
-		"type":           enum(descType, writableTypes...),
-		"amount":         decimalSchema(descAmount),
-		"currency":       str(descCurrency),
-		"balance_uid":    str(descBalance),
-		"to_balance_uid": str(descToBalance),
-		"category_uid":   str(descCategory),
-		"spent_at":       str(descSpentAt),
-		"note":           str(descNote),
-		"to_amount":      decimalSchema(descToAmount),
-		"to_currency":    str(descToCurrency),
-		"import_ref":     str(descImportRef),
+		"type":             enum(descType, writableTypes...),
+		"amount":           decimalSchema(descAmount),
+		"currency":         str(descCurrency),
+		"balance_uid":      str(descBalance),
+		"to_balance_uid":   str(descToBalance),
+		"category_uid":     str(descCategory),
+		"spent_at":         str(descSpentAt),
+		"note":             str(descNote),
+		"to_amount":        decimalSchema(descToAmount),
+		"to_currency":      str(descToCurrency),
+		"import_ref":       str(descImportRef),
+		"foreign_amount":   decimalSchema(descForeignAmt),
+		"foreign_currency": str(descForeignCur),
 	}
 }
 
@@ -404,13 +413,14 @@ func updateTransactionTool(c *Client) Tool {
 	props["note"] = str(descNote + ` Send "" to clear it.`)
 	props["to_amount"] = decimalSchema(descToAmount + ` On a cross-currency transfer with a manual rate, send it again when changing amount, currency, balances or the date (or "" to switch to the ECB rate).`)
 	props["import_ref"] = str(descImportRef + ` Send "" to clear it.`)
+	props["foreign_amount"] = decimalSchema(descForeignAmt + ` Send "" (and foreign_currency "") to remove it.`)
 	return Tool{
 		Name:  "update_transaction",
 		Title: "Update a transaction",
 		Description: "Change some fields of a transaction; fields you leave out keep their current values. " +
 			"Balances are corrected automatically (the old effect is reversed, the new one applied). " +
 			"When the type changes, send the fields the new type needs (e.g. category_uid when changing a transfer to an expense, to_balance_uid when changing to a transfer); " +
-			"to_balance_uid is dropped automatically for types without a destination, and category_uid for a transfer. " +
+			"to_balance_uid is dropped automatically for types without a destination, category_uid for a transfer, and foreign_amount/foreign_currency for types that do not allow them. " +
 			"Balance adjustments cannot be edited. Returns the updated transaction.",
 		InputSchema: obj(props, "uid"),
 		Idempotent:  true,
@@ -463,7 +473,7 @@ func updateTransactionTool(c *Client) Tool {
 
 // editable are the stored fields a PUT body carries over from the current
 // record (to_amount, to_currency and import_ref are handled separately).
-var editable = []string{"type", "amount", "currency", "balance_uid", "to_balance_uid", "category_uid", "spent_at", "note"}
+var editable = []string{"type", "amount", "currency", "balance_uid", "to_balance_uid", "category_uid", "spent_at", "note", "foreign_amount", "foreign_currency"}
 
 // mergeUpdate builds the PUT body: the current record's editable fields with
 // changes applied, cleaned up for the resulting type.
@@ -494,6 +504,17 @@ func mergeUpdate(cur map[string]any, changes map[string]string) (map[string]stri
 	}
 	if (typ == "transfer" || typ == "repay_debt") && !explicitCat {
 		delete(body, "category_uid")
+	}
+	_, explicitFA := changes["foreign_amount"]
+	_, explicitFC := changes["foreign_currency"]
+	if typ != "expense" && typ != "income" && typ != "asset_purchase" && typ != "return_on_investment" && !explicitFA && !explicitFC {
+		delete(body, "foreign_amount")
+		delete(body, "foreign_currency")
+	}
+	// Clearing either half of the foreign amount clears both.
+	if (explicitFA && strings.TrimSpace(changes["foreign_amount"]) == "") || (explicitFC && strings.TrimSpace(changes["foreign_currency"]) == "") {
+		delete(body, "foreign_amount")
+		delete(body, "foreign_currency")
 	}
 
 	// A cross-currency transfer with a manual rate: the server keeps the

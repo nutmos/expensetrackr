@@ -156,7 +156,13 @@ Response fields: `uid, type, amount, amount_minor, currency, balance_uid,
 account (source name snapshot), to_balance_uid, to_account, category_uid,
 spent_at, note, created_at, updated_at, version, adjusts_balances,
 adjustment_direction, to_amount, to_amount_minor, to_currency,
-exchange_rate, rate_source, rate_date, import_ref, conversion_rates`.
+exchange_rate, rate_source, rate_date, import_ref, foreign_amount,
+foreign_amount_minor, foreign_currency, conversion_rates`.
+
+`foreign_amount` / `foreign_currency` (optional; expense, income,
+asset_purchase, return_on_investment) record the amount in another currency
+for reference only: balances and totals never use them. Sent together;
+`foreign_currency` ≠ `currency`; `null` when not recorded.
 
 `conversion_rates` is computed on every response and never stored. For a
 cross-currency transfer it is both directions of the effective rate, from
@@ -167,8 +173,8 @@ the transaction's own amounts: `[{"from":"THB","to":"SGD","rate":"0.0397"},
 types. It is read-only: never send it back (400 unknown field).
 
 **Input fields** (POST and PUT): `type, amount, currency, balance_uid,
-to_balance_uid, category_uid, spent_at, note, to_amount, to_currency, import_ref`
-(+ optional `version` instead of `If-Match` on PUT). `import_ref` (≤ 200 chars) is
+to_balance_uid, category_uid, spent_at, note, to_amount, to_currency, import_ref,
+foreign_amount, foreign_currency` (+ optional `version` instead of `If-Match` on PUT). `import_ref` (≤ 200 chars) is
 unique per balance: 409 `duplicate_import_ref` on POST/PUT. On PUT, omitting it keeps it
 and `""` clears it.
 

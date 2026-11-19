@@ -30,8 +30,32 @@ Transactions are stored in the Postgres table **`transactions`**, with index
 | received amt  | `to_amount`, `to_amount_minor` | `to_amount_minor bigint` + `to_amount_scale smallint`; cross-currency transfers only (else `NULL`/`null`) |
 | dest. currency | `to_currency` | `char(3)`, the destination balance's currency; cross-currency transfers only |
 | rate          | `exchange_rate`, `rate_source`, `rate_date` | `text` (exact decimal, never a float): destination units per 1 source unit (≤ 10 significant digits); `text` `frankfurter`/`manual`; `date` of the ECB rate (`YYYY-MM-DD` in JSON) (Frankfurter only). Immutable history |
+| foreign amt   | `foreign_amount`, `foreign_amount_minor` | `foreign_amount_minor bigint` + `foreign_amount_scale smallint`; optional, expense / income / asset_purchase / return_on_investment only (else `NULL`/`null`). **Reference only:** the amount in another currency (e.g. the USD price of a purchase charged in THB); never moves a balance and is not in any total. See "Foreign currency amount" |
+| foreign cur.  | `foreign_currency` | `char(3)`, ISO 4217 code of `foreign_amount`; set together with it, never equal to `currency` |
 | conversion    | `conversion_rates` | **not stored**: computed on every response for cross-currency transfers (both directions, from `amount` and `to_amount`); `null` otherwise. Read-only. See [docs/exchange-rates.md](exchange-rates.md) |
 | last edited   | `updated_at`   | `timestamptz`, `NULL` (JSON `null`) until the transaction is edited; JSON RFC 3339 in UTC |
+
+### Foreign currency amount
+
+Expenses, income, asset purchases and returns on investment can also record
+what they were worth in **another currency**, e.g. a hotel booked at 25.00
+USD and charged as 850.00 THB to a THB card:
+
+```json
+{"type": "expense", "amount": "850.00", "currency": "THB", "balance_uid": "…",
+ "category_uid": "…", "spent_at": "2026-10-06T21:06:00+08:00",
+ "foreign_amount": "25.00", "foreign_currency": "USD"}
+```
+
+- `amount` / `currency` stay the amount in the balance's currency and are the
+  only values used for balances and totals. `foreign_amount` is kept for
+  reference and is never converted, summed or used to move a balance.
+- Send `foreign_amount` and `foreign_currency` together (422 on the missing
+  one). The currency must be a known ISO 4217 code other than `currency`; the
+  amount is > 0 with at most that currency's minor digits (`"1500"` JPY).
+- Not allowed on transfers (they use `to_amount` / `to_currency`, which do
+  move the destination balance) or debt repayments (422).
+- PUT is a full replace: omitting both clears a stored foreign amount.
 
 ## Balances (table `balances`)
 
@@ -314,6 +338,7 @@ versioning lives in `pkg/store/migrate.go`.
 | 1       | baseline: `users`, `user_identities`, `sessions`, `api_tokens`, `user_categories`, `balances`, `transactions`, `fx_rates`, `fx_rate_lookups` and their indexes |
 | 2       | balance names no longer unique: drops `balances_user_name_uq` |
 | 3       | transaction type `repay_debt` allowed: widens `transactions_type_check` |
+| 4       | optional foreign-currency amount: adds `transactions.foreign_amount_minor`, `foreign_amount_scale`, `foreign_currency` and `transactions_foreign_amount_check` |
 
 **Coming from SQLite?** Earlier versions stored everything in
 `data/expenses.db`. That data is **not migrated**: the Postgres version starts

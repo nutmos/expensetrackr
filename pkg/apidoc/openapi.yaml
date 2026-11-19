@@ -1602,7 +1602,7 @@ components:
       description: Whether a manual edit raised or lowered the edited amount (balance of an asset, debt of a liability).
     Transaction:
       type: object
-      required: [uid, amount, amount_minor, currency, type, balance_uid, account, to_balance_uid, to_account, category_uid, spent_at, note, created_at, updated_at, version, adjusts_balances, adjustment_direction, to_amount, to_amount_minor, to_currency, exchange_rate, rate_source, rate_date, import_ref, conversion_rates]
+      required: [uid, amount, amount_minor, currency, type, balance_uid, account, to_balance_uid, to_account, category_uid, spent_at, note, created_at, updated_at, version, adjusts_balances, adjustment_direction, to_amount, to_amount_minor, to_currency, exchange_rate, rate_source, rate_date, import_ref, foreign_amount, foreign_amount_minor, foreign_currency, conversion_rates]
       properties:
         uid: { $ref: '#/components/schemas/Uid' }
         amount:
@@ -1716,6 +1716,28 @@ components:
           maxLength: 200
           description: Client-chosen idempotency key (e.g. a bank reference or a hash of date+amount+description), unique per `balance_uid`; `null` when not set. See docs/bulk-import.md.
           example: null
+        foreign_amount:
+          type: string
+          nullable: true
+          description: |
+            Optional amount in another currency, for reference only (expense, income, asset_purchase and
+            return_on_investment). E.g. a purchase of 25.00 USD paid from a THB account: `amount` is the
+            THB charged, `foreign_amount` 25.00 and `foreign_currency` USD. It never moves a balance and
+            is not part of any total. `null` when not recorded.
+          example: '25.00'
+        foreign_amount_minor:
+          type: integer
+          format: int64
+          nullable: true
+          minimum: 1
+          description: '`foreign_amount` in minor units of `foreign_currency`; `null` when not recorded.'
+          example: 2500
+        foreign_currency:
+          type: string
+          nullable: true
+          pattern: '^[A-Z]{3}$'
+          description: ISO 4217 code of `foreign_amount`; never equal to `currency`. `null` when not recorded.
+          example: USD
         conversion_rates:
           type: array
           nullable: true
@@ -1802,6 +1824,22 @@ components:
           type: string
           nullable: true
           description: Transfer only, optional. If sent it must equal the destination balance's currency.
+        foreign_amount:
+          allOf:
+            - $ref: '#/components/schemas/DecimalInput'
+          nullable: true
+          description: |
+            Optional, for expense, income, asset_purchase and return_on_investment only (422 otherwise).
+            The amount in `foreign_currency` (> 0, at most that currency's minor digits), e.g. the USD
+            price of a purchase charged to a THB account. Recorded for reference only: balances and
+            totals always use `amount`. Send together with `foreign_currency`, or omit both. PUT is a
+            full replace: omitting both clears a stored foreign amount.
+          example: '25.00'
+        foreign_currency:
+          type: string
+          nullable: true
+          description: ISO 4217 code of `foreign_amount`; required with it, and must differ from `currency`.
+          example: USD
         category_uid:
           type: string
           format: uuid
@@ -2231,7 +2269,7 @@ components:
         results:
           - index: 0
             status: created
-            transaction: { uid: ea67cb7c-9cef-4323-9b16-59a5139cb582, amount: '45.00', amount_minor: 4500, currency: THB, type: expense, balance_uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5, account: Wallet, to_balance_uid: null, to_account: null, category_uid: 32b0d51e-e81f-41f0-a77c-38e6ec384153, spent_at: '2026-10-01T08:15:00+07:00', note: SAMPLE COFFEE SHOP, created_at: '2026-10-17T05:31:00Z', updated_at: null, version: 1, adjusts_balances: true, adjustment_direction: null, to_amount: null, to_amount_minor: null, to_currency: null, exchange_rate: null, rate_source: null, rate_date: null, import_ref: 'stmt-2026-10:0001' }
+            transaction: { uid: ea67cb7c-9cef-4323-9b16-59a5139cb582, amount: '45.00', amount_minor: 4500, currency: THB, type: expense, balance_uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5, account: Wallet, to_balance_uid: null, to_account: null, category_uid: 32b0d51e-e81f-41f0-a77c-38e6ec384153, spent_at: '2026-10-01T08:15:00+07:00', note: SAMPLE COFFEE SHOP, created_at: '2026-10-17T05:31:00Z', updated_at: null, version: 1, adjusts_balances: true, adjustment_direction: null, to_amount: null, to_amount_minor: null, to_currency: null, exchange_rate: null, rate_source: null, rate_date: null, import_ref: 'stmt-2026-10:0001', foreign_amount: null, foreign_amount_minor: null, foreign_currency: null }
         balances: []
     BulkResponseReimport:
       summary: Same import sent again (all skipped)

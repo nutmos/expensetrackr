@@ -225,6 +225,10 @@ func (in CreateInput) Validate() (Transaction, error) {
 		}
 	}
 
+	if okType {
+		validateForeign(in, tt, cur, fields, &exp)
+	}
+
 	note := strings.TrimSpace(in.Note)
 	if utf8.RuneCountInString(note) > MaxNoteLen {
 		fields["note"] = fmt.Sprintf("must be at most %d characters", MaxNoteLen)
@@ -248,6 +252,59 @@ func (in CreateInput) Validate() (Transaction, error) {
 		return Transaction{}, &ValidationError{Fields: fields}
 	}
 	return exp, nil
+}
+
+// errForeignTypes is the message for foreign_amount / foreign_currency sent
+// with a type that does not allow them.
+const errForeignTypes = "is only allowed when type is expense, income, asset_purchase or return_on_investment"
+
+// validateForeign checks the optional foreign-currency amount: both fields or
+// neither, a known currency other than the transaction currency, and an
+// amount > 0 with at most that currency's minor digits. Problems are added to
+// fields; a valid pair is set on exp.
+func validateForeign(in CreateInput, tt Type, cur string, fields map[string]string, exp *Transaction) {
+	rawAmt := strings.TrimSpace(string(in.ForeignAmount))
+	fc := strings.ToUpper(strings.TrimSpace(in.ForeignCurrency))
+	if rawAmt == "" && fc == "" {
+		return
+	}
+	if !tt.AllowsForeignAmount() {
+		if rawAmt != "" {
+			fields["foreign_amount"] = errForeignTypes
+		}
+		if fc != "" {
+			fields["foreign_currency"] = errForeignTypes
+		}
+		return
+	}
+	if fc == "" {
+		fields["foreign_currency"] = "is required when foreign_amount is set"
+		return
+	}
+	exponent, known := money.MinorUnits(fc)
+	switch {
+	case !known:
+		fields["foreign_currency"] = fmt.Sprintf("%q is not a recognised ISO 4217 currency code", in.ForeignCurrency)
+	case fc == cur:
+		fields["foreign_currency"] = "must differ from currency (omit foreign_amount and foreign_currency for a transaction in its own currency)"
+	}
+	if rawAmt == "" {
+		fields["foreign_amount"] = "is required when foreign_currency is set"
+		return
+	}
+	if !known {
+		return
+	}
+	minor, err := money.ParseAmount(rawAmt, exponent)
+	if err != nil {
+		fields["foreign_amount"] = err.Error()
+		return
+	}
+	if fc == cur {
+		return
+	}
+	amt := money.FormatAmount(minor, exponent)
+	exp.ForeignAmountMinor, exp.ForeignAmount, exp.ForeignCurrency = &minor, &amt, &fc
 }
 
 // AttachPaymentBalance checks that b is allowed as balance_uid for e.Type and

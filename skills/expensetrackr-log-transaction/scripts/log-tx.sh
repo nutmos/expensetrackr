@@ -20,6 +20,10 @@
 #   --note TEXT           optional note
 #   --to-amount AMOUNT    received amount (cross-currency transfer only; optional)
 #   --to-currency CODE    must match destination balance currency if set
+#   --foreign-amount AMOUNT --foreign-currency CODE
+#                         optional, together (expense, income, asset_purchase,
+#                         return_on_investment): the amount in another currency,
+#                         for reference only (never moves a balance)
 #
 # Environment:
 #   EXPENSETRACKR_TOKEN   write-scoped personal API token (ext_…) — required
@@ -38,7 +42,7 @@ fail() { echo "log-tx: $*" >&2; exit 1; }
 usage() {
 	cat >&2 <<'EOF'
 Usage:
-  log-tx.sh expense|income SOURCE AMOUNT CURRENCY --category NAME --at RFC3339 [--note TEXT]
+  log-tx.sh expense|income SOURCE AMOUNT CURRENCY --category NAME --at RFC3339 [--note TEXT] [--foreign-amount A --foreign-currency C]
   log-tx.sh transfer SOURCE DEST AMOUNT CURRENCY --at RFC3339 [--to-amount A] [--to-currency C] [--note TEXT]
   log-tx.sh asset_purchase SOURCE ASSET AMOUNT CURRENCY --category NAME --at RFC3339 [--note TEXT]
   log-tx.sh return_on_investment ACCOUNT_OR_CARD ASSET AMOUNT CURRENCY --category NAME --at RFC3339 [--note TEXT]
@@ -81,6 +85,8 @@ SPENT_AT=""
 NOTE=""
 TO_AMOUNT=""
 TO_CURRENCY=""
+FOREIGN_AMOUNT=""
+FOREIGN_CURRENCY=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--category)
@@ -108,6 +114,16 @@ while [ $# -gt 0 ]; do
 		TO_CURRENCY=$2
 		shift 2
 		;;
+	--foreign-amount)
+		[ $# -ge 2 ] || die "--foreign-amount needs a value"
+		FOREIGN_AMOUNT=$2
+		shift 2
+		;;
+	--foreign-currency)
+		[ $# -ge 2 ] || die "--foreign-currency needs a value"
+		FOREIGN_CURRENCY=$2
+		shift 2
+		;;
 	*) die "unknown option: $1" ;;
 	esac
 done
@@ -123,6 +139,14 @@ transfer | repay_debt)
 esac
 if [ "$TYPE" != transfer ]; then
 	[ -z "$TO_AMOUNT$TO_CURRENCY" ] || die "--to-amount/--to-currency are only allowed on a transfer"
+fi
+case "$TYPE" in
+transfer | repay_debt)
+	[ -z "$FOREIGN_AMOUNT$FOREIGN_CURRENCY" ] || die "--foreign-amount/--foreign-currency are not allowed on a $TYPE"
+	;;
+esac
+if { [ -n "$FOREIGN_AMOUNT" ] && [ -z "$FOREIGN_CURRENCY" ]; } || { [ -z "$FOREIGN_AMOUNT" ] && [ -n "$FOREIGN_CURRENCY" ]; }; then
+	die "--foreign-amount and --foreign-currency go together"
 fi
 
 HDR=$(mktemp)
@@ -224,13 +248,16 @@ BODY=$(jq -n \
 	--arg spent_at "$SPENT_AT" \
 	--arg note "$NOTE" \
 	--arg to_amount "$TO_AMOUNT" \
-	--arg to_currency "$TO_CURRENCY" '
+	--arg to_currency "$TO_CURRENCY" \
+	--arg foreign_amount "$FOREIGN_AMOUNT" \
+	--arg foreign_currency "$FOREIGN_CURRENCY" '
 	{type: $type, amount: $amount, currency: $currency, balance_uid: $balance_uid, spent_at: $spent_at}
 	| if $to_balance_uid != "" then . + {to_balance_uid: $to_balance_uid} else . end
 	| if $category_uid != "" then . + {category_uid: $category_uid} else . end
 	| if $note != "" then . + {note: $note} else . end
 	| if $to_amount != "" then . + {to_amount: $to_amount} else . end
 	| if $to_currency != "" then . + {to_currency: $to_currency} else . end
+	| if $foreign_amount != "" then . + {foreign_amount: $foreign_amount, foreign_currency: ($foreign_currency | ascii_upcase)} else . end
 ')
 
 api POST /api/transactions "$BODY"
@@ -251,6 +278,7 @@ jq -r --argjson bal "$(cat "$BALANCES")" '
 		($bal.balances[] | select(.uid == $uid)
 		 | "\(.name) now \(.balance // .debt) \(.currency)");
 	"logged \(.type) \(.amount) \(.currency)"
+	+ (if .foreign_amount != null then " [\(.foreign_amount) \(.foreign_currency)]" else "" end)
 	+ (if .note != "" then " (\(.note))" else "" end)
 	+ (if .type == "return_on_investment"
 	   then " into \(.account) (from investment \(.to_account))"

@@ -169,6 +169,16 @@
             <small class="err" data-for="to_amount"></small>
             <small class="err" data-for="to_currency"></small>
           </label>
+          <div class="field" id="foreign-field" hidden>
+            <span class="field-label">Foreign currency amount (optional)</span>
+            <div class="foreign-row">
+              <input id="foreign_amount" name="foreign_amount" type="text" inputmode="decimal" autocomplete="off" placeholder="25.00" aria-label="Foreign currency amount">
+              <select id="foreign_currency" name="foreign_currency" aria-label="Foreign currency"><option value="">Currency…</option></select>
+            </div>
+            <small class="muted">What it cost or paid in another currency, e.g. a USD purchase charged to a THB card. For reference only: balances and totals use the amount above.</small>
+            <small class="err" data-for="foreign_amount"></small>
+            <small class="err" data-for="foreign_currency"></small>
+          </div>
           <div class="field">
             <span class="field-label">Time</span>
             <div class="datetime-row">

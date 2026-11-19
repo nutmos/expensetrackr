@@ -27,6 +27,9 @@ func (s *Store) Create(ctx context.Context, userUID string, e *transaction.Trans
 	if err := checkFX(*e); err != nil {
 		return err
 	}
+	if err := checkForeign(*e); err != nil {
+		return err
+	}
 	var next transaction.Transaction
 	err := s.inTx(ctx, "insert transaction", func(tx *sql.Tx) error {
 		var err error
@@ -58,11 +61,12 @@ func insertTx(ctx context.Context, tx *sql.Tx, userUID string, e transaction.Tra
 	err = writeChecked(ctx, tx, next, "insert transaction", func() error {
 		return tx.QueryRowContext(ctx,
 			`INSERT INTO transactions (uid, user_uid, type, amount_minor, amount_scale, currency, balance_uid, account, to_balance_uid, to_account, category_uid, spent_at, spent_at_utc, note, created_at, version, balance_applied,
-			                           to_amount_minor, to_amount_scale, to_currency, exchange_rate, rate_source, rate_date, import_ref)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 1, true, $16, $17, $18, $19, $20, $21, $22)
+			                           to_amount_minor, to_amount_scale, to_currency, exchange_rate, rate_source, rate_date, import_ref,
+			                           foreign_amount_minor, foreign_amount_scale, foreign_currency)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 1, true, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
 			 RETURNING id`,
-			append(append([]any{next.UID, userUID, string(next.Type), next.AmountMinor, scale, next.Currency, next.BalanceUID, next.Account, next.ToBalanceUID, next.ToAccount, next.CategoryUID, next.SpentAt, spentUTC(next), next.Note, next.CreatedAt},
-				fxArgs(next)...), next.ImportRef)...).Scan(&id)
+			append(append(append([]any{next.UID, userUID, string(next.Type), next.AmountMinor, scale, next.Currency, next.BalanceUID, next.Account, next.ToBalanceUID, next.ToAccount, next.CategoryUID, next.SpentAt, spentUTC(next), next.Note, next.CreatedAt},
+				fxArgs(next)...), next.ImportRef), foreignArgs(next)...)...).Scan(&id)
 	})
 	if err != nil {
 		return e, err
@@ -133,7 +137,8 @@ func cursorOf(e transaction.Transaction) ListCursor {
 }
 
 const selectCols = `id, uid, type, amount_minor, amount_scale, currency, balance_uid, account, to_balance_uid, to_account, category_uid, spent_at, note, created_at, updated_at, version, balance_applied, adjustment_direction,
-	to_amount_minor, to_amount_scale, to_currency, exchange_rate, rate_source, rate_date, import_ref`
+	to_amount_minor, to_amount_scale, to_currency, exchange_rate, rate_source, rate_date, import_ref,
+	foreign_amount_minor, foreign_amount_scale, foreign_currency`
 
 // List returns rows from transactions owned by userUID, newest first (by spend
 // time, then ID).
@@ -268,6 +273,9 @@ func (s *Store) UpdateWith(ctx context.Context, userUID string, id int64, opts W
 		if err := checkFX(next); err != nil {
 			return err
 		}
+		if err := checkForeign(next); err != nil {
+			return err
+		}
 		scale, ok := money.MinorUnits(next.Currency)
 		if !ok {
 			return fmt.Errorf("unknown currency %q", next.Currency)
@@ -281,10 +289,11 @@ func (s *Store) UpdateWith(ctx context.Context, userUID string, id int64, opts W
 			res, err := tx.ExecContext(ctx,
 				`UPDATE transactions SET type = $1, amount_minor = $2, amount_scale = $3, currency = $4, balance_uid = $5, account = $6, to_balance_uid = $7, to_account = $8, category_uid = $9,
 			        spent_at = $10, spent_at_utc = $11, note = $12, updated_at = $13, version = $14,
-			        to_amount_minor = $15, to_amount_scale = $16, to_currency = $17, exchange_rate = $18, rate_source = $19, rate_date = $20, import_ref = $21
-			 WHERE id = $22 AND version = $23`,
-				append(append([]any{string(next.Type), next.AmountMinor, scale, next.Currency, next.BalanceUID, next.Account, next.ToBalanceUID, next.ToAccount, next.CategoryUID,
-					next.SpentAt, spentUTC(next), next.Note, now, next.Version}, fxArgs(next)...), next.ImportRef, id, cur.Version)...)
+			        to_amount_minor = $15, to_amount_scale = $16, to_currency = $17, exchange_rate = $18, rate_source = $19, rate_date = $20, import_ref = $21,
+			        foreign_amount_minor = $22, foreign_amount_scale = $23, foreign_currency = $24
+			 WHERE id = $25 AND version = $26`,
+				append(append(append(append([]any{string(next.Type), next.AmountMinor, scale, next.Currency, next.BalanceUID, next.Account, next.ToBalanceUID, next.ToAccount, next.CategoryUID,
+					next.SpentAt, spentUTC(next), next.Note, now, next.Version}, fxArgs(next)...), next.ImportRef), foreignArgs(next)...), id, cur.Version)...)
 			if err != nil {
 				return err
 			}
@@ -367,6 +376,33 @@ func fxArgs(e transaction.Transaction) []any {
 	return []any{*e.ToAmountMinor, scale, *e.ToCurrency, *e.ExchangeRate, *e.RateSource, e.RateDate}
 }
 
+// checkForeign enforces the foreign-amount invariants: the fields are set
+// together, only on a type that allows them, in a known currency other than
+// the transaction currency, with a positive amount.
+func checkForeign(e transaction.Transaction) error {
+	if e.ForeignCurrency == nil && e.ForeignAmountMinor == nil && e.ForeignAmount == nil {
+		return nil
+	}
+	if !e.Type.AllowsForeignAmount() || e.ForeignCurrency == nil || e.ForeignAmountMinor == nil || *e.ForeignAmountMinor <= 0 ||
+		*e.ForeignCurrency == e.Currency {
+		return fmt.Errorf("invalid foreign amount fields on a %s transaction", e.Type)
+	}
+	if _, ok := money.MinorUnits(*e.ForeignCurrency); !ok {
+		return fmt.Errorf("unknown currency %q", *e.ForeignCurrency)
+	}
+	return nil
+}
+
+// foreignArgs are the values of the foreign_amount_minor, foreign_amount_scale
+// and foreign_currency columns.
+func foreignArgs(e transaction.Transaction) []any {
+	if e.ForeignCurrency == nil {
+		return []any{nil, nil, nil}
+	}
+	scale, _ := money.MinorUnits(*e.ForeignCurrency)
+	return []any{*e.ForeignAmountMinor, scale, *e.ForeignCurrency}
+}
+
 // spentUTC is the spent_at_utc value of e: its spend time at second
 // precision (spent_at is stored at second precision too), in UTC.
 func spentUTC(e transaction.Transaction) time.Time {
@@ -382,8 +418,11 @@ func scan(r scanner) (transaction.Transaction, error) {
 	var typ string
 	var toMinor, toScale sql.NullInt64
 	var toCur, rate, rateSrc, importRef sql.NullString
+	var fMinor, fScale sql.NullInt64
+	var fCur sql.NullString
 	if err := r.Scan(&e.ID, &e.UID, &typ, &e.AmountMinor, &scale, &e.Currency, &e.BalanceUID, &e.Account, &toUID, &toName, &catUID, &e.SpentAt, &e.Note, &created, &updated,
-		&e.Version, &e.AdjustsBalances, &dir, &toMinor, &toScale, &toCur, &rate, &rateSrc, &rateDate, &importRef); err != nil {
+		&e.Version, &e.AdjustsBalances, &dir, &toMinor, &toScale, &toCur, &rate, &rateSrc, &rateDate, &importRef,
+		&fMinor, &fScale, &fCur); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return e, err
 		}
@@ -423,6 +462,10 @@ func scan(r scanner) (transaction.Transaction, error) {
 	}
 	if importRef.Valid {
 		e.ImportRef = &importRef.String
+	}
+	if fMinor.Valid && fCur.Valid {
+		m, a, c := fMinor.Int64, money.FormatAmount(fMinor.Int64, int(fScale.Int64)), fCur.String
+		e.ForeignAmountMinor, e.ForeignAmount, e.ForeignCurrency = &m, &a, &c
 	}
 	if t, err := time.Parse(time.RFC3339, e.SpentAt); err == nil {
 		e.SpentTime = t

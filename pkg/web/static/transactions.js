@@ -138,6 +138,9 @@
   const CATEGORY_TYPE = { expense: "expense", income: "income", asset_purchase: "expense", return_on_investment: "income" };
   // Types that never have a category (the server rejects one).
   const NO_CATEGORY = new Set(["transfer", "repay_debt"]);
+  // Types that may record a foreign-currency amount (reference only; never
+  // moves a balance). Transfers use to_amount instead.
+  const FOREIGN_TYPES = new Set(["expense", "income", "asset_purchase", "return_on_investment"]);
   const SOURCE_LABEL = { expense: "Payment account", income: "Received into", transfer: "From (source)", asset_purchase: "Paid from", return_on_investment: "Received into", repay_debt: "Paid from" };
   const SOURCE_HINT = {
     expense: "Payment accounts and credit cards.",
@@ -385,6 +388,7 @@
     }
     fillCategories(t);
     fillSelect($("#to_balance_uid"), dest || [], keepTo ?? $("#to_balance_uid").value);
+    $("#foreign-field").hidden = !FOREIGN_TYPES.has(t);
     updateFx();
   }
 
@@ -445,13 +449,15 @@
     $("#amount").value = "";
     $("#currency").value = "";
     $("#to_amount").value = "";
+    $("#foreign_amount").value = "";
+    $("#foreign_currency").value = "";
     fxManual = false;
     fxQuote = null;
     renderConversion(null);
     if (!params.uid) {
       $("#form-title").textContent = NEW_TITLE[currentType()] || "Add a transaction";
       $("#submit-btn").textContent = "Save transaction";
-      await Promise.all([loadBalancesList(), loadCategoriesList(), App.fillCurrencySelect($("#currency"))]);
+      await Promise.all([loadBalancesList(), loadCategoriesList(), App.fillCurrencySelect($("#currency")), App.fillCurrencySelect($("#foreign_currency"))]);
       if (my !== gen) return;
       applyType("", "");
       restoreDefaults();
@@ -467,7 +473,7 @@
     form.hidden = true; // until loaded
     let e;
     try {
-      const [res] = await Promise.all([fetch(`/api/transactions/${params.uid}`), loadBalancesList(), loadCategoriesList(), App.fillCurrencySelect($("#currency"))]);
+      const [res] = await Promise.all([fetch(`/api/transactions/${params.uid}`), loadBalancesList(), loadCategoriesList(), App.fillCurrencySelect($("#currency")), App.fillCurrencySelect($("#foreign_currency"))]);
       const body = await res.json().catch(() => ({}));
       if (my !== gen) return;
       if (!res.ok) {
@@ -498,6 +504,8 @@
     applyType(e.balance_uid, e.to_balance_uid || "");
     fillCategories(currentType(), e.category_uid || "");
     $("#note").value = e.note || "";
+    $("#foreign_amount").value = e.foreign_amount || "";
+    App.setCurrency($("#foreign_currency"), e.foreign_currency || "");
     // Show the saved instant converted to the device's local time; saving
     // re-stamps it with the device's current offset.
     const d = new Date(e.spent_at);
@@ -538,6 +546,14 @@
     // converts with the market rate (and keeps a saved conversion on edit if
     // nothing it depends on changed).
     if (fxPair() && fxManual) payload.to_amount = $("#to_amount").value.trim();
+    // Optional foreign-currency amount (reference only). Sent when either half
+    // is filled so the server can report the missing one; omitting both on an
+    // edit clears it (PUT is a full replace).
+    if (FOREIGN_TYPES.has(type)) {
+      const fa = $("#foreign_amount").value.trim(), fc = $("#foreign_currency").value.toUpperCase();
+      if (fa) payload.foreign_amount = fa;
+      if (fc) payload.foreign_currency = fc;
+    }
 
     const isEdit = !!editing;
     const url = isEdit ? `/api/transactions/${editing.uid}` : "/api/transactions";
@@ -752,6 +768,14 @@
         ...lines.map((l) => l.full),
       ].join("\n");
     }
+    if (e.foreign_amount && e.foreign_currency) {
+      // Reference only: shown under the amount, not part of any total.
+      const fa = document.createElement("span");
+      fa.className = "foreign-amt";
+      fa.textContent = `${fmtAmount(e.foreign_amount)} ${e.foreign_currency}`;
+      fa.title = `Foreign currency amount (for reference; not counted in balances or totals): ${e.foreign_amount} ${e.foreign_currency}`;
+      amountTd.append(fa);
+    }
     if (isAdj) {
       tr.classList.add("row-adjustment");
       amountTd.title = `Manual balance edit: ${e.adjustment_direction === "decrease" ? "decreased" : "increased"} by ${e.amount} ${e.currency}`;
@@ -876,6 +900,7 @@
   Combobox.enhance($("#to_balance_uid"));
   Combobox.enhance($("#category_uid"));
   Combobox.enhance($("#currency")); // issue #25; search matches code and name
+  Combobox.enhance($("#foreign_currency"), { clearable: true });
 
   spentAtInput.addEventListener("input", updatePreview);
   $("#type").addEventListener("change", () => applyType());
