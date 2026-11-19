@@ -84,8 +84,8 @@ func TestMigrateV2ToV3(t *testing.T) {
 		t.Fatalf("open v2: %v", err)
 	}
 	defer st.Close()
-	if v := schemaVersion(t, url); v != 3 {
-		t.Errorf("schema version after upgrade = %d, want 3", v)
+	if v := schemaVersion(t, url); v != SchemaVersion {
+		t.Errorf("schema version after upgrade = %d, want %d", v, SchemaVersion)
 	}
 	if err := insert("repay_debt"); err != nil {
 		t.Errorf("repay_debt after upgrade: %v", err)

@@ -74,7 +74,7 @@ Logs and startup errors go to stderr; stdout carries only the protocol.
 | `list_categories` | read | Categories with uid, name and type (`type` filter). Used to turn a category name into a `category_uid`. |
 | `list_transactions` | read | `GET /api/transactions`, newest first: `from`, `to`, `type`, `category_uid`, `balance_uid`, `limit` (default 50, max 500), `cursor` (the previous page's `next_cursor`). |
 | `get_transaction` | read | One transaction by `uid`, with its `version`. |
-| `create_transaction` | write | `POST /api/transactions` with the same fields (`type`, `amount`, `currency`, `balance_uid`, `to_balance_uid`, `category_uid`, `spent_at`, `note`, `to_amount`, `to_currency`, `import_ref`). |
+| `create_transaction` | write | `POST /api/transactions` with the same fields (`type`, `amount`, `currency`, `balance_uid`, `to_balance_uid`, `category_uid`, `spent_at`, `note`, `to_amount`, `to_currency`, `import_ref`, `foreign_amount`, `foreign_currency`). |
 | `update_transaction` | write | **Partial** update: `uid`, optional `version`, and only the fields to change. |
 | `delete_transaction` | write (destructive) | `DELETE /api/transactions/:uid`, optional `version`. |
 
@@ -94,10 +94,13 @@ The API's `PUT` is a full replace, which is easy for a model to get wrong
    version you showed the user so a change made meanwhile (web page, another
    agent) is not overwritten unnoticed.
 3. Copy the editable fields (`type`, `amount`, `currency`, `balance_uid`,
-   `to_balance_uid`, `category_uid`, `spent_at`, `note`) and apply the given
-   changes. `""` clears `note` / `import_ref`; an omitted `import_ref` is kept.
+   `to_balance_uid`, `category_uid`, `spent_at`, `note`, `foreign_amount`,
+   `foreign_currency`) and apply the given changes. `""` clears `note` /
+   `import_ref`, and `""` for either foreign field clears both; an omitted
+   `import_ref` is kept.
 4. Clean up for the resulting type: `to_balance_uid` is dropped for types
-   without a destination and `category_uid` for a transfer, unless sent
+   without a destination, `category_uid` for a transfer, and
+   `foreign_amount` / `foreign_currency` for types that don't allow them, unless sent
    explicitly. A type change still needs the new type's own fields
    (e.g. `category_uid` when a transfer becomes an expense: 422 otherwise).
 5. **Manual-rate transfers:** a cross-currency transfer whose rate came from

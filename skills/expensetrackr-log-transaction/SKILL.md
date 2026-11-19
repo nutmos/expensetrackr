@@ -145,6 +145,7 @@ amount). Category names are unique per type.
 | `note` | optional, ≤ 1000 characters. |
 | `to_amount` | **transfer only.** Same-currency: omit, or equal `amount`. Cross-currency: omit → server uses Frankfurter (ECB) for the `spent_at` date; or send the amount received in the destination currency (`rate_source: "manual"`). Never invent a received amount. |
 | `to_currency` | optional on transfers; if sent must equal the destination balance's currency. |
+| `foreign_amount` + `foreign_currency` | optional, expense / income / asset_purchase / return_on_investment only, sent together: what it cost or paid in another currency (e.g. `"25.00"` + `"USD"` for a USD purchase charged as THB). Reference only, never moves a balance; `foreign_currency` must differ from `currency`. Only when the user gives it. |
 | `import_ref` | optional idempotency key (≤ 200 chars); usually omit for a one-off log. |
 
 Unknown JSON fields → **400**. Bodies must be `Content-Type: application/json`

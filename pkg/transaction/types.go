@@ -54,6 +54,14 @@ type Transaction struct {
 	// reference, or a hash of date+amount+description made by an importing
 	// agent). Unique per balance_uid; null when not set. See docs/bulk-import.md.
 	ImportRef *string `json:"import_ref"`
+	// Foreign-currency amount (optional; expense, income, asset_purchase and
+	// return_on_investment only, null otherwise): what the transaction was
+	// worth in another currency, e.g. the USD price of a purchase paid from a
+	// THB account. It is informational only: balances and totals always use
+	// amount/currency. See docs/data-model.md.
+	ForeignAmount      *string `json:"foreign_amount"`       // decimal string in foreign_currency
+	ForeignAmountMinor *int64  `json:"foreign_amount_minor"` // foreign_amount in minor units of foreign_currency
+	ForeignCurrency    *string `json:"foreign_currency"`     // ISO 4217, never equal to currency
 	// ConversionRates is response-only and never stored: for a cross-currency
 	// transfer, both directions of the effective rate (to_amount / amount and
 	// amount / to_amount), computed by MarshalJSON on every encode; null
@@ -87,6 +95,12 @@ type CreateInput struct {
 	// characters, unique per balance_uid. On create, nil or "" means none.
 	// On PUT, nil (omitted or null) keeps the stored ref and "" clears it.
 	ImportRef *string `json:"import_ref"`
+	// ForeignAmount and ForeignCurrency optionally record the original amount
+	// in another currency (see Transaction.ForeignAmount). Send both or
+	// neither; only for types where Type.AllowsForeignAmount is true. They
+	// never affect balances. On PUT, omitted means none (full replace).
+	ForeignAmount   DecimalInput `json:"foreign_amount"`
+	ForeignCurrency string       `json:"foreign_currency"`
 
 	// IgnoredUID accepts a "uid" in PUT bodies so a previous response can be
 	// round-tripped; it is never used (the uid is server-assigned, immutable).
@@ -151,6 +165,15 @@ const (
 // asset_purchase, return_on_investment and repay_debt).
 func (t Type) HasDestination() bool {
 	return t == Transfer || t == AssetPurchase || t == ReturnOnInvestment || t == RepayDebt
+}
+
+// AllowsForeignAmount reports whether a transaction of this type may record
+// a foreign-currency amount (foreign_amount / foreign_currency): the types
+// that spend or receive money (expense, income, asset_purchase,
+// return_on_investment). Transfers have their own cross-currency fields
+// (to_amount / to_currency) that do move balances.
+func (t Type) AllowsForeignAmount() bool {
+	return t == Expense || t == Income || t == AssetPurchase || t == ReturnOnInvestment
 }
 
 // ErrAdjustmentType is the field message for an attempt to use type

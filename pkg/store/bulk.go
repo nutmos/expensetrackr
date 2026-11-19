@@ -157,7 +157,11 @@ func (s *Store) CreateBulk(ctx context.Context, userUID string, items []BulkItem
 				failed++
 				continue
 			}
-			if err := checkFX(e); err != nil {
+			err := checkFX(e)
+			if err == nil {
+				err = checkForeign(e)
+			}
+			if err != nil {
 				r.Status, r.Err = BulkFailed, err
 				failed++
 				continue

@@ -141,6 +141,10 @@ func TestMergeUpdate(t *testing.T) {
 		"category_uid": nil, "spent_at": "2026-10-12T10:00:00+08:00", "note": "fx", "rate_source": "manual",
 		"to_amount": "3361.50", "to_currency": "THB", "version": json.Number("2"),
 	}
+	foreignExpense := map[string]any{
+		"type": "expense", "amount": "850.00", "currency": "THB", "balance_uid": "a", "to_balance_uid": nil, "category_uid": "c",
+		"spent_at": "2026-10-12T10:00:00+08:00", "note": "", "foreign_amount": "25.00", "foreign_amount_minor": json.Number("2500"), "foreign_currency": "USD",
+	}
 	cases := []struct {
 		name    string
 		cur     map[string]any
@@ -183,6 +187,24 @@ func TestMergeUpdate(t *testing.T) {
 			cur:     map[string]any{"type": "expense", "amount": "5", "currency": "THB", "balance_uid": "a", "to_balance_uid": nil, "category_uid": "c", "spent_at": "2026-10-12T10:00:00+08:00", "note": ""},
 			changes: map[string]string{"type": "transfer", "to_balance_uid": "b", "import_ref": ""},
 			want:    map[string]string{"type": "transfer", "amount": "5", "currency": "THB", "balance_uid": "a", "to_balance_uid": "b", "spent_at": "2026-10-12T10:00:00+08:00", "import_ref": ""},
+		},
+		{
+			name:    "foreign amount is carried over on a note change",
+			cur:     foreignExpense,
+			changes: map[string]string{"note": "dinner"},
+			want:    map[string]string{"type": "expense", "amount": "850.00", "currency": "THB", "balance_uid": "a", "category_uid": "c", "spent_at": "2026-10-12T10:00:00+08:00", "note": "dinner", "foreign_amount": "25.00", "foreign_currency": "USD"},
+		},
+		{
+			name:    `foreign_amount "" clears both halves`,
+			cur:     foreignExpense,
+			changes: map[string]string{"foreign_amount": ""},
+			want:    map[string]string{"type": "expense", "amount": "850.00", "currency": "THB", "balance_uid": "a", "category_uid": "c", "spent_at": "2026-10-12T10:00:00+08:00"},
+		},
+		{
+			name:    "expense to transfer drops the foreign amount",
+			cur:     foreignExpense,
+			changes: map[string]string{"type": "transfer", "to_balance_uid": "b"},
+			want:    map[string]string{"type": "transfer", "amount": "850.00", "currency": "THB", "balance_uid": "a", "to_balance_uid": "b", "spent_at": "2026-10-12T10:00:00+08:00"},
 		},
 		{
 			name:    "balance adjustments are read-only",
