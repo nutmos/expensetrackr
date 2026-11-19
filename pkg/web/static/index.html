@@ -122,14 +122,6 @@
       <h2 id="form-title">Add a transaction</h2>
       <form id="transaction-form" novalidate>
         <div class="grid">
-          <label>Amount
-            <input id="amount" name="amount" type="text" inputmode="decimal" placeholder="120.50" autocomplete="off" required>
-            <small class="err" data-for="amount"></small>
-          </label>
-          <label>Currency
-            <select id="currency" name="currency" required><option value="">Select a currency…</option></select>
-            <small class="err" data-for="currency"></small>
-          </label>
           <label>Type
             <select id="type" name="type">
               <option value="expense">Expense</option>
@@ -147,6 +139,14 @@
             </select>
             <small class="muted"><span id="balance-hint">Payment accounts and credit cards.</span> <a href="/balances">Manage balances</a></small>
             <small class="err" data-for="balance_uid"></small>
+          </label>
+          <label>Amount
+            <input id="amount" name="amount" type="text" inputmode="decimal" placeholder="120.50" autocomplete="off" required>
+            <small class="err" data-for="amount"></small>
+          </label>
+          <label>Currency
+            <select id="currency" name="currency" required><option value="">Select a currency…</option></select>
+            <small class="err" data-for="currency"></small>
           </label>
           <label id="category-field">Category
             <select id="category_uid" name="category_uid" required>
