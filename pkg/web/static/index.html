@@ -49,6 +49,7 @@
       <a href="/transactions" id="tab-transactions" class="tab">Transactions</a>
       <a href="/balances" id="tab-balances" class="tab">Balances</a>
       <a href="/categories" id="tab-categories" class="tab">Categories</a>
+      <a href="/reports" id="tab-reports" class="tab">Reports</a>
       <a href="/settings" id="tab-settings" class="tab">Settings</a>
       <a href="/swagger/" target="_blank" rel="noopener" class="tab tab-docs">API docs</a>
     </nav>
@@ -395,6 +396,38 @@
     </section>
     </div>
 
+    <!-- /reports/<id> (reports.js): read-only summaries with bar charts. -->
+    <div id="view-reports" class="view" hidden>
+    <section class="card">
+      <div class="list-header">
+        <h2>Reports</h2>
+      </div>
+      <nav class="report-tabs" id="report-tabs" aria-label="Report type"></nav>
+
+      <div id="report-income-expense" class="report" hidden>
+        <form id="r-filter-form" class="filters report-filters">
+          <label>From <input type="date" id="r-from"></label>
+          <label>To <input type="date" id="r-to"></label>
+          <button type="submit" class="secondary">Show</button>
+          <span class="report-presets">
+            <button type="button" class="secondary" data-preset="this-month">This month</button>
+            <button type="button" class="secondary" data-preset="last-month">Last month</button>
+            <button type="button" class="secondary" data-preset="this-year">This year</button>
+            <button type="button" class="secondary" data-preset="all">All time</button>
+          </span>
+        </form>
+        <p class="muted small">Expenses, and income including returns on investment. Transfers, asset purchases, debt repayments and balance adjustments are not counted. Each currency is shown separately (no conversion).</p>
+      </div>
+
+      <div id="report-assets-liabilities" class="report" hidden>
+        <p class="muted small">Current balances of assets (payment accounts, other assets) and debts of liabilities (credit cards, other liabilities). Each currency is shown separately (no conversion).</p>
+      </div>
+
+      <p id="report-status" class="muted" role="status"></p>
+      <div id="report-body"></div>
+    </section>
+    </div>
+
     <div id="view-notfound" class="view" hidden>
     <section class="card">
       <h2>Page not found</h2>
@@ -408,5 +441,6 @@
   <script src="/static/balances.js"></script>
   <script src="/static/categories.js"></script>
   <script src="/static/settings.js"></script>
+  <script src="/static/reports.js"></script>
 </body>
 </html>

@@ -6,6 +6,7 @@
 //   /<res>                      balances / categories list
 //   /<res>/new                  add page
 //   /<res>/<uid>/edit           edit page (same form as add)
+//   /reports, /reports/<id>     reports (reports.js)
 // Navigation between them uses history.pushState, so the browser back and
 // forward buttons work and every page can be bookmarked or reloaded.
 (function () {
@@ -138,7 +139,7 @@
     const m = match(path);
     document.querySelectorAll(".view").forEach((v) => (v.hidden = true));
     const section = m ? m.r.section : "";
-    for (const s of ["transactions", "balances", "categories", "settings"]) {
+    for (const s of ["transactions", "balances", "categories", "reports", "settings"]) {
       const tab = $(`#tab-${s}`);
       tab.classList.toggle("active", s === section);
       if (s === section) tab.setAttribute("aria-current", "page"); else tab.removeAttribute("aria-current");

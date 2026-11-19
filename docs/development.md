@@ -104,6 +104,7 @@ Paths are relative to the repo root (the module root).
 cmd/server/main.go                 entry point: flags, open DB, HTTP server, graceful shutdown
 pkg/money/                         exact amounts: decimal string <-> integer minor units
   amount.go                        ParseAmount (> 0), ParseNonNegative (>= 0), ParseSigned, FormatAmount
+  big.go                           FormatBigAmount, RescaleMinor (arbitrary-precision sums)
   currency.go                      ISO 4217 codes -> minor-unit digits
   decimal.go                       DecimalInput (JSON string or number, kept as text)
 pkg/validate/                      ValidationError (422) and RequestError (400)
@@ -115,10 +116,12 @@ pkg/category/                      category domain model (Type expense|income, I
 pkg/user/                          user profile model: Input, Validate, ApplyPatch, Preferences (typed JSON settings), Identity
 pkg/balance/                       balance domain model + per-type validation (no I/O)
   balance.go                       Type, Balance, Input, Validate, ComputeTotals
+pkg/report/                        reports (no I/O): Catalog, BuildIncomeExpense, BuildAssetsLiabilities (docs/reports.md)
 pkg/store/                         persistence (Postgres via pgx, database/sql)
   store.go                         Store, Open, Close; errors shared by every table (ErrNotFound, ErrVersionConflict, ...), WriteOptions
   transactions.go                  table "transactions": Create, List, Get(ByUID), UpdateWith, DeleteWith
   effects.go                       applyBalanceEffects: move balances for a transaction write (same DB transaction)
+  reports.go                       SumFlows: aggregate income / expense rows for the income & expense report
   balances.go                      table "balances": CreateBalance, ListBalances, GetBalance, UpdateBalance(With), DeleteBalance(With)
   adjustments.go                   balance_adjustment transactions recorded by manual balance edits
   categories.go                    table "user_categories" (one JSON row per user): CreateCategory, ListCategories, GetCategoryByUID, UpdateCategory, DeleteCategory
@@ -133,6 +136,7 @@ pkg/api/                           Gin routes and handlers
   transactions.go                  /api/transactions routes (parseListFilter for the list query)
   exchange.go                      exchange-rate lookups (cache, bulk memo), GET /api/exchange-rates
   balances.go                      /api/balances routes
+  reports.go                       /api/reports routes (catalog, income-expense, assets-liabilities)
   version.go                       optimistic locking: If-Match / "version", ETag, 428 / 409
   categories.go                    /api/categories routes
   users.go                         /api/users routes (+ read-only /identities)
@@ -144,7 +148,8 @@ pkg/mcp/                           MCP server over stdio, a client of the HTTP A
   tools.go                         the tools: list balances / categories / transactions, get, create, update (partial), delete
 pkg/web/embed.go                   embeds web/static into the binary
 pkg/web/static/                    index.html (all views), style.css, router.js (history router + shared helpers),
-                                   transactions.js, balances.js, categories.js (list + form page each), settings.js
+                                   transactions.js, balances.js, categories.js (list + form page each), settings.js,
+                                   reports.js (report views and bar charts)
 pkg/apidoc/                        the API description, embedded into the binary
   openapi.yaml                     hand-written OpenAPI 3.0 spec (the source of truth for the docs)
   apidoc.go                        serves GET /api/openapi.yaml, /api/openapi.json and /swagger/

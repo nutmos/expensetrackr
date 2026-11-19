@@ -9,7 +9,6 @@ import (
 	"math"
 	"math/big"
 	"sort"
-	"strings"
 
 	"github.com/nutmos/expensetrackr/pkg/common_type"
 	"github.com/nutmos/expensetrackr/pkg/money"
@@ -173,7 +172,7 @@ func ComputeTotals(items []Balance) []Totals {
 	}
 	out := make([]Totals, 0, len(sums))
 	for cur, a := range sums {
-		f := func(v *big.Int) string { return formatBigAmount(v, a.scale) }
+		f := func(v *big.Int) string { return money.FormatBigAmount(v, a.scale) }
 		out = append(out, Totals{
 			Currency: cur, Assets: f(&a.assets), Liabilities: f(&a.debt), Net: f(new(big.Int).Sub(&a.assets, &a.debt)),
 			CreditLimit: f(&a.limit), AvailableCredit: f(new(big.Int).Sub(&a.limit, &a.debt)),
@@ -181,23 +180,4 @@ func ComputeTotals(items []Balance) []Totals {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Currency < out[j].Currency })
 	return out
-}
-
-// formatBigAmount is money.FormatAmount for an arbitrary-precision amount:
-// minor units with exponent decimal places, e.g. 12345 at 2 -> "123.45".
-func formatBigAmount(minor *big.Int, exponent int) string {
-	if minor.IsInt64() {
-		return money.FormatAmount(minor.Int64(), exponent)
-	}
-	digits := new(big.Int).Abs(minor).String()
-	if exponent > 0 {
-		if len(digits) <= exponent {
-			digits = strings.Repeat("0", exponent-len(digits)+1) + digits
-		}
-		digits = digits[:len(digits)-exponent] + "." + digits[len(digits)-exponent:]
-	}
-	if minor.Sign() < 0 {
-		digits = "-" + digits
-	}
-	return digits
 }

@@ -28,7 +28,7 @@ func TestEmbeddedAssets(t *testing.T) {
 	for _, id := range []string{
 		"view-transactions", "view-transaction-form",
 		"view-balances", "view-balance-form",
-		"view-categories", "view-category-form", "view-settings", "view-notfound",
+		"view-categories", "view-category-form", "view-settings", "view-reports", "view-notfound",
 		"tx-add-btn", "b-add-btn", "c-add-btn",
 	} {
 		if !strings.Contains(html, `id="`+id+`"`) {
@@ -36,7 +36,7 @@ func TestEmbeddedAssets(t *testing.T) {
 		}
 	}
 	// Uids are identifiers only; nothing renders them as visible text.
-	for _, name := range []string{"router.js", "transactions.js", "balances.js", "categories.js", "settings.js", "style.css"} {
+	for _, name := range []string{"router.js", "transactions.js", "balances.js", "categories.js", "settings.js", "reports.js", "style.css"} {
 		b, err := fs.ReadFile(st, name)
 		if err != nil {
 			t.Fatal(err)

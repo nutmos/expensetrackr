@@ -21,6 +21,7 @@ path, and `router.js` shows the view for `location.pathname`:
 | `/transactions/<uid>/edit`   | Edit a transaction (same form) |
 | `/balances`, `/balances/new`, `/balances/<uid>/edit` | Balances list / add / edit |
 | `/categories`, `/categories/new`, `/categories/<uid>/edit` | Categories list / add / edit |
+| `/reports`, `/reports/income-expense?from=…&to=…`, `/reports/assets-liabilities` | Reports with bar charts (see [docs/reports.md](reports.md)); `/reports` opens Income & expenses |
 | `/swagger/`                  | API documentation (Swagger UI; opens in a new tab from the header) |
 
 Old hash links (`/#balances`, `/#categories`, `/#transactions`) are rewritten
@@ -149,6 +150,17 @@ confirmations use human labels instead. For example, an edit page is titled
 - The list is grouped into expense and income categories.
 - **Delete** of a category still used by transactions shows the 409 message
   on the list.
+
+**Reports**
+
+- Sub-tabs pick the report. Charts are plain DOM bars (widths set from JS,
+  which the CSP allows); each currency is its own section, never converted.
+- **Income & expenses**: From / To dates or This month / Last month / This
+  year / All time; Income vs Expenses bars, the net, then expenses and income
+  by category with each one's share. The range is kept in the URL.
+- **Assets & liabilities**: Assets vs Liabilities bars with the net worth,
+  then one bar per account. Negative amounts are hatched and labelled
+  "overdrawn" / "in credit".
 
 User data is only inserted with `textContent` / input `.value` (never
 `innerHTML`), so HTML in notes or names is shown as text.

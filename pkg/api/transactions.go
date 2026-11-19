@@ -218,26 +218,7 @@ func parseListFilter(c *gin.Context) (store.ListFilter, map[string]string) {
 	fields := map[string]string{}
 	var f store.ListFilter
 
-	parseTime := func(name string) *time.Time {
-		raw := c.Query(name)
-		if raw == "" {
-			return nil
-		}
-		// An unencoded "+08:00" in a query string decodes to " 08:00"; RFC 3339
-		// never contains spaces, so restore the plus sign.
-		raw = strings.ReplaceAll(raw, " ", "+")
-		t, err := transaction.ParseTimestamp(raw)
-		if err != nil {
-			fields[name] = err.Error()
-			return nil
-		}
-		return &t
-	}
-	f.From = parseTime("from")
-	f.To = parseTime("to")
-	if f.From != nil && f.To != nil && f.From.After(*f.To) {
-		fields["to"] = "must not be earlier than from"
-	}
+	f.From, f.To = parseTimeRange(c, fields)
 
 	if raw := c.Query("type"); raw != "" {
 		if t, ok := transaction.ParseFilterType(raw); ok {
@@ -281,6 +262,35 @@ func parseListFilter(c *gin.Context) (store.ListFilter, map[string]string) {
 		}
 	}
 	return f, fields
+}
+
+// parseTimeRange reads the optional ?from= and ?to= RFC 3339 query
+// parameters (inclusive bounds). Problems are added to fields.
+func parseTimeRange(c *gin.Context, fields map[string]string) (from, to *time.Time) {
+	parseTime := func(name string) *time.Time {
+		raw := queryTime(c, name)
+		if raw == "" {
+			return nil
+		}
+		t, err := transaction.ParseTimestamp(raw)
+		if err != nil {
+			fields[name] = err.Error()
+			return nil
+		}
+		return &t
+	}
+	from, to = parseTime("from"), parseTime("to")
+	if from != nil && to != nil && from.After(*to) {
+		fields["to"] = "must not be earlier than from"
+	}
+	return from, to
+}
+
+// queryTime is the raw ?name= timestamp. An unencoded "+08:00" in a query
+// string decodes to " 08:00"; RFC 3339 never contains spaces, so the plus
+// sign is restored.
+func queryTime(c *gin.Context, name string) string {
+	return strings.ReplaceAll(c.Query(name), " ", "+")
 }
 
 func (s *Server) getTransaction(c *gin.Context) {

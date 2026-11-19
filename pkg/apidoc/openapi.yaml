@@ -99,6 +99,8 @@ tags:
     description: Payment accounts, credit cards, other assets and liabilities. Type is fixed after creation. Manual amount edits record a balance_adjustment transaction.
   - name: categories
     description: Expense and income categories. Categories belong to the logged-in user (each user has their own set; another user's category uid is a 404). Expense transactions may only use expense categories, income transactions income categories.
+  - name: reports
+    description: Read-only summaries (income & expenses in a time range; assets & liabilities by account). Amounts are exact decimal strings, per currency, never converted between currencies. `GET /api/reports` lists the available report types.
   - name: auth
     description: Login, logout, first-run registration, current user and password change.
   - name: tokens
@@ -848,6 +850,85 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
               example: { error: invalid preferences, fields: { base_currency: 'must be a supported ISO 4217 currency code (see /api/currencies)' } }
         '404': { $ref: '#/components/responses/UserNotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/reports:
+    get:
+      tags: [reports]
+      operationId: listReports
+      summary: List report types
+      description: The reports this server offers, in display order. More types may be added later; each has its own `path`.
+      responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '200':
+          description: Available reports.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reports, count]
+                properties:
+                  reports:
+                    type: array
+                    items: { $ref: '#/components/schemas/ReportInfo' }
+                  count: { type: integer, example: 2 }
+
+  /api/reports/income-expense:
+    get:
+      tags: [reports]
+      operationId: incomeExpenseReport
+      summary: Income and expenses in a time range
+      description: |
+        Sums the logged-in user's transactions spent in `[from, to]` per currency: `expense`
+        transactions as expenses; `income` and `return_on_investment` as income. Transfers, asset
+        purchases, debt repayments and balance adjustments are not counted (the same rule as the
+        totals under the web page's transaction list). Each side is also broken down by category,
+        largest first; transactions saved before categories were required are grouped under a
+        `null` category. Sums are exact (arbitrary precision); no currency conversion.
+      parameters:
+        - name: from
+          in: query
+          description: Inclusive lower bound on `spent_at`, RFC 3339 with offset. Omit for no lower bound.
+          schema: { type: string, format: date-time, example: '2026-11-01T00:00:00+07:00' }
+        - name: to
+          in: query
+          description: Inclusive upper bound on `spent_at`, RFC 3339 with offset. Omit for no upper bound.
+          schema: { type: string, format: date-time, example: '2026-11-30T23:59:59+07:00' }
+      responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '200':
+          description: The report.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IncomeExpenseReport' }
+        '400':
+          description: Invalid `from` / `to`, or `to` earlier than `from`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error: invalid query parameters
+                fields: { to: must not be earlier than from }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/reports/assets-liabilities:
+    get:
+      tags: [reports]
+      operationId: assetsLiabilitiesReport
+      summary: Current assets and liabilities
+      description: |
+        The logged-in user's balances now, per currency: total assets (balances of
+        `payment_account` and `other_asset`), total liabilities (debts of `credit_card` and
+        `other_liability`) and net worth, then totals per balance type and every account
+        (assets first, then liabilities, each largest first). An amount may be negative (an
+        overdrawn account, a card in credit). No currency conversion.
+      responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '200':
+          description: The report.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssetsLiabilitiesReport' }
         '500': { $ref: '#/components/responses/InternalError' }
 
   /api/currencies:
@@ -2048,6 +2129,97 @@ components:
           type: array
           description: One entry per currency, in alphabetical order.
           items: { $ref: '#/components/schemas/BalanceTotals' }
+
+    ReportInfo:
+      type: object
+      required: [id, name, description, path]
+      properties:
+        id: { type: string, example: income-expense }
+        name: { type: string, example: Income & expenses }
+        description: { type: string }
+        path: { type: string, example: /api/reports/income-expense }
+    ReportCategoryAmount:
+      type: object
+      required: [category_uid, category_name, amount, amount_minor, count]
+      properties:
+        category_uid: { type: string, format: uuid, nullable: true, description: null for transactions saved without a category. }
+        category_name: { type: string, nullable: true, example: Food, description: null when there is no category. }
+        amount: { type: string, example: '1250.50' }
+        amount_minor: { type: string, description: Integer minor units as a string (sums may exceed 64 bits)., example: '125050' }
+        count: { type: integer, description: Number of transactions., example: 14 }
+    ReportCurrencyFlow:
+      type: object
+      required: [currency, income, expense, net, income_count, expense_count, income_by_category, expense_by_category]
+      properties:
+        currency: { type: string, example: THB }
+        income: { type: string, example: '52000.00' }
+        expense: { type: string, example: '18340.25' }
+        net: { type: string, description: income − expense; may be negative., example: '33659.75' }
+        income_count: { type: integer, example: 2 }
+        expense_count: { type: integer, example: 41 }
+        income_by_category:
+          type: array
+          description: Largest first.
+          items: { $ref: '#/components/schemas/ReportCategoryAmount' }
+        expense_by_category:
+          type: array
+          description: Largest first.
+          items: { $ref: '#/components/schemas/ReportCategoryAmount' }
+    IncomeExpenseReport:
+      type: object
+      required: [report, from, to, currencies]
+      properties:
+        report: { type: string, enum: [income-expense] }
+        from: { type: string, nullable: true, description: The from filter as sent; null when not set., example: '2026-11-01T00:00:00+07:00' }
+        to: { type: string, nullable: true, description: The to filter as sent; null when not set., example: '2026-11-30T23:59:59+07:00' }
+        currencies:
+          type: array
+          description: One entry per currency with income or expenses in the range, alphabetical.
+          items: { $ref: '#/components/schemas/ReportCurrencyFlow' }
+    ReportAccountAmount:
+      type: object
+      required: [uid, name, type, kind, amount, amount_minor]
+      properties:
+        uid: { $ref: '#/components/schemas/Uid' }
+        name: { type: string, example: Wallet }
+        type: { $ref: '#/components/schemas/BalanceType' }
+        kind: { type: string, enum: [asset, liability] }
+        amount: { type: string, description: Balance of an asset or debt of a liability; may be negative., example: '4879.50' }
+        amount_minor: { type: integer, format: int64, example: 487950 }
+    ReportTypeAmount:
+      type: object
+      required: [type, kind, amount, count]
+      properties:
+        type: { $ref: '#/components/schemas/BalanceType' }
+        kind: { type: string, enum: [asset, liability] }
+        amount: { type: string, description: Sum of balances (assets) or debts (liabilities)., example: '4879.50' }
+        count: { type: integer, description: Number of balances., example: 2 }
+    ReportCurrencyPosition:
+      type: object
+      required: [currency, assets, liabilities, net, by_type, accounts]
+      properties:
+        currency: { type: string, example: THB }
+        assets: { type: string, example: '54879.50' }
+        liabilities: { type: string, example: '12000.00' }
+        net: { type: string, description: assets − liabilities., example: '42879.50' }
+        by_type:
+          type: array
+          description: Balance types present, in the order payment_account, credit_card, other_asset, other_liability.
+          items: { $ref: '#/components/schemas/ReportTypeAmount' }
+        accounts:
+          type: array
+          description: Assets first, then liabilities; each largest first.
+          items: { $ref: '#/components/schemas/ReportAccountAmount' }
+    AssetsLiabilitiesReport:
+      type: object
+      required: [report, as_of, currencies]
+      properties:
+        report: { type: string, enum: [assets-liabilities] }
+        as_of: { $ref: '#/components/schemas/Timestamp' }
+        currencies:
+          type: array
+          description: One entry per currency with at least one balance, alphabetical.
+          items: { $ref: '#/components/schemas/ReportCurrencyPosition' }
 
     CategoryType:
       type: string
