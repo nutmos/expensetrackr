@@ -456,7 +456,10 @@
       applyType("", "");
       restoreDefaults();
       setNow();
-      $("#amount").focus();
+      // Account comes first (issue #137): its currency fills in the currency
+      // field. With a remembered account already selected, start at amount.
+      if ($("#balance_uid").value) $("#amount").focus();
+      else $("#balance_uid")._combo.input.focus();
       return;
     }
     $("#form-title").textContent = "Edit transaction";
