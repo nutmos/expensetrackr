@@ -16,6 +16,7 @@ import (
 	"github.com/nutmos/expensetrackr/pkg/balance"
 	"github.com/nutmos/expensetrackr/pkg/category"
 	"github.com/nutmos/expensetrackr/pkg/money"
+	"github.com/nutmos/expensetrackr/pkg/report"
 	"github.com/nutmos/expensetrackr/pkg/store"
 	"github.com/nutmos/expensetrackr/pkg/transaction"
 	"github.com/nutmos/expensetrackr/pkg/user"
@@ -173,6 +174,14 @@ func TestOpenAPIResponseShapes(t *testing.T) {
 	check("CurrencyInfo", money.Currency{})
 	check("BulkTransactionResponse", bulkResponse{})
 	check("APIToken", store.APIToken{})
+	check("ReportInfo", report.Info{})
+	check("IncomeExpenseReport", report.IncomeExpense{})
+	check("ReportCurrencyFlow", report.CurrencyFlow{})
+	check("ReportCategoryAmount", report.CategoryAmount{})
+	check("AssetsLiabilitiesReport", report.AssetsLiabilities{})
+	check("ReportCurrencyPosition", report.CurrencyPosition{})
+	check("ReportTypeAmount", report.TypeAmount{})
+	check("ReportAccountAmount", report.AccountAmount{})
 	// Per-item results omit fields that do not apply, so only the field set is compared.
 	for schema, v := range map[string]any{"BulkTransactionResult": bulkItemResult{}, "BulkItemError": bulkItemError{}} {
 		want := map[string]bool{}

@@ -9,7 +9,7 @@ Swagger UI at `/swagger/`), hand-written in `pkg/apidoc/openapi.yaml`.
 Contents: [Server](#server) · [Auth](#auth) · [Conventions](#conventions) ·
 [Balances](#balances) · [Categories](#categories) ·
 [Transactions](#transactions) · [Currencies](#currencies) ·
-[Exchange rates](#exchange-rates) · [Versions](#versions-etag--if-match) ·
+[Exchange rates](#exchange-rates) · [Reports](#reports) · [Versions](#versions-etag--if-match) ·
 [Error bodies](#error-bodies) · [Helper script](#helper-script-scriptsetrsh)
 
 ## Server
@@ -296,6 +296,29 @@ curl -sS -b "$JAR" -c "$JAR" "$BASE/api/exchange-rates?from=USD&to=VND" | jq -c 
 
 Rates are ECB mid-market reference rates for ~30 currencies, not what a bank
 charged; use `to_amount` when the user knows the received amount.
+
+## Reports
+
+Read-only summaries, per currency (never converted). `GET /api/reports` lists
+them. Use these instead of paging through every transaction to answer "how
+much did I spend / earn" or "what is my net worth".
+
+- `GET /api/reports/income-expense[?from=<RFC 3339>&to=<RFC 3339>]` →
+  `{"report","from","to","currencies":[{"currency","income","expense","net",
+  "income_count","expense_count","income_by_category":[...],"expense_by_category":[...]}]}`.
+  Expenses = `expense`; income = `income` + `return_on_investment`; transfers,
+  asset purchases, debt repayments and balance adjustments are not counted.
+  Category entries: `{"category_uid","category_name","amount","amount_minor","count"}`
+  (largest first; `amount_minor` is a string). 400 on a bad range.
+- `GET /api/reports/assets-liabilities` → `{"report","as_of","currencies":[{"currency",
+  "assets","liabilities","net","by_type":[...],"accounts":[{"uid","name","type","kind","amount","amount_minor"}]}]}`.
+  `amount` is the balance of an asset or the debt of a liability (may be negative).
+
+```bash
+curl -sS -b "$JAR" -c "$JAR" -G "$BASE/api/reports/income-expense" \
+  --data-urlencode 'from=2026-11-01T00:00:00+07:00' --data-urlencode 'to=2026-11-30T23:59:59+07:00' | jq -c '.currencies[] | {currency, income, expense, net}'
+curl -sS -b "$JAR" -c "$JAR" "$BASE/api/reports/assets-liabilities" | jq -c '.currencies[] | {currency, assets, liabilities, net}'
+```
 
 ## Versions (ETag / If-Match)
 

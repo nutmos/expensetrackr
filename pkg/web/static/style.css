@@ -218,3 +218,42 @@ td.acct, td.cat { min-width: 7em; }
   .balance-table td.actions-cell { grid-column: 1; grid-row: 3; margin-top: 6px; }
   th, td { padding: 8px 6px; }
 }
+
+/* ---- Reports (issue #136): horizontal bar charts ----------------------- */
+.report-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 12px; }
+.report-tab { padding: 5px 12px; border: 1px solid var(--border); border-radius: 999px; text-decoration: none; color: var(--muted); font-weight: 600; font-size: 0.9rem; background: #fff; }
+.report-tab:hover { color: var(--fg); border-color: var(--accent); }
+.report-tab.active { color: #fff; background: var(--accent); border-color: var(--accent); }
+.report-filters { margin-bottom: 6px; }
+.report-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.report-range { margin: 4px 0 0; font-size: 0.9rem; }
+.report-currency { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.report-currency h3.report-cur { margin: 0 0 8px; }
+.report-currency h4 { margin: 14px 0 6px; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); }
+.report-net { margin: 6px 0 0; font-variant-numeric: tabular-nums; }
+.pos-text { color: var(--ok); }
+.neg-text { color: var(--err); }
+.report-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 0 28px; }
+/* One grid per chart (rows share it through subgrid), so every bar in a chart starts and ends at the same x. */
+.bar-chart { display: grid; grid-template-columns: minmax(6em, 11em) minmax(60px, 1fr) auto; gap: 6px 10px; }
+.bar-row { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center; }
+.bar-label { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.bar-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar-sub { font-size: 0.75rem; }
+.bar-track { height: 18px; background: var(--bg); border-radius: 4px; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 4px; background: var(--accent); }
+.bar-fill.bar-income, .bar-fill.bar-asset { background: #16a34a; }
+.bar-fill.bar-expense, .bar-fill.bar-liability { background: #dc2626; }
+.bar-fill.bar-neg { background-image: repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.55) 0 4px, transparent 4px 8px); opacity: 0.75; }
+.bar-value { display: flex; flex-direction: column; align-items: flex-end; font-variant-numeric: tabular-nums; white-space: nowrap; line-height: 1.25; }
+.bar-amount { font-weight: 600; }
+.bar-note { font-size: 0.75rem; }
+@media (max-width: 640px) {
+  .report-cols { grid-template-columns: 1fr; }
+  .bar-chart { display: flex; flex-direction: column; gap: 8px; }
+  .bar-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "label value" "track track"; gap: 3px 10px; }
+  .bar-label { grid-area: label; }
+  .bar-value { grid-area: value; }
+  .bar-track { grid-area: track; height: 12px; }
+  .report-filters label { flex: 1 1 40%; }
+}

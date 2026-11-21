@@ -64,6 +64,7 @@ func (s *Server) Router() *gin.Engine {
 	s.registerTransactionRoutes(api)
 	s.registerBalanceRoutes(api)
 	s.registerCategoryRoutes(api)
+	s.registerReportRoutes(api)
 	s.registerUserRoutes(api)
 	s.registerTokenRoutes(api)
 	api.GET("/exchange-rates", s.getExchangeRate)
