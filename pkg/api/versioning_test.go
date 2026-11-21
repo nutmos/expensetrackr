@@ -89,7 +89,7 @@ func TestBalanceVersioningAPI(t *testing.T) {
 	if rec, body := doH(t, h, "DELETE", path, "", ifMatch(`"2"`)); rec.Code != 409 || code(body) != "version_conflict" {
 		t.Errorf("stale DELETE: %d %v", rec.Code, body)
 	}
-	if rec, _ := doH(t, h, "DELETE", path, "", ifMatch(`"5"`)); rec.Code != 204 {
+	if rec, _ := doH(t, h, "DELETE", path, "", ifMatch(`"5"`)); rec.Code != 200 {
 		t.Errorf("DELETE current: %d", rec.Code)
 	}
 	// Unknown / malformed uid still 404 / 400 before any precondition.

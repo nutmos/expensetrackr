@@ -10,6 +10,7 @@ import (
 	"github.com/nutmos/expensetrackr/pkg/balance"
 	"github.com/nutmos/expensetrackr/pkg/common_type"
 	"github.com/nutmos/expensetrackr/pkg/money"
+	"github.com/nutmos/expensetrackr/pkg/transaction"
 )
 
 // ErrBalanceInUse is returned when a balance's currency would change while
@@ -17,7 +18,7 @@ import (
 // reversed against this balance when edited or deleted).
 var ErrBalanceInUse = errors.New("balance is used by transactions")
 
-const balanceCols = `id, uid, name, type, currency, description, amount_scale, balance_minor, debt_minor, limit_minor, created_at, updated_at, version`
+const balanceCols = `id, uid, name, type, currency, description, amount_scale, balance_minor, debt_minor, limit_minor, hidden, created_at, updated_at, version`
 
 func nullInt(p *int64) any {
 	if p == nil {
@@ -40,7 +41,7 @@ func (s *Store) CreateBalance(ctx context.Context, userUID string, b *balance.Ba
 	}
 	b.UID = uid
 	b.CreatedAt = s.nowRFC3339()
-	b.UpdatedAt, b.Version = nil, 1
+	b.UpdatedAt, b.Version, b.Hidden = nil, 1, false
 	err = s.db.QueryRowContext(ctx,
 		`INSERT INTO balances (uid, user_uid, name, type, currency, description, amount_scale, balance_minor, debt_minor, limit_minor, created_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
@@ -54,7 +55,8 @@ func (s *Store) CreateBalance(ctx context.Context, userUID string, b *balance.Ba
 
 // ListBalances returns balances owned by userUID, grouped by type (payment
 // accounts, credit cards, other assets, other liabilities), then by name.
-// typ "" means all.
+// typ "" means all. Hidden balances are included (each has Hidden set);
+// callers that show a picker leave them out.
 func (s *Store) ListBalances(ctx context.Context, userUID string, typ balance.Type) ([]balance.Balance, error) {
 	query := `SELECT ` + balanceCols + ` FROM balances WHERE user_uid = $1`
 	args := []any{userUID}
@@ -158,6 +160,7 @@ func (s *Store) UpdateBalanceWith(ctx context.Context, userUID string, id int64,
 		now := s.nowRFC3339()
 		next.ID, next.UID, next.CreatedAt, next.UpdatedAt = cur.ID, cur.UID, cur.CreatedAt, &now
 		next.Version = cur.Version + 1
+		next.Hidden = cur.Hidden // changed only by SetBalanceHidden
 		// The type is immutable after creation (callers reject a change with 422
 		// via balance.Input.ValidateUpdate); never write it here.
 		if next.Type != cur.Type {
@@ -197,38 +200,162 @@ func (s *Store) UpdateBalanceWith(ctx context.Context, userUID string, id int64,
 	return saved, nil
 }
 
+// SetBalanceHidden hides (hidden true) or shows again (false) balance id of
+// userUID and returns it. Hiding changes nothing else: the balance's amounts
+// and its transactions stay as they are, and transactions may still use it.
+// Changing the flag sets UpdatedAt and increments Version; asking for the
+// state the balance is already in changes nothing and returns it as it is.
+//
+// Returns ErrNotFound, or ErrVersionConflict when opts.Version > 0 and differs
+// from the stored one.
+func (s *Store) SetBalanceHidden(ctx context.Context, userUID string, id int64, opts WriteOptions, hidden bool) (balance.Balance, error) {
+	var saved balance.Balance
+	err := s.inTx(ctx, "hide balance", func(tx *sql.Tx) error {
+		cur, err := scanBalance(tx.QueryRowContext(ctx, `SELECT `+balanceCols+` FROM balances WHERE id = $1 AND user_uid = $2 FOR UPDATE`, id, userUID))
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if opts.Version > 0 && cur.Version != opts.Version {
+			return ErrVersionConflict
+		}
+		if cur.Hidden == hidden {
+			saved = cur
+			return nil
+		}
+		now := s.nowRFC3339()
+		if _, err := tx.ExecContext(ctx, `UPDATE balances SET hidden = $1, updated_at = $2, version = version + 1 WHERE id = $3`, hidden, now, id); err != nil {
+			return fmt.Errorf("hide balance: %w", err)
+		}
+		cur.Hidden, cur.UpdatedAt, cur.Version = hidden, &now, cur.Version+1
+		saved = cur
+		return nil
+	})
+	if err != nil {
+		return balance.Balance{}, err
+	}
+	return saved, nil
+}
+
 // DeleteBalance is DeleteBalanceWith without a version check.
-func (s *Store) DeleteBalance(ctx context.Context, userUID string, id int64) error {
+func (s *Store) DeleteBalance(ctx context.Context, userUID string, id int64) (int, error) {
 	return s.DeleteBalanceWith(ctx, userUID, id, WriteOptions{})
 }
 
-// DeleteBalanceWith removes one balance owned by userUID. Returns ErrNotFound
+// DeleteBalanceWith removes one balance owned by userUID together with every
+// transaction that references it (as balance_uid or to_balance_uid, including
+// the asset linked by a return on investment), so no transaction is left
+// pointing at a missing balance. Each removed transaction's effect on the
+// user's other balances is reversed, exactly as if it had been deleted on its
+// own (e.g. removing a transfer from account A into the deleted balance puts
+// the amount back on A). All of it happens in one database transaction.
+//
+// It returns the number of transactions removed. Errors: ErrNotFound
 // (including when the id belongs to another user), or ErrVersionConflict when
-// opts.Version > 0 and differs from the stored one. Transactions that
-// reference it keep its uid and name snapshot; editing or deleting them later
-// skips the missing balance.
-func (s *Store) DeleteBalanceWith(ctx context.Context, userUID string, id int64, opts WriteOptions) error {
-	q, args := `DELETE FROM balances WHERE id = $1 AND user_uid = $2`, []any{id, userUID}
-	if opts.Version > 0 {
-		q, args = q+` AND version = $3`, append(args, opts.Version)
-	}
-	res, err := s.db.ExecContext(ctx, q, args...)
-	if err != nil {
-		return fmt.Errorf("delete balance: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("delete balance: %w", err)
-	}
-	if n == 0 {
-		if opts.Version > 0 {
-			if _, err := s.GetBalance(ctx, userUID, id); err == nil {
-				return ErrVersionConflict
+// opts.Version > 0 and differs from the stored one; nothing is changed then.
+func (s *Store) DeleteBalanceWith(ctx context.Context, userUID string, id int64, opts WriteOptions) (int, error) {
+	var removed int
+	err := s.inTx(ctx, "delete balance", func(tx *sql.Tx) error {
+		var uid string
+		err := tx.QueryRowContext(ctx, `SELECT uid FROM balances WHERE id = $1 AND user_uid = $2`, id, userUID).Scan(&uid)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("delete balance: %w", err)
+		}
+		// Lock this balance and every balance its transactions move, in uid
+		// order like every transaction write (see applyBalanceEffects), so
+		// this waits for (or blocks) concurrent writes without deadlocking.
+		// The transactions are read again after locking: one written in
+		// between is then included, and any balance it adds is locked too.
+		locked := map[string]balance.Balance{}
+		var txs []transaction.Transaction
+		for {
+			txs, err = balanceTransactionsTx(ctx, tx, userUID, uid)
+			if err != nil {
+				return err
+			}
+			uids := []string{uid}
+			for i := range txs {
+				for _, ef := range txs[i].Effects() {
+					uids = append(uids, string(ef.BalanceUID))
+				}
+			}
+			var missing []string
+			for _, u := range uids {
+				if _, ok := locked[u]; !ok {
+					missing = append(missing, u)
+				}
+			}
+			more, err := lockBalanceUIDs(ctx, tx, userUID, missing)
+			if err != nil {
+				return err
+			}
+			grew := false
+			for u, b := range more {
+				if _, ok := locked[u]; !ok {
+					locked[u], grew = b, true
+				}
+			}
+			if !grew {
+				break
 			}
 		}
-		return ErrNotFound
+		cur, ok := locked[uid]
+		if !ok {
+			return ErrNotFound // deleted meanwhile
+		}
+		if opts.Version > 0 && cur.Version != opts.Version {
+			return ErrVersionConflict
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM balances WHERE id = $1`, cur.ID); err != nil {
+			return fmt.Errorf("delete balance: %w", err)
+		}
+		if len(txs) == 0 {
+			return nil
+		}
+		ids := make([]int64, len(txs))
+		olds := make([]*transaction.Transaction, len(txs))
+		for i := range txs {
+			ids[i], olds[i] = txs[i].ID, &txs[i]
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM transactions WHERE user_uid = $1 AND id = ANY($2::bigint[])`, userUID, ids); err != nil {
+			return fmt.Errorf("delete balance transactions: %w", err)
+		}
+		// The deleted balance is gone, so only the other balances move.
+		if err := reverseBalanceEffects(ctx, tx, userUID, olds, s.nowRFC3339()); err != nil {
+			return err
+		}
+		removed = len(txs)
+		return nil
+	})
+	if err != nil {
+		return 0, err
 	}
-	return nil
+	return removed, nil
+}
+
+// balanceTransactionsTx returns userUID's transactions that reference balance
+// uid as balance_uid or to_balance_uid, locked FOR UPDATE.
+func balanceTransactionsTx(ctx context.Context, tx *sql.Tx, userUID, uid string) ([]transaction.Transaction, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT `+selectCols+` FROM transactions
+		WHERE user_uid = $1 AND (balance_uid = $2 OR to_balance_uid = $2) ORDER BY id FOR UPDATE`, userUID, uid)
+	if err != nil {
+		return nil, fmt.Errorf("balance transactions: %w", err)
+	}
+	defer rows.Close()
+	var out []transaction.Transaction
+	for rows.Next() {
+		e, err := scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }
 
 func scanBalance(r scanner) (balance.Balance, error) {
@@ -239,7 +366,7 @@ func scanBalance(r scanner) (balance.Balance, error) {
 	var created time.Time
 	var updated sql.NullTime
 	if err := r.Scan(&b.ID, &b.UID, &b.Name, &typ, &b.Currency, &b.Description, &scale,
-		&bal, &debt, &limit, &created, &updated, &b.Version); err != nil {
+		&bal, &debt, &limit, &b.Hidden, &created, &updated, &b.Version); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return b, err
 		}

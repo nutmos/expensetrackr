@@ -233,13 +233,14 @@
     <section class="card">
       <div class="list-header">
         <h2>Balances</h2>
+        <label class="show-hidden"><input type="checkbox" id="b-show-hidden"> Show hidden</label>
         <a href="/balances/new" id="b-add-btn" class="button add-btn" title="Add a balance">+ Add balance</a>
       </div>
       <p id="flash-balances" class="flash" role="status" hidden></p>
       <p id="b-list-status" class="muted"></p>
       <div id="b-groups"></div>
       <h3>Totals per currency</h3>
-      <p class="muted small">Assets = sum of balances; liabilities = sum of debts; available credit = limits − debts. No currency conversion.</p>
+      <p class="muted small">Assets = sum of balances; liabilities = sum of debts; available credit = limits − debts. No currency conversion. Hidden balances are counted only while they are shown.</p>
       <div class="table-wrap">
         <table id="b-totals">
           <thead>
@@ -257,6 +258,20 @@
       </div>
     </section>
     </div>
+
+    <!-- Delete a balance: hide it instead, or delete it with its transactions -->
+    <dialog id="b-delete-dialog" aria-labelledby="b-delete-title">
+      <form method="dialog">
+        <h3 id="b-delete-title">Delete balance?</h3>
+        <p id="b-delete-msg"></p>
+        <p class="muted small" id="b-delete-hide-note">Hiding keeps the balance and its transactions (they still count in totals and reports) and only takes it off this list and the transaction form. You can show it again later.</p>
+        <div class="actions">
+          <button type="submit" value="hide" id="b-delete-hide" class="secondary">Hide instead</button>
+          <button type="submit" value="delete" id="b-delete-confirm" class="danger">Delete</button>
+          <button type="submit" value="cancel" class="secondary" autofocus>Cancel</button>
+        </div>
+      </form>
+    </dialog>
 
     <!-- /balances/new and /balances/:uid/edit -->
     <div id="view-balance-form" class="view" hidden>

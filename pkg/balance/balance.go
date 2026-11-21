@@ -39,8 +39,12 @@ type Balance struct {
 	Available      *string         `json:"available"` // limit - debt; negative when over the limit
 	AvailableMinor *int64          `json:"available_minor"`
 	OverLimit      *bool           `json:"over_limit"` // debt > limit
-	CreatedAt      string          `json:"created_at"`
-	UpdatedAt      *string         `json:"updated_at"`
+	// Hidden balances are left out of GET /api/balances unless asked for
+	// (?include_hidden=true) and out of the web page's pickers; their
+	// transactions are kept and still count. See docs/balances.md §5.
+	Hidden    bool    `json:"hidden"`
+	CreatedAt string  `json:"created_at"`
+	UpdatedAt *string `json:"updated_at"`
 	// Version starts at 1 and is incremented on every change, manual (PUT) or
 	// automatic (a transaction moving the balance). PUT must
 	// send the version they last read (If-Match or "version").

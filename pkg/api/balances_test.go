@@ -76,8 +76,8 @@ func TestBalanceCreateGetListDelete(t *testing.T) {
 		t.Errorf("bad type filter: %d %v", rec.Code, body)
 	}
 
-	if rec, _ := do(t, h, "DELETE", acctPath, ""); rec.Code != http.StatusNoContent {
-		t.Errorf("delete: %d", rec.Code)
+	if rec, body := do(t, h, "DELETE", acctPath, ""); rec.Code != http.StatusOK || body["deleted_transactions"] != float64(0) {
+		t.Errorf("delete: %d %v", rec.Code, body)
 	}
 	if rec, body := do(t, h, "GET", acctPath, ""); rec.Code != 404 || body["error"] != "balance not found" {
 		t.Errorf("get after delete: %d %v", rec.Code, body)
@@ -276,7 +276,7 @@ func TestBalanceUIDAssignedAndLookup(t *testing.T) {
 		t.Errorf("PUT with uid: %d %v", rec.Code, body)
 	}
 	// DELETE by uid.
-	if rec, _ := do(t, h, "DELETE", "/api/balances/"+uid, ""); rec.Code != http.StatusNoContent {
+	if rec, _ := do(t, h, "DELETE", "/api/balances/"+uid, ""); rec.Code != http.StatusOK {
 		t.Errorf("delete by uid: %d", rec.Code)
 	}
 	if rec, _ := do(t, h, "GET", path, ""); rec.Code != 404 {

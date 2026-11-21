@@ -125,9 +125,12 @@ curl -sS -b "$JAR" -c "$JAR" "$BASE/api/transactions?type=balance_adjustment&lim
 ```
 
 Changing `currency` is 409 `balance_in_use` while any transaction references
-the balance. `DELETE /api/balances/{uid}` (optional `If-Match`) → 204;
-transactions keep their uid and name snapshot, so confirm first and prefer
-not to delete accounts with history.
+the balance. `DELETE /api/balances/{uid}` (optional `If-Match`) → 200
+`{"deleted_transactions":n}`: it **also deletes every transaction on that
+balance** and reverses their effect on the other balances, so confirm first.
+To retire an account but keep its history, hide it instead:
+`POST /api/balances/{uid}/hide` (and `/unhide`); hidden balances are left out
+of `GET /api/balances` unless `?include_hidden=true`.
 
 ## Categories
 

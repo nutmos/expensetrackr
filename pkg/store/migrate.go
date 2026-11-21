@@ -20,6 +20,7 @@ import (
 //	v4  optional foreign-currency amount on transactions (migrate_v4.go)
 //	v5  optional interest and fees on repay_debt (migrate_v5.go)
 //	v6  balance adjustments editable and deletable (migrate_v6.go)
+//	v7  balances can be hidden (migrate_v7.go)
 //
 // All pending steps run in one SQL transaction (Postgres DDL is
 // transactional), so a failed upgrade leaves the database as it was. The
@@ -59,6 +60,8 @@ var migrations = []migration{
 	addRepayDebtCharges,
 	// 5 -> 6: balance_adjustment rows count as applied; drop the check against it.
 	allowAdjustmentEdits,
+	// 6 -> 7: balances.hidden.
+	addBalanceHidden,
 }
 
 // SchemaVersion is the version a fully migrated database has.

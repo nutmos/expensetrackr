@@ -46,8 +46,10 @@ The code is `transaction.Effects` (signs) and
   - Changes are summed per balance. A balance whose net change is zero (for
     example a note-only edit) is not written, and its version does not change.
 - **Delete:** the effect is reversed.
-- **Balance deleted meanwhile:** if a referenced balance was deleted, its part
-  of the reversal is skipped. The other balance is still adjusted.
+- **Balance missing:** deleting a balance deletes its transactions too (§5),
+  but a transaction left from an older version may still reference a deleted
+  balance; its part of the reversal is skipped. The other balance is still
+  adjusted.
 - **`adjusts_balances`:** every transaction has `"adjusts_balances": true`,
   Balance Adjustment rows (§2) included: their change is already in the
   balance (the manual edit set it), so editing or deleting one moves the
@@ -261,6 +263,46 @@ These columns are part of the baseline schema (`pkg/store/schema.go`):
   for type `balance_adjustment`; table `CHECK`s keep such rows free of a
   destination or category (`transactions_adjustment_check` since v5).
 - Index `idx_transactions_to_balance_uid` on `to_balance_uid`.
+- `balances.hidden` (since v7, `pkg/store/migrate_v7.go`): `false` unless the
+  balance was hidden (§5).
+
+## 5. Hiding and deleting a balance
+
+Deleting a balance would leave orphaned transactions behind, so there are two
+ways to get rid of one (issue #147):
+
+**Hide** (`POST /api/balances/:uid/hide`, undo with `/unhide`): for a closed
+account or a paid-off loan whose history you want to keep.
+- The balance gets `"hidden": true` and its version goes up by one (hiding a
+  hidden balance changes nothing). No body; `If-Match` is optional (409 if
+  stale).
+- `GET /api/balances` leaves it out, and its `totals` with it, unless
+  `?include_hidden=true` (also with `type=` / `payable=`). `GET
+  /api/balances/:uid` still returns it.
+- Nothing else changes: its amount and transactions stay, the reports still
+  count it, it can be edited (a PUT keeps it hidden; `hidden` is not a PUT
+  field), and transactions may still use it.
+- Web page: **Hide** / **Show** buttons on the list, a **Show hidden** box
+  (`/balances?hidden=1`) that lists hidden balances with a *hidden* badge, and
+  the transaction form offers a hidden balance only when the transaction being
+  edited already uses it (labelled "(hidden)").
+
+**Delete** (`DELETE /api/balances/:uid`): removes the balance **and every
+transaction that references it**, as `balance_uid` or `to_balance_uid`
+(transfers to or from it, asset purchases into it, returns on investment
+linked to it, its balance adjustments).
+- Each removed transaction's effect on your **other** balances is reversed,
+  exactly as if it had been deleted on its own: deleting a savings account
+  that received a 300.00 transfer from Cash puts 300.00 back on Cash; deleting
+  an asset bought with a card lowers the card's debt again. Reversals are
+  summed per balance, so each touched balance is written once (version +1).
+- Everything happens in one database transaction, with the involved balances
+  locked in uid order like any transaction write. `If-Match` is optional; a
+  stale one is 409 and nothing is deleted.
+- Response: **200** `{"deleted_transactions": n}` (it used to be 204 with the
+  transactions left behind).
+- Web page: **Delete** asks first, saying how many transactions will go, and
+  offers **Hide instead**.
 
 ## Follow-ups
 

@@ -69,6 +69,15 @@ func (f *fixture) amount(b balance.Balance) (string, int64) {
 	return *got.Debt, got.Version
 }
 
+// orphan deletes b's row only, leaving its transactions behind as releases
+// before schema v7 did.
+func (f *fixture) orphan(b balance.Balance) {
+	f.t.Helper()
+	if _, err := f.st.db.Exec(`DELETE FROM balances WHERE id = $1`, b.ID); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
 func (f *fixture) want(b balance.Balance, amount string, version int64) {
 	f.t.Helper()
 	if got, v := f.amount(b); got != amount || v != version {
@@ -311,9 +320,10 @@ func TestMissingBalance(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	e := f.create(f.tx("transfer", "10", "THB", f.pay, &f.gold))
-	if err := f.st.DeleteBalance(ctx, f.userUID, f.gold.ID); err != nil {
-		t.Fatal(err)
-	}
+	// DeleteBalance removes a balance's transactions with it; transactions
+	// left pointing at a missing balance come from older versions, which
+	// deleted only the balance row.
+	f.orphan(f.gold)
 	// Deleting the transaction reverses what it can (pay) and skips gold.
 	if err := f.st.DeleteWith(ctx, f.userUID, e.ID, WriteOptions{}); err != nil {
 		t.Fatalf("delete with missing balance: %v", err)
@@ -349,17 +359,17 @@ func TestVersionChecks(t *testing.T) {
 	if _, err := f.st.UpdateBalanceWith(ctx, f.userUID, f.pay.ID, WriteOptions{Version: 1}, keep); !errors.Is(err, ErrVersionConflict) {
 		t.Errorf("stale balance update: %v", err)
 	}
-	if err := f.st.DeleteBalanceWith(ctx, f.userUID, f.pay.ID, WriteOptions{Version: 1}); !errors.Is(err, ErrVersionConflict) {
+	if _, err := f.st.DeleteBalanceWith(ctx, f.userUID, f.pay.ID, WriteOptions{Version: 1}); !errors.Is(err, ErrVersionConflict) {
 		t.Errorf("stale balance delete: %v", err)
 	}
 	b, err := f.st.UpdateBalanceWith(ctx, f.userUID, f.pay.ID, WriteOptions{Version: 2}, keep)
 	if err != nil || b.Version != 3 {
 		t.Errorf("fresh balance update: v%d %v", b.Version, err)
 	}
-	if err := f.st.DeleteBalanceWith(ctx, f.userUID, f.pay.ID, WriteOptions{Version: 3}); err != nil {
-		t.Errorf("fresh balance delete: %v", err)
+	if n, err := f.st.DeleteBalanceWith(ctx, f.userUID, f.pay.ID, WriteOptions{Version: 3}); err != nil || n != 1 {
+		t.Errorf("fresh balance delete: %d transaction(s), %v", n, err)
 	}
-	if err := f.st.DeleteBalanceWith(ctx, f.userUID, f.pay.ID, WriteOptions{Version: 3}); !errors.Is(err, ErrNotFound) {
+	if _, err := f.st.DeleteBalanceWith(ctx, f.userUID, f.pay.ID, WriteOptions{Version: 3}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("delete again: %v", err)
 	}
 }

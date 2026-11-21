@@ -175,14 +175,72 @@
 
   // ---- List page: /balances ---------------------------------------------------
 
+  const showHidden = $("#b-show-hidden");
+  const deleteDialog = $("#b-delete-dialog");
+
+  // A 409 on a list action: the balance changed after the list was loaded.
+  function staleAlert(b, what) {
+    alert(`“${b.name}” changed after this list was loaded (for example by a transaction), so it was not ${what}. The list has been refreshed; check it and try again if you still want to.`);
+  }
+
+  // How many transactions use the balance (they are deleted with it); null if
+  // unknown. Counts up to the API's page limit, then reports "more than".
+  async function transactionCount(b) {
+    try {
+      const res = await fetch(`/api/transactions?balance_uid=${encodeURIComponent(b.uid)}&limit=5000`);
+      if (!res.ok) return null;
+      const body = await res.json();
+      return { n: body.count, more: !!body.next_cursor };
+    } catch (_) { return null; }
+  }
+
+  // Asks how to remove b: resolves "hide", "delete" or "cancel".
+  function askDelete(b, count) {
+    const txText = count === null ? "all transactions that use it"
+      : count.n === 0 ? "" : `${count.more ? "more than " : ""}${count.n} transaction${count.n === 1 && !count.more ? "" : "s"} that use${count.n === 1 && !count.more ? "s" : ""} it`;
+    $("#b-delete-title").textContent = `Delete “${b.name}”?`;
+    $("#b-delete-msg").textContent = txText
+      ? `Deleting the balance also deletes ${txText}, and undoes their effect on your other balances (for example, a transfer from another account is put back there). This cannot be undone.`
+      : "No transactions use this balance. Deleting it cannot be undone.";
+    $("#b-delete-confirm").textContent = txText ? "Delete balance and its transactions" : "Delete balance";
+    // Hiding is the alternative that keeps the transactions.
+    $("#b-delete-hide").hidden = b.hidden;
+    $("#b-delete-hide-note").hidden = b.hidden;
+    return new Promise((resolve) => {
+      deleteDialog.returnValue = "cancel";
+      deleteDialog.addEventListener("close", () => resolve(deleteDialog.returnValue || "cancel"), { once: true });
+      deleteDialog.showModal();
+    });
+  }
+
   async function remove(b) {
-    if (!confirm(`Delete balance “${b.name}” (${b.currency})?`)) return;
+    const choice = await askDelete(b, await transactionCount(b));
+    if (choice === "hide") return setHidden(b, true);
+    if (choice !== "delete") return;
     const res = await fetch(`/api/balances/${b.uid}`, { method: "DELETE", headers: App.ifMatch(b.version) });
-    if (res.status === 409) {
-      alert(`“${b.name}” changed after this list was loaded (for example by a transaction), so it was not deleted. The list has been refreshed; check it and delete again if you still want to.`);
-    } else if (!res.ok && res.status !== 404) alert("Delete failed (" + res.status + ")");
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 409) staleAlert(b, "deleted");
+    else if (!res.ok && res.status !== 404) alert("Delete failed (" + res.status + ")");
+    else if (res.ok) {
+      const n = body.deleted_transactions || 0;
+      App.setFlash("balances", `Deleted “${b.name}”` + (n ? ` and ${n} transaction${n === 1 ? "" : "s"}.` : "."));
+    }
     $("#flash-balances").hidden = true;
-    await loadBalances();
+    await loadBalances(App.takeFlash("balances"));
+  }
+
+  // Hide (or show again) a balance; its transactions are kept.
+  async function setHidden(b, hidden) {
+    const res = await fetch(`/api/balances/${b.uid}/${hidden ? "hide" : "unhide"}`, { method: "POST", headers: App.ifMatch(b.version) });
+    if (res.status === 409) staleAlert(b, hidden ? "hidden" : "shown");
+    else if (!res.ok && res.status !== 404) alert(`${hidden ? "Hide" : "Show"} failed (${res.status})`);
+    else if (res.ok) {
+      App.setFlash("balances", hidden
+        ? `Hid “${b.name}”. Its transactions are kept${showHidden.checked ? "" : "; tick “Show hidden” to see it again"}.`
+        : `“${b.name}” is shown again.`, b.uid);
+    }
+    $("#flash-balances").hidden = true;
+    await loadBalances(App.takeFlash("balances"));
   }
 
   function moneyCell(value) {
@@ -229,7 +287,15 @@
         const tr = document.createElement("tr");
         tr.dataset.uid = String(b.uid);
         if (highlightUID && b.uid === highlightUID) tr.classList.add("just-saved");
+        if (b.hidden) tr.classList.add("is-hidden");
         const nameTd = cell(b.name);
+        if (b.hidden) {
+          const badge = document.createElement("span");
+          badge.className = "badge hidden-badge";
+          badge.textContent = "hidden";
+          badge.title = "Hidden: kept with its transactions, but left out of the list and the transaction form";
+          nameTd.append(badge);
+        }
         if (b.over_limit) {
           const badge = document.createElement("span");
           badge.className = "badge over";
@@ -248,6 +314,7 @@
         actions.className = "actions-cell";
         actions.append(
           link("Edit", `/balances/${encodeURIComponent(b.uid)}/edit`, "button edit"),
+          b.hidden ? button("Show", "edit", () => setHidden(b, false)) : button("Hide", "edit", () => setHidden(b, true)),
           button("Delete", "danger", () => remove(b)),
         );
         tr.append(actions);
@@ -286,7 +353,8 @@
     listStatus.textContent = "Loading…";
     try {
       // Currencies (cached) first, so the list can show flags.
-      const [res] = await Promise.all([fetch("/api/balances"), App.loadCurrencies()]);
+      const url = "/api/balances" + (showHidden.checked ? "?include_hidden=true" : "");
+      const [res] = await Promise.all([fetch(url), App.loadCurrencies()]);
       const body = await res.json();
       if (my !== gen) return;
       if (!res.ok) {
@@ -295,7 +363,10 @@
       }
       renderGroups(body.balances, highlightUID);
       renderTotals(body.totals);
-      listStatus.textContent = body.count === 0 ? "No balances yet." : `${body.count} balance(s).`;
+      const hiddenN = body.balances.filter((b) => b.hidden).length;
+      listStatus.textContent = body.count === 0
+        ? (showHidden.checked ? "No balances yet." : "No balances shown (hidden ones are not listed).")
+        : `${body.count} balance(s)` + (hiddenN ? `, ${hiddenN} hidden.` : ".");
     } catch (err) {
       if (my === gen) listStatus.textContent = "Failed to load balances: " + err.message;
     }
@@ -309,7 +380,19 @@
   $("#b-cancel-btn").addEventListener("click", cancelForm);
   syncTypeFields();
 
-  App.route("/balances", { view: "#view-balances", section: "balances", title: "Balances", enter: () => loadBalances(App.takeFlash("balances")) });
+  // "Show hidden" lives in the URL (?hidden=1) so it survives edits and reloads.
+  showHidden.addEventListener("change", () => {
+    App.replaceQuery(showHidden.checked ? "hidden=1" : "");
+    $("#flash-balances").hidden = true;
+    loadBalances();
+  });
+  App.route("/balances", {
+    view: "#view-balances", section: "balances", title: "Balances",
+    enter: (_params, query) => {
+      showHidden.checked = query.get("hidden") === "1";
+      return loadBalances(App.takeFlash("balances"));
+    },
+  });
   const formRoute = { view: "#view-balance-form", section: "balances", enter: enterForm, onEscape: cancelForm };
   App.route("/balances/new", { ...formRoute, title: "Add balance" });
   App.route("/balances/:uid/edit", { ...formRoute, title: "Edit balance" });

@@ -238,9 +238,7 @@ func TestAdjustmentEditAndDelete(t *testing.T) {
 	if _, err := f.edit(f.gold, WriteOptions{}, func(in *balance.Input) { in.Balance = dec("600") }); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.st.DeleteBalance(ctx, f.userUID, f.gold.ID); err != nil {
-		t.Skipf("balance delete not possible here: %v", err)
-	}
+	f.orphan(f.gold)
 	if err := f.st.DeleteWith(ctx, f.userUID, f.adjustments()[0].ID, WriteOptions{}); err != nil {
 		t.Errorf("delete adjustment of a deleted balance: %v", err)
 	}

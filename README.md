@@ -17,7 +17,8 @@ categories are private to them.
   kept apart from the principal). Every kind except transfers and debt
   repayments has a category.
 - **Balances** (bank accounts, cards, assets, loans) that move automatically
-  with every transaction, with manual corrections recorded.
+  with every transaction, with manual corrections recorded. Retired balances
+  can be hidden (history kept) or deleted together with their transactions.
 - **Multiple currencies**: exact amounts (no floats) in any ISO 4217 currency,
   and cross-currency transfers at ECB rates or your own.
 - **Bulk import** of up to 500 transactions at once, safe to retry.
