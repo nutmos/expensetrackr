@@ -119,7 +119,14 @@ fi
 # --- Caddy (HTTPS on 443) ---------------------------------------------------
 # Recreated only when the Caddyfile or site address changes, so certificates
 # (kept in the caddy-data volume) and open connections survive app deploys.
-CADDY_CONF="$SITE_ADDRESS|$(sha256sum Caddyfile | cut -d' ' -f1)"
+# A bare IP gets a certificate from Caddy's internal CA; a domain gets one
+# from Let's Encrypt (ACME).
+if [[ $SITE_ADDRESS =~ ^[0-9.]+$ || $SITE_ADDRESS == *:* ]]; then
+  TLS_ISSUER=internal
+else
+  TLS_ISSUER=acme
+fi
+CADDY_CONF="$SITE_ADDRESS|$TLS_ISSUER|$(sha256sum Caddyfile | cut -d' ' -f1)"
 CURRENT_CONF=$(docker inspect -f '{{index .Config.Labels "conf"}}' "$CADDY" 2>/dev/null || true)
 if [[ "$CADDY_CONF" != "$CURRENT_CONF" ]]; then
   echo "==> (Re)starting Caddy for $SITE_ADDRESS"
@@ -128,6 +135,7 @@ if [[ "$CADDY_CONF" != "$CURRENT_CONF" ]]; then
     --label "conf=$CADDY_CONF" \
     -p 80:80 -p 443:443 -p 443:443/udp \
     -e SITE_ADDRESS="$SITE_ADDRESS" \
+    -e TLS_ISSUER="$TLS_ISSUER" \
     -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
     -v expensetrackr-caddy-data:/data \
     -v expensetrackr-caddy-config:/config \
@@ -146,6 +154,7 @@ for _ in $(seq 1 30); do
   fi
   sleep 2
 done
-echo "App is healthy but https://${SITE_ADDRESS}/api/healthz does not answer through Caddy" >&2
+echo "App is healthy but https://${SITE_ADDRESS}/api/healthz does not answer through Caddy:" >&2
+curl -sSk -v --resolve "${SITE_ADDRESS}:443:127.0.0.1" "https://${SITE_ADDRESS}/api/healthz" -o /dev/null 2>&1 | grep -E '^\*|^< HTTP|curl:' >&2 || true
 docker logs --tail 50 "$CADDY" >&2 || true
 exit 1
