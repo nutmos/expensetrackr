@@ -195,7 +195,7 @@ Balance effects (automatic):
 | transfer | asset −amount / liability debt +amount | asset +to_amount / liability debt −to_amount (card payment, loan repayment) |
 | asset_purchase | like expense | `other_asset` +amount (same currency required) |
 | return_on_investment | like income (account +amount / card debt −amount) | linked `other_asset`: unchanged (any currency) |
-| repay_debt | `payment_account` −amount | `credit_card` / `other_liability` debt −amount (same currency required; no category) |
+| repay_debt | `payment_account` −(amount + interest_amount + fee_amount) | `credit_card` / `other_liability` debt −amount (the principal; same currency required) |
 | balance_adjustment | none (server-created record of a manual edit) | – |
 
 `adjusts_balances` is `false` for rows created before automatic balances
@@ -236,8 +236,9 @@ curl -sS -b "$JAR" -c "$JAR" "$BASE/api/transactions?type=expense" \
 
 Same body rules as POST, plus the version (SKILL.md "Edit"). Notes:
 
-- Omitted optional fields are cleared: `note`, `to_balance_uid`. Always send
-  `category_uid` (required except on transfers and repay_debt). Omitted `type` means
+- Omitted optional fields are cleared: `note`, `to_balance_uid`,
+  `interest_amount`, `fee_amount`. Always send `category_uid` (required except
+  on transfers and repay_debt; on repay_debt only with interest/fees). Omitted `type` means
   `expense`, so always send `type`.
 - Changing `type` away from transfer/asset_purchase/return_on_investment/repay_debt: drop `to_balance_uid`;
   to expense/income: replace `category_uid` with one of the new type; to a
@@ -307,7 +308,7 @@ much did I spend / earn" or "what is my net worth".
   `{"report","from","to","currencies":[{"currency","income","expense","net",
   "income_count","expense_count","income_by_category":[...],"expense_by_category":[...]}]}`.
   Expenses = `expense`; income = `income` + `return_on_investment`; transfers,
-  asset purchases, debt repayments and balance adjustments are not counted.
+  asset purchases, debt principal and balance adjustments are not counted; a repayment's interest and fees count as expenses.
   Category entries: `{"category_uid","category_name","amount","amount_minor","count"}`
   (largest first; `amount_minor` is a string). 400 on a bad range.
 - `GET /api/reports/assets-liabilities` → `{"report","as_of","currencies":[{"currency",

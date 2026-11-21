@@ -150,13 +150,15 @@ const (
 	descCurrency   = "ISO 4217 code, e.g. THB. Must equal the currency of the source balance (balance_uid)."
 	descBalance    = "uid of the source balance: the paying balance (expense, asset_purchase), receiving balance (income, return_on_investment) or the balance money leaves (transfer; repay_debt: a payment_account). From list_balances."
 	descToBalance  = "uid of the destination balance. Required for transfer (any other balance), asset_purchase (an other_asset) and return_on_investment (the other_asset the return came from; its value is not changed) and repay_debt (the credit_card or other_liability being paid down). Not allowed otherwise."
-	descCategory   = "uid of the category, from list_categories. Required for every type except transfer and repay_debt (not allowed there): an expense category for expense and asset_purchase, an income category for income and return_on_investment."
+	descCategory   = "uid of the category, from list_categories. Required for every type except transfer (not allowed) and repay_debt: an expense category for expense and asset_purchase, an income category for income and return_on_investment. For repay_debt it is optional and only allowed with interest_amount or fee_amount: the expense category of those charges."
 	descSpentAt    = "When it happened: RFC 3339 with a UTC offset, e.g. 2026-10-06T12:30:00+08:00. Use the user's offset; ask if unknown."
 	descNote       = "Optional free text, at most 1000 characters."
 	descToAmount   = "Transfer only: the amount received by the destination, in its currency. Same currency: omit (or equal amount). Cross-currency: the amount the user says was received (manual rate); omit to convert at the ECB rate of the spent_at date. Never invent it."
 	descToCurrency = "Transfer only, optional: must equal the destination balance's currency."
 	descForeignAmt = "Optional, expense / income / asset_purchase / return_on_investment only: the amount in another currency, for reference (e.g. 25.00 when a USD purchase was charged as THB to the account). Never affects balances; amount stays the amount in the balance currency. Send with foreign_currency. Only when the user gives it."
 	descForeignCur = "ISO 4217 code of foreign_amount, e.g. USD. Required with foreign_amount; must differ from currency."
+	descInterest   = "Optional, repay_debt only: interest paid together with the repayment, in currency. amount is then the principal only (what the debt goes down by); the payment account pays amount + interest_amount + fee_amount. Counted as an expense in reports. Only when the user separates it."
+	descFee        = "Optional, repay_debt only: other fees paid together with the repayment (late fee, service charge), in currency. Paid from the account like interest_amount; the debt is not reduced by it."
 	descImportRef  = "Optional idempotency key (at most 200 characters, unique per balance), e.g. a bank statement line id. Usually omit."
 	descType       = "Transaction type. expense (spending), income (money in), transfer (between the user's own balances, incl. paying a credit card), asset_purchase (buying a tracked asset), return_on_investment (dividend/interest from a tracked asset), repay_debt (paying down a credit card or loan from a payment account)."
 )
@@ -326,6 +328,9 @@ type txFields struct {
 	// Optional foreign-currency amount (reference only).
 	ForeignAmount   *decimal `json:"foreign_amount"`
 	ForeignCurrency *string  `json:"foreign_currency"`
+	// Optional interest and fees of a debt repayment.
+	InterestAmount *decimal `json:"interest_amount"`
+	FeeAmount      *decimal `json:"fee_amount"`
 }
 
 // given returns the fields that were set, keyed by API name.
@@ -354,6 +359,8 @@ func (f txFields) given() map[string]string {
 	put("import_ref", f.ImportRef)
 	putD("foreign_amount", f.ForeignAmount)
 	put("foreign_currency", f.ForeignCurrency)
+	putD("interest_amount", f.InterestAmount)
+	putD("fee_amount", f.FeeAmount)
 	return m
 }
 
@@ -372,6 +379,8 @@ func txProperties() map[string]any {
 		"import_ref":       str(descImportRef),
 		"foreign_amount":   decimalSchema(descForeignAmt),
 		"foreign_currency": str(descForeignCur),
+		"interest_amount":  decimalSchema(descInterest),
+		"fee_amount":       decimalSchema(descFee),
 	}
 }
 
@@ -414,13 +423,15 @@ func updateTransactionTool(c *Client) Tool {
 	props["to_amount"] = decimalSchema(descToAmount + ` On a cross-currency transfer with a manual rate, send it again when changing amount, currency, balances or the date (or "" to switch to the ECB rate).`)
 	props["import_ref"] = str(descImportRef + ` Send "" to clear it.`)
 	props["foreign_amount"] = decimalSchema(descForeignAmt + ` Send "" (and foreign_currency "") to remove it.`)
+	props["interest_amount"] = decimalSchema(descInterest + ` Send "" to remove it.`)
+	props["fee_amount"] = decimalSchema(descFee + ` Send "" to remove it.`)
 	return Tool{
 		Name:  "update_transaction",
 		Title: "Update a transaction",
 		Description: "Change some fields of a transaction; fields you leave out keep their current values. " +
 			"Balances are corrected automatically (the old effect is reversed, the new one applied). " +
 			"When the type changes, send the fields the new type needs (e.g. category_uid when changing a transfer to an expense, to_balance_uid when changing to a transfer); " +
-			"to_balance_uid is dropped automatically for types without a destination, category_uid for a transfer, and foreign_amount/foreign_currency for types that do not allow them. " +
+			"to_balance_uid is dropped automatically for types without a destination, category_uid for a transfer (and for a repay_debt left without interest or fees), foreign_amount/foreign_currency and interest_amount/fee_amount for types that do not allow them. " +
 			"Balance adjustments cannot be edited. Returns the updated transaction.",
 		InputSchema: obj(props, "uid"),
 		Idempotent:  true,
@@ -473,7 +484,7 @@ func updateTransactionTool(c *Client) Tool {
 
 // editable are the stored fields a PUT body carries over from the current
 // record (to_amount, to_currency and import_ref are handled separately).
-var editable = []string{"type", "amount", "currency", "balance_uid", "to_balance_uid", "category_uid", "spent_at", "note", "foreign_amount", "foreign_currency"}
+var editable = []string{"type", "amount", "currency", "balance_uid", "to_balance_uid", "category_uid", "spent_at", "note", "foreign_amount", "foreign_currency", "interest_amount", "fee_amount"}
 
 // mergeUpdate builds the PUT body: the current record's editable fields with
 // changes applied, cleaned up for the resulting type.
@@ -502,7 +513,24 @@ func mergeUpdate(cur map[string]any, changes map[string]string) (map[string]stri
 	if typ != "transfer" && typ != "asset_purchase" && typ != "return_on_investment" && typ != "repay_debt" && !explicitTo {
 		delete(body, "to_balance_uid")
 	}
-	if (typ == "transfer" || typ == "repay_debt") && !explicitCat {
+	if typ != "repay_debt" {
+		for _, k := range []string{"interest_amount", "fee_amount"} {
+			if _, explicit := changes[k]; !explicit {
+				delete(body, k)
+			}
+		}
+	}
+	for _, k := range []string{"interest_amount", "fee_amount"} {
+		if strings.TrimSpace(body[k]) == "" {
+			delete(body, k)
+		}
+	}
+	// A repay_debt may keep its category only while it has interest or fees.
+	_, hasCharges := body["interest_amount"]
+	if _, ok := body["fee_amount"]; ok {
+		hasCharges = true
+	}
+	if (typ == "transfer" || (typ == "repay_debt" && !hasCharges)) && !explicitCat {
 		delete(body, "category_uid")
 	}
 	_, explicitFA := changes["foreign_amount"]

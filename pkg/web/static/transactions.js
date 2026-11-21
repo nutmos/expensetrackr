@@ -135,9 +135,30 @@
   const DEST_LABEL = { return_on_investment: "Investment", repay_debt: "Debt repaid" };
   // Category type used by each transaction type (asset purchases use expense
   // categories; returns on investment use income categories).
-  const CATEGORY_TYPE = { expense: "expense", income: "income", asset_purchase: "expense", return_on_investment: "income" };
-  // Types that never have a category (the server rejects one).
+  const CATEGORY_TYPE = { expense: "expense", income: "income", asset_purchase: "expense", return_on_investment: "income", repay_debt: "expense" };
+  // Types that do not require a category. A transfer never has one; a debt
+  // repayment may have an (expense) category for its interest and fees only,
+  // so its category field is shown only while those are filled in.
   const NO_CATEGORY = new Set(["transfer", "repay_debt"]);
+  // Whether the category field applies to type t in the current form.
+  function categoryShown(t) { return !NO_CATEGORY.has(t) || (t === "repay_debt" && hasCharges()); }
+  // Interest / fees typed into the form (debt repayments only).
+  function hasCharges() { return /[1-9]/.test($("#interest_amount").value) || /[1-9]/.test($("#fee_amount").value); }
+  // "Total paid" line under the interest/fee inputs, exact via BigInt.
+  function updateChargesTotal() {
+    const out = $("#charges-total");
+    out.textContent = "";
+    if (currentType() !== "repay_debt" || !hasCharges()) return;
+    const parts = [$("#amount").value, $("#interest_amount").value, $("#fee_amount").value].map((v) => v.trim()).filter(Boolean);
+    if (!parts.every((v) => /^\d+(\.\d+)?$/.test(v))) return;
+    const cur = $("#currency").value.toUpperCase();
+    const scale = Math.max(currencyScale.get(cur) ?? 0, ...parts.map((v) => (v.split(".")[1] || "").length));
+    const total = parts.reduce((s, v) => {
+      const [i, f = ""] = v.split(".");
+      return s + BigInt(i + f.padEnd(scale, "0"));
+    }, 0n);
+    out.textContent = `Total paid: ${fmtAmount(formatMinor(total, scale))}${cur ? " " + cur : ""}.`;
+  }
   // Types that may record a foreign-currency amount (reference only; never
   // moves a balance). Transfers use to_amount instead.
   const FOREIGN_TYPES = new Set(["expense", "income", "asset_purchase", "return_on_investment"]);
@@ -389,16 +410,26 @@
     fillCategories(t);
     fillSelect($("#to_balance_uid"), dest || [], keepTo ?? $("#to_balance_uid").value);
     $("#foreign-field").hidden = !FOREIGN_TYPES.has(t);
+    $("#charges-field").hidden = t !== "repay_debt";
+    // A repayment's (optional) category belongs to its interest and fees, so
+    // it goes after them; that also keeps the fields above from moving when
+    // it appears.
+    if (t === "repay_debt") $("#charges-field").after($("#category-field"));
+    else $("#to-field").before($("#category-field"));
+    $("#amount-label").textContent = t === "repay_debt" ? "Principal" : "Amount";
+    updateChargesTotal();
     updateFx();
   }
 
   // Category dropdown: only categories of the selected type; hidden for
-  // transfers and debt repayments (NO_CATEGORY). Required for every other
-  // type (the server reports a missing one under category_uid).
+  // transfers and for debt repayments without interest or fees
+  // (categoryShown). Required for every type not in NO_CATEGORY (the server
+  // reports a missing one under category_uid).
   function fillCategories(t, keep) {
     const sel = $("#category_uid");
     const want = keep ?? sel.value;
-    $("#category-field").hidden = NO_CATEGORY.has(t);
+    $("#category-field").hidden = !categoryShown(t);
+    $("#category-label").textContent = t === "repay_debt" ? "Category of interest & fees (optional)" : "Category";
     sel.replaceChildren(Object.assign(document.createElement("option"), { value: "", textContent: "Select a category…" }));
     let n = 0;
     for (const c of allCategories) {
@@ -407,7 +438,7 @@
       n++;
     }
     sel.value = want && [...sel.options].some((o) => o.value === want) ? want : "";
-    $("#category-hint").textContent = n || NO_CATEGORY.has(t) ? "" : `No ${CATEGORY_TYPE[t]} categories yet; add one first.`;
+    $("#category-hint").textContent = n || !categoryShown(t) ? "" : `No ${CATEGORY_TYPE[t]} categories yet; add one first.`;
   }
 
   // ---- Form page: /transactions/new and /transactions/<uid>/edit ------------
@@ -451,6 +482,8 @@
     $("#to_amount").value = "";
     $("#foreign_amount").value = "";
     $("#foreign_currency").value = "";
+    $("#interest_amount").value = "";
+    $("#fee_amount").value = "";
     fxManual = false;
     fxQuote = null;
     renderConversion(null);
@@ -501,6 +534,8 @@
     // or balances change (then the market rate is looked up again) or the
     // received amount is edited (manual).
     fxManual = e.rate_source === "manual";
+    $("#interest_amount").value = e.interest_amount || "";
+    $("#fee_amount").value = e.fee_amount || "";
     applyType(e.balance_uid, e.to_balance_uid || "");
     fillCategories(currentType(), e.category_uid || "");
     $("#note").value = e.note || "";
@@ -541,7 +576,14 @@
       note: $("#note").value.trim(),
     };
     if (DEST_TYPES[type]) payload.to_balance_uid = $("#to_balance_uid").value.trim();
-    if (!NO_CATEGORY.has(type) && $("#category_uid").value) payload.category_uid = $("#category_uid").value;
+    if (categoryShown(type) && $("#category_uid").value) payload.category_uid = $("#category_uid").value;
+    // Interest and fees of a debt repayment; omitting them on an edit clears
+    // them (PUT is a full replace).
+    if (type === "repay_debt") {
+      const ia = $("#interest_amount").value.trim(), fa = $("#fee_amount").value.trim();
+      if (ia) payload.interest_amount = ia;
+      if (fa) payload.fee_amount = fa;
+    }
     // Received amount: sent only when typed by the user; otherwise the server
     // converts with the market rate (and keeps a saved conversion on edit if
     // nothing it depends on changed).
@@ -627,17 +669,20 @@
 
   // Per-currency totals of the shown rows, exact via BigInt minor units.
   // Expenses and income are summed separately (returns on investment count as
-  // income); transfers, asset purchases, debt repayments and balance adjustments (manual
-  // corrections, not spending or income) are excluded.
+  // income; the interest and fees of a debt repayment count as spent);
+  // transfers, asset purchases, debt principal and balance adjustments
+  // (manual corrections, not spending or income) are excluded.
   function renderTotals(items) {
     const sums = new Map(); // currency -> {scale, expense, income}
     for (const e of items) {
       const t = e.type || "expense";
-      const kind = t === "return_on_investment" ? "income" : t;
+      const kind = t === "return_on_investment" ? "income" : t === "repay_debt" ? "expense" : t;
       if (kind !== "expense" && kind !== "income") continue;
+      const v = t === "repay_debt" ? BigInt(e.interest_amount_minor || 0) + BigInt(e.fee_amount_minor || 0) : BigInt(e.amount_minor);
+      if (t === "repay_debt" && !v) continue;
       const scale = (e.amount.split(".")[1] || "").length;
       const cur = sums.get(e.currency) || { scale, expense: 0n, income: 0n };
-      cur[kind] += BigInt(e.amount_minor);
+      cur[kind] += v;
       sums.set(e.currency, cur);
     }
     // One line per currency: "🇹🇭 THB  Spent 8,680.00  Received 66,200.00".
@@ -646,7 +691,7 @@
     const title = document.createElement("div");
     title.className = "totals-title";
     title.textContent = "Totals of the loaded rows";
-    title.title = "Transfers, asset purchases, debt repayments and balance adjustments are excluded; returns on investment count as received.";
+    title.title = "Transfers, asset purchases, debt principal and balance adjustments are excluded; returns on investment count as received, debt interest and fees as spent.";
     totalsEl.append(title);
     for (const [code, { scale, expense, income }] of sums) {
       const row = document.createElement("div");
@@ -775,6 +820,17 @@
       fa.textContent = `${fmtAmount(e.foreign_amount)} ${e.foreign_currency}`;
       fa.title = `Foreign currency amount (for reference; not counted in balances or totals): ${e.foreign_amount} ${e.foreign_currency}`;
       amountTd.append(fa);
+    }
+    if (e.interest_amount || e.fee_amount) {
+      // Debt repayment charges: paid on top of the principal (amount).
+      const parts = [];
+      if (e.interest_amount) parts.push(`${fmtAmount(e.interest_amount)} interest`);
+      if (e.fee_amount) parts.push(`${fmtAmount(e.fee_amount)} fees`);
+      const ch = document.createElement("span");
+      ch.className = "foreign-amt";
+      ch.textContent = "+ " + parts.join(" + ");
+      ch.title = `Principal ${e.amount} ${e.currency}, paid on top: ${parts.join(", ")} (counted as spent)`;
+      amountTd.append(ch);
     }
     if (isAdj) {
       tr.classList.add("row-adjustment");
@@ -917,6 +973,11 @@
   function fxAuto() { fxManual = false; updateFx(); }
   $("#to_balance_uid").addEventListener("change", fxAuto);
   $("#currency").addEventListener("change", fxAuto);
+  for (const id of ["#interest_amount", "#fee_amount"]) {
+    $(id).addEventListener("input", () => { fillCategories(currentType()); updateChargesTotal(); });
+  }
+  $("#amount").addEventListener("input", updateChargesTotal);
+  $("#currency").addEventListener("change", updateChargesTotal);
   $("#amount").addEventListener("input", () => { if (fxManual) { const p = fxPair(); if (p) showManualRate(p); } else updateFx(); });
   spentAtInput.addEventListener("change", () => { if (!fxManual) updateFx(); });
   $("#to_amount").addEventListener("input", () => { fxManual = true; fxGen++; const p = fxPair(); if (p) showManualRate(p); });

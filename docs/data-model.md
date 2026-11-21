@@ -22,7 +22,7 @@ Transactions are stored in the Postgres table **`transactions`**, with index
 | payment acct  | `balance_uid`  | `uuid` of of the balance paid from (expense), received into (income, return_on_investment) or moved from (transfer, asset_purchase, repay_debt); no FK |
 | destination   | `to_balance_uid` | `uuid`, transfers, asset purchases, returns on investment and debt repayments only (else `null`); UUID of the destination balance (for a return on investment, the linked `other_asset`; for a debt repayment, the `credit_card` / `other_liability` repaid); no FK |
 | dest. name    | `to_account`   | denormalized destination name snapshot (transfers, asset purchases, returns on investment and debt repayments only, else `null`)    |
-| category      | `category_uid` | `uuid`, **required** on new or edited expense, income, asset purchase and return on investment transactions (older rows may be `null`); UUID of a category of the same type (expense categories for asset purchases, income categories for returns on investment); never set for transfers or debt repayments; no FK. **The only link to the category**: no name is stored on the transaction |
+| category      | `category_uid` | `uuid`, **required** on new or edited expense, income, asset purchase and return on investment transactions (older rows may be `null`); UUID of a category of the same type (expense categories for asset purchases, income categories for returns on investment); never set for transfers; optional on a debt repayment that has interest or fees (an expense category for those charges), else not set; no FK. **The only link to the category**: no name is stored on the transaction |
 | account name  | `account`      | denormalized balance `name` snapshot at write time (read-only in API)   |
 | spend time    | `spent_at`     | `text` RFC 3339 with offset as entered + `spent_at_utc timestamptz` (same instant) |
 | note          | `note`         | `text`, optional, up to 1000 chars                                     |
@@ -32,6 +32,8 @@ Transactions are stored in the Postgres table **`transactions`**, with index
 | rate          | `exchange_rate`, `rate_source`, `rate_date` | `text` (exact decimal, never a float): destination units per 1 source unit (≤ 10 significant digits); `text` `frankfurter`/`manual`; `date` of the ECB rate (`YYYY-MM-DD` in JSON) (Frankfurter only). Immutable history |
 | foreign amt   | `foreign_amount`, `foreign_amount_minor` | `foreign_amount_minor bigint` + `foreign_amount_scale smallint`; optional, expense / income / asset_purchase / return_on_investment only (else `NULL`/`null`). **Reference only:** the amount in another currency (e.g. the USD price of a purchase charged in THB); never moves a balance and is not in any total. See "Foreign currency amount" |
 | foreign cur.  | `foreign_currency` | `char(3)`, ISO 4217 code of `foreign_amount`; set together with it, never equal to `currency` |
+| interest      | `interest_amount`, `interest_amount_minor` | `interest_amount_minor bigint` (at `amount_scale`, in `currency`); optional, repay_debt only (else `NULL`/`null`). Paid from the account on top of the principal. See "Debt repayment interest and fees" |
+| fees          | `fee_amount`, `fee_amount_minor` | `fee_amount_minor bigint` (at `amount_scale`, in `currency`); optional, repay_debt only. Other fees paid with the repayment |
 | conversion    | `conversion_rates` | **not stored**: computed on every response for cross-currency transfers (both directions, from `amount` and `to_amount`); `null` otherwise. Read-only. See [docs/exchange-rates.md](exchange-rates.md) |
 | last edited   | `updated_at`   | `timestamptz`, `NULL` (JSON `null`) until the transaction is edited; JSON RFC 3339 in UTC |
 
@@ -56,6 +58,32 @@ USD and charged as 850.00 THB to a THB card:
 - Not allowed on transfers (they use `to_amount` / `to_currency`, which do
   move the destination balance) or debt repayments (422).
 - PUT is a full replace: omitting both clears a stored foreign amount.
+
+### Debt repayment interest and fees
+
+A debt repayment can separate the **interest** and **other fees** (late fee,
+service charge, ...) it paid from the **principal**, e.g. a loan instalment of
+1,155.50 THB that is 1,000.00 principal, 125.50 interest and 30.00 fees:
+
+```json
+{"type": "repay_debt", "amount": "1000", "currency": "THB",
+ "balance_uid": "<payment account>", "to_balance_uid": "<loan>",
+ "interest_amount": "125.50", "fee_amount": "30", "category_uid": "<expense category>",
+ "spent_at": "2026-10-06T21:06:00+08:00"}
+```
+
+- `amount` is the **principal**: the debt goes down by it only. The payment
+  account pays `amount + interest_amount + fee_amount` (1,155.50 above).
+- Both are optional decimals of 0 or more in the transaction currency, with
+  at most its minor digits; empty or 0 means none (stored as `null`). Not
+  allowed on any other type (422).
+- The interest and fees are **expenses**: list totals and the income &
+  expense report count them as spent; the principal is still not counted.
+- A repayment may have a `category_uid` only when it has interest or fees
+  (422 otherwise). It must be an `expense` category, and the charges are
+  reported under it (under "no category" when there is none).
+- PUT is a full replace: omitting them clears them (and then a category must
+  be omitted too).
 
 ## Balances (table `balances`)
 
@@ -148,9 +176,10 @@ Rules linking transactions and categories:
   for an expense", when missing, `null` or `""`). An expense or asset purchase
   must use an `expense` category, income or a return on investment an
   `income` category (422 on `category_uid` otherwise, also for unknown or
-  malformed uids, or a uid of another user's category). A transfer or a debt
-  repayment must not have a category (422), and balance adjustments never
-  have one.
+  malformed uids, or a uid of another user's category). A transfer must not
+  have a category (422). A debt repayment may have an `expense` category
+  only when it has interest or fees (it is the category of those charges);
+  otherwise not (422). Balance adjustments never have one.
 - Transactions saved before categories were required may have no category.
   They are listed as before; editing one requires choosing a category.
 - The transaction stores **only `category_uid`** (no name copy, unlike
@@ -198,7 +227,7 @@ adjusts its balances automatically:
 | `transfer` | source: asset `balance −= amount`, liability `debt += amount` (drawing a loan / cash advance) | destination: asset `balance += amount`, liability `debt −= amount` (card payment / loan repayment) |
 | `asset_purchase` ("Asset Purchase") | like an expense: asset `balance −= amount`; card `debt += amount` | the `other_asset` bought: `balance += amount` |
 | `return_on_investment` ("Return on Investment") | like income: account `balance += amount`; card `debt −= amount` (may go negative = in credit) | the linked `other_asset`: **unchanged** (link only) |
-| `repay_debt` ("Repay Debt") | the `payment_account` paid from: `balance −= amount` | the `credit_card` / `other_liability` repaid: `debt −= amount` (may go negative = in credit) |
+| `repay_debt` ("Repay Debt") | the `payment_account` paid from: `balance −= amount + interest_amount + fee_amount` | the `credit_card` / `other_liability` repaid: `debt −= amount` (may go negative = in credit) |
 | `balance_adjustment` ("Balance Adjustment") | none: records a manual balance edit that already set the value | n/a |
 
 **Balance adjustments** are created only by the server, in the same database
@@ -248,11 +277,13 @@ types each transaction type accepts:
 - **Repay Debt** (`repay_debt`) records paying down a debt: money leaves a
   `payment_account` and the debt of a `credit_card` (paying the card bill) or
   an `other_liability` (a loan instalment) goes down by the same amount; an
-  overpayment leaves it in credit (negative debt). It moves value like a
-  transfer, so it has **no category** (422 if one is sent) and list totals
-  count it as neither expense nor income. Both balances must be in the
-  transaction's currency (`to_amount` / `to_currency` are not allowed); use a
-  transfer for a cross-currency repayment.
+  overpayment leaves it in credit (negative debt). The principal moves value
+  like a transfer, so list totals count it as neither expense nor income.
+  Optional **interest and fees** (`interest_amount`, `fee_amount`) are paid
+  from the account on top and counted as expenses, with an optional expense
+  category (see "Debt repayment interest and fees"). Both balances must be in
+  the transaction's currency (`to_amount` / `to_currency` are not allowed);
+  use a transfer for a cross-currency repayment.
 
 - Omitting `type` on POST or PUT means `expense`, so older clients keep working.
   A PUT is a full replace, so a PUT of a transfer must send `"type":"transfer"`.
@@ -339,6 +370,7 @@ versioning lives in `pkg/store/migrate.go`.
 | 2       | balance names no longer unique: drops `balances_user_name_uq` |
 | 3       | transaction type `repay_debt` allowed: widens `transactions_type_check` |
 | 4       | optional foreign-currency amount: adds `transactions.foreign_amount_minor`, `foreign_amount_scale`, `foreign_currency` and `transactions_foreign_amount_check` |
+| 5       | optional interest and fees on debt repayments: adds `transactions.interest_amount_minor`, `fee_amount_minor`, `transactions_repay_charges_check` and `transactions_repay_category_check` |
 
 **Coming from SQLite?** Earlier versions stored everything in
 `data/expenses.db`. That data is **not migrated**: the Postgres version starts

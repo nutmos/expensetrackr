@@ -141,7 +141,7 @@
             <small class="muted"><span id="balance-hint">Payment accounts and credit cards.</span> <a href="/balances">Manage balances</a></small>
             <small class="err" data-for="balance_uid"></small>
           </label>
-          <label>Amount
+          <label><span id="amount-label">Amount</span>
             <input id="amount" name="amount" type="text" inputmode="decimal" placeholder="120.50" autocomplete="off" required>
             <small class="err" data-for="amount"></small>
           </label>
@@ -149,7 +149,7 @@
             <select id="currency" name="currency" required><option value="">Select a currency…</option></select>
             <small class="err" data-for="currency"></small>
           </label>
-          <label id="category-field">Category
+          <label id="category-field"><span id="category-label">Category</span>
             <select id="category_uid" name="category_uid" required>
               <option value="">Select a category…</option>
             </select>
@@ -170,6 +170,16 @@
             <small class="err" data-for="to_amount"></small>
             <small class="err" data-for="to_currency"></small>
           </label>
+          <div class="field" id="charges-field" hidden>
+            <span class="field-label">Interest and fees (optional)</span>
+            <div class="charges-row">
+              <input id="interest_amount" name="interest_amount" type="text" inputmode="decimal" autocomplete="off" placeholder="Interest" aria-label="Interest">
+              <input id="fee_amount" name="fee_amount" type="text" inputmode="decimal" autocomplete="off" placeholder="Fees" aria-label="Other fees">
+            </div>
+            <small class="muted">Paid from the account on top of the principal; only the principal lowers the debt. Counted as expenses in reports. <span id="charges-total"></span></small>
+            <small class="err" data-for="interest_amount"></small>
+            <small class="err" data-for="fee_amount"></small>
+          </div>
           <div class="field" id="foreign-field" hidden>
             <span class="field-label">Foreign currency amount (optional)</span>
             <div class="foreign-row">
@@ -193,7 +203,7 @@
           <input id="note" name="note" type="text" maxlength="1000" placeholder="Lunch with team">
           <small class="err" data-for="note"></small>
         </label>
-        <p class="muted small" id="auto-adjust-note">Saving updates the selected balance(s) automatically: an expense lowers an account’s balance or raises a card’s debt, income raises a balance, a transfer moves the amount from source to destination, an asset purchase pays like an expense and raises the asset’s value, a debt repayment lowers the account’s balance and the card’s or loan’s debt. The currency must match the (source) balance’s currency; a transfer between balances in different currencies credits the received amount, converted at the ECB reference rate from <a href="https://frankfurter.dev" target="_blank" rel="noopener">Frankfurter</a> unless you type it yourself.</p>
+        <p class="muted small" id="auto-adjust-note">Saving updates the selected balance(s) automatically: an expense lowers an account’s balance or raises a card’s debt, income raises a balance, a transfer moves the amount from source to destination, an asset purchase pays like an expense and raises the asset’s value, a debt repayment lowers the account’s balance by the principal plus any interest and fees, and the card’s or loan’s debt by the principal. The currency must match the (source) balance’s currency; a transfer between balances in different currencies credits the received amount, converted at the ECB reference rate from <a href="https://frankfurter.dev" target="_blank" rel="noopener">Frankfurter</a> unless you type it yourself.</p>
         <div class="conflict" id="conflict" role="alert" hidden>
           <p class="conflict-msg"></p>
           <button type="button" class="conflict-reload">Reload latest transaction</button>
@@ -426,7 +436,7 @@
             <button type="button" class="secondary" data-preset="all">All time</button>
           </span>
         </form>
-        <p class="muted small">Expenses, and income including returns on investment. Transfers, asset purchases, debt repayments and balance adjustments are not counted. Each currency is shown separately (no conversion).</p>
+        <p class="muted small">Expenses (including the interest and fees of debt repayments), and income including returns on investment. Transfers, asset purchases, debt principal and balance adjustments are not counted. Each currency is shown separately (no conversion).</p>
       </div>
 
       <div id="report-assets-liabilities" class="report" hidden>

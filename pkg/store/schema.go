@@ -62,6 +62,9 @@ package store
 //   - foreign_amount_minor / foreign_amount_scale / foreign_currency (added
 //     in v4, migrate_v4.go): optional amount in another currency, for
 //     reference only; never used for balances.
+//   - interest_amount_minor / fee_amount_minor (added in v5,
+//     migrate_v5.go): optional interest and fees of a repay_debt, in the
+//     transaction currency at amount_scale; amount_minor is the principal.
 //   - import_ref: optional client reference for bulk-import idempotency,
 //     unique per balance (docs/bulk-import.md).
 //

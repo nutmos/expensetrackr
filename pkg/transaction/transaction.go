@@ -194,14 +194,28 @@ func (in CreateInput) Validate() (Transaction, error) {
 		exp.ToBalanceUID = &to
 	}
 
-	// A category is required for every type but transfer and repay_debt,
-	// where it is not allowed (balance adjustments never come through here).
+	// Interest and fees of a debt repayment; checked before the category,
+	// which a repayment may only have when it has charges.
+	if okType {
+		validateCharges(in, tt, exponent, known, fields, &exp)
+	}
+
+	// A category is required for every type but transfer and repay_debt.
+	// A transfer may not have one; a repay_debt may have an expense category
+	// for its interest and fees only when it has some (balance adjustments
+	// never come through here).
 	cat := common_type.NormalizeUID(in.CategoryUID)
 	if cat == "" {
 		if okType && tt.NeedsCategory() {
 			fields["category_uid"] = "is required for " + article(tt) + " " + strings.ReplaceAll(string(tt), "_", " ")
 		}
-	} else if okType && !tt.NeedsCategory() {
+	} else if okType && tt == RepayDebt && exp.ChargesMinor() == 0 {
+		if _, bad := fields["interest_amount"]; !bad {
+			if _, bad := fields["fee_amount"]; !bad {
+				fields["category_uid"] = errRepayCategory
+			}
+		}
+	} else if okType && !tt.NeedsCategory() && tt != RepayDebt {
 		fields["category_uid"] = "is not allowed for " + article(tt) + " " + strings.ReplaceAll(string(tt), "_", " ")
 	} else if !cat.Valid() {
 		fields["category_uid"] = "must be a UUID (the uid of a category)"
@@ -307,6 +321,53 @@ func validateForeign(in CreateInput, tt Type, cur string, fields map[string]stri
 	exp.ForeignAmountMinor, exp.ForeignAmount, exp.ForeignCurrency = &minor, &amt, &fc
 }
 
+// errRepayCategory is the category_uid message for a repay_debt without
+// interest or fees.
+const errRepayCategory = "is only allowed for a repay debt with interest_amount or fee_amount (it is the expense category of those charges)"
+
+// errChargesTypes is the message for interest_amount / fee_amount sent with a
+// type other than repay_debt.
+const errChargesTypes = "is only allowed when type is repay_debt"
+
+// validateCharges checks the optional interest_amount and fee_amount of a
+// debt repayment: plain decimals of 0 or more in the transaction currency
+// (exponent; known is false for an unknown currency, already reported).
+// Empty or 0 means none. Problems are added to fields; positive values are
+// set on exp.
+func validateCharges(in CreateInput, tt Type, exponent int, known bool, fields map[string]string, exp *Transaction) {
+	for _, c := range []struct {
+		field  string
+		raw    DecimalInput
+		amount **string
+		minor  **int64
+	}{
+		{"interest_amount", in.InterestAmount, &exp.InterestAmount, &exp.InterestAmountMinor},
+		{"fee_amount", in.FeeAmount, &exp.FeeAmount, &exp.FeeAmountMinor},
+	} {
+		raw := strings.TrimSpace(string(c.raw))
+		if raw == "" {
+			continue
+		}
+		if !tt.AllowsCharges() {
+			fields[c.field] = errChargesTypes
+			continue
+		}
+		if !known {
+			continue
+		}
+		minor, err := money.ParseNonNegative(raw, exponent)
+		if err != nil {
+			fields[c.field] = err.Error()
+			continue
+		}
+		if minor == 0 {
+			continue
+		}
+		amt := money.FormatAmount(minor, exponent)
+		*c.amount, *c.minor = &amt, &minor
+	}
+}
+
 // AttachPaymentBalance checks that b is allowed as balance_uid for e.Type and
 // copies its name into Account as a denormalized snapshot. Call after
 // Validate, once the uid has been loaded from the store.
@@ -381,9 +442,10 @@ func article(t Type) string {
 }
 
 // categoryType is the category type a transaction type needs: expense for
-// asset purchases, income for returns on investment, else the type itself.
+// asset purchases and for the charges of a debt repayment, income for
+// returns on investment, else the type itself.
 func categoryType(tt Type) string {
-	if tt == AssetPurchase {
+	if tt == AssetPurchase || tt == RepayDebt {
 		return string(Expense)
 	}
 	if tt == ReturnOnInvestment {
@@ -393,7 +455,8 @@ func categoryType(tt Type) string {
 }
 
 // AttachCategory checks that c is the referenced category and matches the
-// transaction type (expense categories for expenses and asset purchases,
+// transaction type (expense categories for expenses, asset purchases and
+// debt repayment charges,
 // income categories for income and returns on investment). Only the uid is stored on the transaction;
 // the name is looked up from the categories table (or GET /api/categories)
 // when needed.

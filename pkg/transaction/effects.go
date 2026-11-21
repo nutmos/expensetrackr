@@ -18,7 +18,9 @@ func (e Transaction) Effects() []Effect {
 	case Income, ReturnOnInvestment: // ROI: the linked asset is not moved
 		return []Effect{{BalanceUID: e.BalanceUID, Field: "balance_uid", Delta: amt}}
 	case Transfer, AssetPurchase, RepayDebt:
-		out := []Effect{{BalanceUID: e.BalanceUID, Field: "balance_uid", Delta: -amt}}
+		// repay_debt: the account also pays the interest and fees; only the
+		// principal (amount) reduces the debt.
+		out := []Effect{{BalanceUID: e.BalanceUID, Field: "balance_uid", Delta: -(amt + e.ChargesMinor())}}
 		if e.ToBalanceUID != nil {
 			to := amt
 			if e.ToAmountMinor != nil {

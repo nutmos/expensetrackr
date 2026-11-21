@@ -159,7 +159,10 @@ index on `(balance_uid, import_ref) WHERE import_ref IS NOT NULL`.
      `other_liability` is still rejected for income.
    - **credit card payments** and **loan instalments** from a bank account:
      `type: "repay_debt"`, from the `payment_account` to the `credit_card` or
-     `other_liability` (same currency, no category). Other moves between your
+     `other_liability` (same currency). When the statement splits an instalment
+     into principal, interest and fees, send the principal as `amount` and the
+     rest as `interest_amount` / `fee_amount` (optionally with an expense
+     `category_uid` for them). Other moves between your
      own accounts: `type: "transfer"`. On a card statement, the "PAYMENT – THANK YOU" line is the
      destination side of a repayment that may already have been imported from
      the bank statement. Import it once only, from one side.
