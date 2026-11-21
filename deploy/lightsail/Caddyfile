@@ -5,7 +5,24 @@
 #     open and the domain's DNS pointing at the instance).
 #   - IP:     Caddy uses a certificate from its own internal CA, so browsers
 #     warn until you switch to a domain.
+#
+#
+# TLS_ISSUER is set by deploy.sh: "internal" for an IP, "acme" for a domain.
+#
+# default_sni: clients connecting to a bare IP send no SNI, and Caddy then
+# picks a certificate by the address the connection arrived on, which inside
+# Docker is the container's IP (172.x), not the public one, so the handshake
+# fails ("no certificate available for '172.17.0.2'"). default_sni makes those
+# clients get the SITE_ADDRESS certificate; it only takes effect with the
+# explicit tls block below (Caddy ignores it on its automatic TLS policy).
+{
+	default_sni {$SITE_ADDRESS}
+}
+
 {$SITE_ADDRESS} {
+	tls {
+		issuer {$TLS_ISSUER}
+	}
 	encode zstd gzip
 	reverse_proxy expensetrackr-app:8080
 }
