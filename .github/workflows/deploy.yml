@@ -1,0 +1,116 @@
+name: Deploy (Lightsail)
+
+# Deploys a published image (publish-image.yml) to the Lightsail instance over
+# SSH and serves it on HTTPS :443 (deploy/lightsail/deploy.sh).
+#
+# - main: called by publish-image.yml right after it pushes the image for a
+#   commit that passed CI, with that commit's `sha-<commit>` tag.
+# - Manual: "Run workflow" in the Actions tab, with any published tag
+#   (`latest`, or `sha-<commit>` to roll back).
+#
+# Settings (repository secrets, or variables for the non-secret ones):
+#   LIGHTSAIL_IP_ADDR       public IP of the instance
+#   LIGHTSAIL_SSH_KEY_PAIR  private key (.pem) of the instance's key pair
+#   LIGHTSAIL_USER          SSH user (ec2-user)
+#   LIGHTSAIL_DOMAIN        optional; domain to serve instead of the bare IP
+#                           (real Let's Encrypt certificate)
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Image tag to deploy
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Image tag to deploy (latest or sha-<commit>)
+        type: string
+        default: latest
+
+permissions:
+  contents: read
+  packages: read # pull from ghcr.io on the instance
+
+concurrency:
+  # Never two deploys at once; a newer one waits for the running one.
+  group: deploy-lightsail
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Lightsail
+    runs-on: ubuntu-latest
+    env:
+      HOST: ${{ vars.LIGHTSAIL_IP_ADDR || secrets.LIGHTSAIL_IP_ADDR }}
+      SSH_USER: ${{ vars.LIGHTSAIL_USER || secrets.LIGHTSAIL_USER || 'ec2-user' }}
+      SITE_ADDRESS: ${{ vars.LIGHTSAIL_DOMAIN || secrets.LIGHTSAIL_DOMAIN || vars.LIGHTSAIL_IP_ADDR || secrets.LIGHTSAIL_IP_ADDR }}
+      IMAGE: ghcr.io/${{ github.repository }}:${{ inputs.tag }}
+      REMOTE_DIR: expensetrackr
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: deploy/lightsail
+
+      - name: Check settings
+        env:
+          KEY_SET: ${{ secrets.LIGHTSAIL_SSH_KEY_PAIR != '' }}
+        run: |
+          missing=()
+          [[ -n "$HOST" ]] || missing+=(LIGHTSAIL_IP_ADDR)
+          [[ "$KEY_SET" == true ]] || missing+=(LIGHTSAIL_SSH_KEY_PAIR)
+          if (( ${#missing[@]} )); then
+            echo "::error::Missing repository secrets/variables: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Set up SSH
+        env:
+          SSH_KEY: ${{ secrets.LIGHTSAIL_SSH_KEY_PAIR }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/lightsail.pem
+          chmod 600 ~/.ssh/lightsail.pem
+          ssh-keyscan -T 15 -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          cat >> ~/.ssh/config <<EOF
+          Host lightsail
+            HostName $HOST
+            User $SSH_USER
+            IdentityFile ~/.ssh/lightsail.pem
+            IdentitiesOnly yes
+            ServerAliveInterval 30
+          EOF
+
+      - name: Copy deploy files
+        run: |
+          ssh lightsail "mkdir -p ~/$REMOTE_DIR"
+          scp deploy/lightsail/deploy.sh deploy/lightsail/Caddyfile "lightsail:~/$REMOTE_DIR/"
+          ssh lightsail "chmod +x ~/$REMOTE_DIR/deploy.sh"
+
+      - name: Deploy ${{ inputs.tag }}
+        env:
+          # Short-lived job token, used on the instance only to pull the image
+          # (works whether the ghcr.io package is public or private).
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Values go over stdin, so the token stays out of the remote
+          # process list and shell history.
+          {
+            printf 'export IMAGE=%q\n' "$IMAGE"
+            printf 'export SITE_ADDRESS=%q\n' "$SITE_ADDRESS"
+            printf 'export GHCR_USER=%q\n' "${{ github.actor }}"
+            printf 'export GHCR_TOKEN=%q\n' "$GHCR_TOKEN"
+            printf 'exec ~/%s/deploy.sh\n' "$REMOTE_DIR"
+          } | ssh lightsail bash -s
+
+      - name: Summary
+        run: |
+          {
+            echo "### Deployed \`${IMAGE}\`"
+            echo
+            echo "https://${SITE_ADDRESS}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Clean up SSH key
+        if: always()
+        run: rm -f ~/.ssh/lightsail.pem

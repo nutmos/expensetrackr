@@ -8,6 +8,7 @@ name: Publish image
 #   tested commits are published (a failed CI publishes nothing).
 # - Pull requests that touch the image: build both platforms, push nothing.
 # - Manual: "Run workflow" in the Actions tab publishes the current main.
+# - After a publish from main, the image is deployed to Lightsail (deploy.yml).
 on:
   workflow_run:
     workflows: [CI]
@@ -47,6 +48,8 @@ jobs:
     permissions:
       contents: read
       packages: write # push to ghcr.io with GITHUB_TOKEN
+    outputs:
+      tag: sha-${{ steps.commit.outputs.short }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -114,3 +117,17 @@ jobs:
             echo
             echo "Run it: \`docker pull ${IMAGE}:latest\` (see docs/getting-started.md)."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # Deploy the image just pushed to the Lightsail instance (deploy.yml).
+  # Only for main (workflow_run after CI, or a manual run on main), never PRs.
+  deploy:
+    name: Deploy
+    needs: image
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/deploy.yml
+    with:
+      tag: ${{ needs.image.outputs.tag }}
+    secrets: inherit

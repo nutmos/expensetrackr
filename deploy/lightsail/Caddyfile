@@ -1,0 +1,11 @@
+# HTTPS front for expensetrackr on the Lightsail instance (deploy.sh).
+#
+# SITE_ADDRESS is a domain name or the instance's public IP:
+#   - domain: Caddy gets a Let's Encrypt certificate (needs ports 80 and 443
+#     open and the domain's DNS pointing at the instance).
+#   - IP:     Caddy uses a certificate from its own internal CA, so browsers
+#     warn until you switch to a domain.
+{$SITE_ADDRESS} {
+	encode zstd gzip
+	reverse_proxy expensetrackr-app:8080
+}
