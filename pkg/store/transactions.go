@@ -30,6 +30,9 @@ func (s *Store) Create(ctx context.Context, userUID string, e *transaction.Trans
 	if err := checkForeign(*e); err != nil {
 		return err
 	}
+	if err := checkCharges(*e); err != nil {
+		return err
+	}
 	var next transaction.Transaction
 	err := s.inTx(ctx, "insert transaction", func(tx *sql.Tx) error {
 		var err error
@@ -62,11 +65,11 @@ func insertTx(ctx context.Context, tx *sql.Tx, userUID string, e transaction.Tra
 		return tx.QueryRowContext(ctx,
 			`INSERT INTO transactions (uid, user_uid, type, amount_minor, amount_scale, currency, balance_uid, account, to_balance_uid, to_account, category_uid, spent_at, spent_at_utc, note, created_at, version, balance_applied,
 			                           to_amount_minor, to_amount_scale, to_currency, exchange_rate, rate_source, rate_date, import_ref,
-			                           foreign_amount_minor, foreign_amount_scale, foreign_currency)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 1, true, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+			                           foreign_amount_minor, foreign_amount_scale, foreign_currency, interest_amount_minor, fee_amount_minor)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 1, true, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
 			 RETURNING id`,
-			append(append(append([]any{next.UID, userUID, string(next.Type), next.AmountMinor, scale, next.Currency, next.BalanceUID, next.Account, next.ToBalanceUID, next.ToAccount, next.CategoryUID, next.SpentAt, spentUTC(next), next.Note, next.CreatedAt},
-				fxArgs(next)...), next.ImportRef), foreignArgs(next)...)...).Scan(&id)
+			append(append(append(append([]any{next.UID, userUID, string(next.Type), next.AmountMinor, scale, next.Currency, next.BalanceUID, next.Account, next.ToBalanceUID, next.ToAccount, next.CategoryUID, next.SpentAt, spentUTC(next), next.Note, next.CreatedAt},
+				fxArgs(next)...), next.ImportRef), foreignArgs(next)...), next.InterestAmountMinor, next.FeeAmountMinor)...).Scan(&id)
 	})
 	if err != nil {
 		return e, err
@@ -138,7 +141,7 @@ func cursorOf(e transaction.Transaction) ListCursor {
 
 const selectCols = `id, uid, type, amount_minor, amount_scale, currency, balance_uid, account, to_balance_uid, to_account, category_uid, spent_at, note, created_at, updated_at, version, balance_applied, adjustment_direction,
 	to_amount_minor, to_amount_scale, to_currency, exchange_rate, rate_source, rate_date, import_ref,
-	foreign_amount_minor, foreign_amount_scale, foreign_currency`
+	foreign_amount_minor, foreign_amount_scale, foreign_currency, interest_amount_minor, fee_amount_minor`
 
 // List returns rows from transactions owned by userUID, newest first (by spend
 // time, then ID).
@@ -276,6 +279,9 @@ func (s *Store) UpdateWith(ctx context.Context, userUID string, id int64, opts W
 		if err := checkForeign(next); err != nil {
 			return err
 		}
+		if err := checkCharges(next); err != nil {
+			return err
+		}
 		scale, ok := money.MinorUnits(next.Currency)
 		if !ok {
 			return fmt.Errorf("unknown currency %q", next.Currency)
@@ -290,10 +296,11 @@ func (s *Store) UpdateWith(ctx context.Context, userUID string, id int64, opts W
 				`UPDATE transactions SET type = $1, amount_minor = $2, amount_scale = $3, currency = $4, balance_uid = $5, account = $6, to_balance_uid = $7, to_account = $8, category_uid = $9,
 			        spent_at = $10, spent_at_utc = $11, note = $12, updated_at = $13, version = $14,
 			        to_amount_minor = $15, to_amount_scale = $16, to_currency = $17, exchange_rate = $18, rate_source = $19, rate_date = $20, import_ref = $21,
-			        foreign_amount_minor = $22, foreign_amount_scale = $23, foreign_currency = $24
-			 WHERE id = $25 AND version = $26`,
+			        foreign_amount_minor = $22, foreign_amount_scale = $23, foreign_currency = $24,
+			        interest_amount_minor = $25, fee_amount_minor = $26
+			 WHERE id = $27 AND version = $28`,
 				append(append(append(append([]any{string(next.Type), next.AmountMinor, scale, next.Currency, next.BalanceUID, next.Account, next.ToBalanceUID, next.ToAccount, next.CategoryUID,
-					next.SpentAt, spentUTC(next), next.Note, now, next.Version}, fxArgs(next)...), next.ImportRef), foreignArgs(next)...), id, cur.Version)...)
+					next.SpentAt, spentUTC(next), next.Note, now, next.Version}, fxArgs(next)...), next.ImportRef), foreignArgs(next)...), next.InterestAmountMinor, next.FeeAmountMinor, id, cur.Version)...)
 			if err != nil {
 				return err
 			}
@@ -403,6 +410,21 @@ func foreignArgs(e transaction.Transaction) []any {
 	return []any{*e.ForeignAmountMinor, scale, *e.ForeignCurrency}
 }
 
+// checkCharges enforces the debt-charge invariants: interest and fees are
+// positive when set, only on a repay_debt, and a repay_debt has a category
+// only when it has charges.
+func checkCharges(e transaction.Transaction) error {
+	for _, m := range []*int64{e.InterestAmountMinor, e.FeeAmountMinor} {
+		if m != nil && (*m <= 0 || !e.Type.AllowsCharges()) {
+			return fmt.Errorf("invalid interest/fee fields on a %s transaction", e.Type)
+		}
+	}
+	if e.Type == transaction.RepayDebt && e.CategoryUID != nil && e.ChargesMinor() == 0 {
+		return errors.New("repay_debt category without interest or fees")
+	}
+	return nil
+}
+
 // spentUTC is the spent_at_utc value of e: its spend time at second
 // precision (spent_at is stored at second precision too), in UTC.
 func spentUTC(e transaction.Transaction) time.Time {
@@ -420,9 +442,10 @@ func scan(r scanner) (transaction.Transaction, error) {
 	var toCur, rate, rateSrc, importRef sql.NullString
 	var fMinor, fScale sql.NullInt64
 	var fCur sql.NullString
+	var interest, fee sql.NullInt64
 	if err := r.Scan(&e.ID, &e.UID, &typ, &e.AmountMinor, &scale, &e.Currency, &e.BalanceUID, &e.Account, &toUID, &toName, &catUID, &e.SpentAt, &e.Note, &created, &updated,
 		&e.Version, &e.AdjustsBalances, &dir, &toMinor, &toScale, &toCur, &rate, &rateSrc, &rateDate, &importRef,
-		&fMinor, &fScale, &fCur); err != nil {
+		&fMinor, &fScale, &fCur, &interest, &fee); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return e, err
 		}
@@ -466,6 +489,15 @@ func scan(r scanner) (transaction.Transaction, error) {
 	if fMinor.Valid && fCur.Valid {
 		m, a, c := fMinor.Int64, money.FormatAmount(fMinor.Int64, int(fScale.Int64)), fCur.String
 		e.ForeignAmountMinor, e.ForeignAmount, e.ForeignCurrency = &m, &a, &c
+	}
+	// Interest and fees are in the transaction currency, at amount_scale.
+	if interest.Valid {
+		m, a := interest.Int64, money.FormatAmount(interest.Int64, scale)
+		e.InterestAmountMinor, e.InterestAmount = &m, &a
+	}
+	if fee.Valid {
+		m, a := fee.Int64, money.FormatAmount(fee.Int64, scale)
+		e.FeeAmountMinor, e.FeeAmount = &m, &a
 	}
 	if t, err := time.Parse(time.RFC3339, e.SpentAt); err == nil {
 		e.SpentTime = t

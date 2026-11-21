@@ -129,7 +129,7 @@ amount). Category names are unique per type.
 | `transfer` | move between own balances (incl. paying a card) | any | any other balance | **not allowed** |
 | `asset_purchase` | buy a tracked asset | `payment_account` or `credit_card` | an `other_asset` | **required**, an `expense` category |
 | `return_on_investment` | dividend / interest from a tracked investment (works like income) | `payment_account` or `credit_card` (received into) | **required**: the `other_asset` it came from (value **not** changed) | **required**, an `income` category |
-| `repay_debt` | pay down a credit card bill or a loan instalment | `payment_account` | **required**: the `credit_card` or `other_liability` repaid (same currency) | **not allowed** |
+| `repay_debt` | pay down a credit card bill or a loan instalment (`amount` = principal; optional `interest_amount` / `fee_amount` on top) | `payment_account` | **required**: the `credit_card` or `other_liability` repaid (same currency) | optional `expense` category, **only** with interest/fees |
 | `balance_adjustment` | **never** send this | — | — | — |
 
 ### 3. Build the body (exact API rules)
@@ -140,7 +140,8 @@ amount). Category names are unique per type.
 | `currency` | ISO 4217; **must equal the source balance's currency** (422 otherwise). |
 | `balance_uid` | UUID of the source / paying / receiving balance. |
 | `to_balance_uid` | required for `transfer`, `asset_purchase`, `return_on_investment` and `repay_debt`; must differ from `balance_uid`. |
-| `category_uid` | **required** UUID except on transfers and repay_debt (forbidden there); type must match (see table). If the user didn't name a category and none clearly fits, show the user's categories of that type and ask; don't create one unasked. |
+| `interest_amount`, `fee_amount` | **repay_debt only**, optional: interest and other fees paid on top of the principal, in `currency`. The account pays amount + interest + fees; the debt goes down by `amount`; the charges count as expenses. Only when the user separates them (e.g. "paid 1155.50, of which 125.50 interest and 30 fees" → amount 1000). |
+| `category_uid` | **required** UUID except on transfers (forbidden) and repay_debt (optional, only with interest/fees: an expense category); type must match (see table). If the user didn't name a category and none clearly fits, show the user's categories of that type and ask; don't create one unasked. |
 | `spent_at` | RFC 3339 **with offset**: `2026-10-06T12:30:00+08:00` (no date-only, no naive local time). |
 | `note` | optional, ≤ 1000 characters. |
 | `to_amount` | **transfer only.** Same-currency: omit, or equal `amount`. Cross-currency: omit → server uses Frankfurter (ECB) for the `spent_at` date; or send the amount received in the destination currency (`rate_source: "manual"`). Never invent a received amount. |
@@ -277,6 +278,7 @@ balance and category **names** to uids, POSTs, and prints a short summary:
 scripts/log-tx.sh expense  Wallet 120.50 THB --category Food --at 2026-10-06T12:30:00+08:00 --note Lunch
 scripts/log-tx.sh income   Wallet 50000 THB --category Salary --at 2026-10-01T09:00:00+08:00 --note Salary
 scripts/log-tx.sh repay_debt Wallet "Credit Card" 5000 THB --at 2026-10-07T22:00:00+08:00
+scripts/log-tx.sh repay_debt Wallet "Car Loan" 1000 THB --interest 125.50 --fee 30 --category "Loan interest" --at 2026-10-07T22:00:00+08:00
 scripts/log-tx.sh transfer "USD Account" Wallet 100 USD --to-amount 3361.50 --at 2026-10-12T10:00:00+08:00
 scripts/log-tx.sh return_on_investment Wallet Gold 250 THB --category Dividends --at 2026-10-09T10:00:00+08:00
 ```

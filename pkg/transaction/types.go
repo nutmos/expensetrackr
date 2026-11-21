@@ -62,6 +62,16 @@ type Transaction struct {
 	ForeignAmount      *string `json:"foreign_amount"`       // decimal string in foreign_currency
 	ForeignAmountMinor *int64  `json:"foreign_amount_minor"` // foreign_amount in minor units of foreign_currency
 	ForeignCurrency    *string `json:"foreign_currency"`     // ISO 4217, never equal to currency
+	// Debt charges (optional; repay_debt only, null otherwise): interest and
+	// other fees paid together with the repayment, in the transaction
+	// currency. amount is the principal (what the debt goes down by); the
+	// payment account pays amount + interest_amount + fee_amount. The charges
+	// are counted as expenses in reports (under category_uid, if set). See
+	// docs/data-model.md.
+	InterestAmount      *string `json:"interest_amount"`       // decimal string in currency
+	InterestAmountMinor *int64  `json:"interest_amount_minor"` // interest_amount in minor units
+	FeeAmount           *string `json:"fee_amount"`            // decimal string in currency
+	FeeAmountMinor      *int64  `json:"fee_amount_minor"`      // fee_amount in minor units
 	// ConversionRates is response-only and never stored: for a cross-currency
 	// transfer, both directions of the effective rate (to_amount / amount and
 	// amount / to_amount), computed by MarshalJSON on every encode; null
@@ -101,6 +111,12 @@ type CreateInput struct {
 	// never affect balances. On PUT, omitted means none (full replace).
 	ForeignAmount   DecimalInput `json:"foreign_amount"`
 	ForeignCurrency string       `json:"foreign_currency"`
+	// InterestAmount and FeeAmount (repay_debt only) are the interest and
+	// other fees paid on top of the principal (amount), in the transaction
+	// currency. Empty or 0 means none. On PUT, omitted means none (full
+	// replace).
+	InterestAmount DecimalInput `json:"interest_amount"`
+	FeeAmount      DecimalInput `json:"fee_amount"`
 
 	// IgnoredUID accepts a "uid" in PUT bodies so a previous response can be
 	// round-tripped; it is never used (the uid is server-assigned, immutable).
@@ -176,6 +192,23 @@ func (t Type) AllowsForeignAmount() bool {
 	return t == Expense || t == Income || t == AssetPurchase || t == ReturnOnInvestment
 }
 
+// AllowsCharges reports whether a transaction of this type may record debt
+// charges (interest_amount / fee_amount): repay_debt only.
+func (t Type) AllowsCharges() bool { return t == RepayDebt }
+
+// ChargesMinor is the interest plus fees of a debt repayment in minor units
+// of the transaction currency (0 when there are none).
+func (e Transaction) ChargesMinor() int64 {
+	var n int64
+	if e.InterestAmountMinor != nil {
+		n += *e.InterestAmountMinor
+	}
+	if e.FeeAmountMinor != nil {
+		n += *e.FeeAmountMinor
+	}
+	return n
+}
+
 // ErrAdjustmentType is the field message for an attempt to use type
 // balance_adjustment in POST/PUT /api/transactions.
 const ErrAdjustmentType = "balance_adjustment transactions are created automatically when a balance amount is edited (PUT /api/balances/:uid); they cannot be created or changed here"
@@ -208,9 +241,10 @@ type ConversionRate struct {
 //	          to_balance_uid   value += amount  (destination other_asset up)
 //	return_on_investment balance_uid value += amount (like income: account up / card debt down)
 //	          to_balance_uid   none             (linked other_asset; link only, value unchanged)
-//	repay_debt balance_uid     value -= amount  (payment_account balance down)
-//	          to_balance_uid   value += amount  (credit_card / other_liability debt down;
-//	                           overpaying leaves it in credit)
+//	repay_debt balance_uid     value -= amount + interest_amount + fee_amount
+//	                           (payment_account balance down by everything paid)
+//	          to_balance_uid   value += amount  (credit_card / other_liability debt down by
+//	                           the principal only; overpaying leaves it in credit)
 //	balance_adjustment         none             (records a manual edit that already set the value)
 type Effect struct {
 	BalanceUID UID

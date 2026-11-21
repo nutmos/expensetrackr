@@ -69,7 +69,7 @@ func TestRepayDebtValidate(t *testing.T) {
 	}{
 		{"missing to_balance_uid", func(in *CreateInput) { in.ToBalanceUID = "" }, "to_balance_uid", "is required for a repay debt"},
 		{"same as balance_uid", func(in *CreateInput) { in.ToBalanceUID = roiWalletUID }, "to_balance_uid", "must differ"},
-		{"category not allowed", func(in *CreateInput) { in.CategoryUID = roiCatUID }, "category_uid", "is not allowed for a repay debt"},
+		{"category not allowed", func(in *CreateInput) { in.CategoryUID = roiCatUID }, "category_uid", "only allowed for a repay debt with interest_amount or fee_amount"},
 		{"to_amount not allowed", func(in *CreateInput) { in.ToAmount = "1" }, "to_amount", "only allowed when type is transfer"},
 		{"to_currency not allowed", func(in *CreateInput) { in.ToCurrency = "USD" }, "to_currency", "only allowed when type is transfer"},
 		{"unknown type lists repay_debt", func(in *CreateInput) { in.Type = "repay" }, "type", "repay_debt"},

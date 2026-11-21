@@ -18,6 +18,7 @@ import (
 //	v2  balance names no longer unique (migrate_v2.go)
 //	v3  transaction type repay_debt allowed (migrate_v3.go)
 //	v4  optional foreign-currency amount on transactions (migrate_v4.go)
+//	v5  optional interest and fees on repay_debt (migrate_v5.go)
 //
 // All pending steps run in one SQL transaction (Postgres DDL is
 // transactional), so a failed upgrade leaves the database as it was. The
@@ -53,6 +54,8 @@ var migrations = []migration{
 	allowRepayDebtType,
 	// 3 -> 4: foreign_amount_minor / foreign_amount_scale / foreign_currency.
 	addForeignAmount,
+	// 4 -> 5: interest_amount_minor / fee_amount_minor on repay_debt.
+	addRepayDebtCharges,
 }
 
 // SchemaVersion is the version a fully migrated database has.

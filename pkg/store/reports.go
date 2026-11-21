@@ -15,7 +15,9 @@ import (
 
 // SumFlows aggregates userUID's expense, income and return-on-investment
 // transactions spent in [from, to] (either bound may be nil) by type,
-// currency, category and stored scale, for the income & expense report.
+// currency, category and stored scale, for the income & expense report. The
+// interest and fees of debt repayments are included as expense rows (under
+// the repayment's category, if any); their principal is not.
 // Sums are computed by Postgres as numeric, so they never overflow.
 func (s *Store) SumFlows(ctx context.Context, userUID string, from, to *time.Time) ([]report.FlowRow, error) {
 	args := []any{userUID}
@@ -27,15 +29,17 @@ func (s *Store) SumFlows(ctx context.Context, userUID string, from, to *time.Tim
 	for i, t := range report.FlowTypes {
 		types[i] = string(t)
 	}
-	query := `SELECT type, currency, category_uid, amount_scale, SUM(amount_minor)::text, COUNT(*)
-		FROM transactions WHERE user_uid = $1 AND type = ANY(` + arg(types) + `)`
+	query := `SELECT CASE WHEN type = 'repay_debt' THEN 'expense' ELSE type END AS flow_type, currency, category_uid, amount_scale,
+		SUM(CASE WHEN type = 'repay_debt' THEN coalesce(interest_amount_minor, 0) + coalesce(fee_amount_minor, 0) ELSE amount_minor END)::text, COUNT(*)
+		FROM transactions WHERE user_uid = $1
+		AND (type = ANY(` + arg(types) + `) OR (type = 'repay_debt' AND (interest_amount_minor IS NOT NULL OR fee_amount_minor IS NOT NULL)))`
 	if from != nil {
 		query += ` AND spent_at_utc >= ` + arg(from.UTC())
 	}
 	if to != nil {
 		query += ` AND spent_at_utc <= ` + arg(to.UTC())
 	}
-	query += ` GROUP BY type, currency, category_uid, amount_scale`
+	query += ` GROUP BY flow_type, currency, category_uid, amount_scale`
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {

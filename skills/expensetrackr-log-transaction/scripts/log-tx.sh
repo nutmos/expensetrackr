@@ -10,12 +10,15 @@
 #     (dividend/interest received into ACCOUNT_OR_CARD, linked to ASSET,
 #      an other_asset whose value is not changed)
 #   log-tx.sh repay_debt PAYMENT_ACCOUNT CARD_OR_LIABILITY AMOUNT CURRENCY [options]
-#     (pays down a credit_card / other_liability from a payment_account)
+#     (pays down a credit_card / other_liability from a payment_account;
+#      AMOUNT is the principal, see --interest / --fee)
 #
 # Options:
 #   --category NAME       category name, required except for transfer and repay_debt
 #                         (expense category for expense and asset_purchase;
-#                         income category for income and return_on_investment)
+#                         income category for income and return_on_investment;
+#                         on repay_debt optional, only with --interest/--fee:
+#                         the expense category of those charges)
 #   --at RFC3339          spent_at with offset (required)
 #   --note TEXT           optional note
 #   --to-amount AMOUNT    received amount (cross-currency transfer only; optional)
@@ -24,6 +27,10 @@
 #                         optional, together (expense, income, asset_purchase,
 #                         return_on_investment): the amount in another currency,
 #                         for reference only (never moves a balance)
+#   --interest AMOUNT     repay_debt only: interest paid on top of the principal
+#   --fee AMOUNT          repay_debt only: other fees paid on top of the principal
+#                         (the account pays principal + interest + fee; the debt
+#                         goes down by the principal; charges count as expenses)
 #
 # Environment:
 #   EXPENSETRACKR_TOKEN   write-scoped personal API token (ext_…) — required
@@ -46,7 +53,7 @@ Usage:
   log-tx.sh transfer SOURCE DEST AMOUNT CURRENCY --at RFC3339 [--to-amount A] [--to-currency C] [--note TEXT]
   log-tx.sh asset_purchase SOURCE ASSET AMOUNT CURRENCY --category NAME --at RFC3339 [--note TEXT]
   log-tx.sh return_on_investment ACCOUNT_OR_CARD ASSET AMOUNT CURRENCY --category NAME --at RFC3339 [--note TEXT]
-  log-tx.sh repay_debt PAYMENT_ACCOUNT CARD_OR_LIABILITY AMOUNT CURRENCY --at RFC3339 [--note TEXT]
+  log-tx.sh repay_debt PAYMENT_ACCOUNT CARD_OR_LIABILITY PRINCIPAL CURRENCY --at RFC3339 [--interest A] [--fee A] [--category NAME] [--note TEXT]
 EOF
 	exit 2
 }
@@ -87,6 +94,8 @@ TO_AMOUNT=""
 TO_CURRENCY=""
 FOREIGN_AMOUNT=""
 FOREIGN_CURRENCY=""
+INTEREST=""
+FEE=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--category)
@@ -124,19 +133,35 @@ while [ $# -gt 0 ]; do
 		FOREIGN_CURRENCY=$2
 		shift 2
 		;;
+	--interest)
+		[ $# -ge 2 ] || die "--interest needs a value"
+		INTEREST=$2
+		shift 2
+		;;
+	--fee)
+		[ $# -ge 2 ] || die "--fee needs a value"
+		FEE=$2
+		shift 2
+		;;
 	*) die "unknown option: $1" ;;
 	esac
 done
 
 [ -n "$SPENT_AT" ] || die "--at RFC3339-with-offset is required (e.g. 2026-10-06T12:30:00+08:00)"
 case "$TYPE" in
-transfer | repay_debt)
+transfer)
 	[ -z "$CATEGORY" ] || die "category is not allowed on a $TYPE"
+	;;
+repay_debt)
+	[ -z "$CATEGORY" ] || [ -n "$INTEREST$FEE" ] || die "--category on a repay_debt needs --interest or --fee (it is their category)"
 	;;
 *)
 	[ -n "$CATEGORY" ] || die "--category NAME is required for $TYPE (ask the user which category)"
 	;;
 esac
+if [ "$TYPE" != repay_debt ]; then
+	[ -z "$INTEREST$FEE" ] || die "--interest/--fee are only allowed on a repay_debt"
+fi
 if [ "$TYPE" != transfer ]; then
 	[ -z "$TO_AMOUNT$TO_CURRENCY" ] || die "--to-amount/--to-currency are only allowed on a transfer"
 fi
@@ -250,7 +275,9 @@ BODY=$(jq -n \
 	--arg to_amount "$TO_AMOUNT" \
 	--arg to_currency "$TO_CURRENCY" \
 	--arg foreign_amount "$FOREIGN_AMOUNT" \
-	--arg foreign_currency "$FOREIGN_CURRENCY" '
+	--arg foreign_currency "$FOREIGN_CURRENCY" \
+	--arg interest_amount "$INTEREST" \
+	--arg fee_amount "$FEE" '
 	{type: $type, amount: $amount, currency: $currency, balance_uid: $balance_uid, spent_at: $spent_at}
 	| if $to_balance_uid != "" then . + {to_balance_uid: $to_balance_uid} else . end
 	| if $category_uid != "" then . + {category_uid: $category_uid} else . end
@@ -258,6 +285,8 @@ BODY=$(jq -n \
 	| if $to_amount != "" then . + {to_amount: $to_amount} else . end
 	| if $to_currency != "" then . + {to_currency: $to_currency} else . end
 	| if $foreign_amount != "" then . + {foreign_amount: $foreign_amount, foreign_currency: ($foreign_currency | ascii_upcase)} else . end
+	| if $interest_amount != "" then . + {interest_amount: $interest_amount} else . end
+	| if $fee_amount != "" then . + {fee_amount: $fee_amount} else . end
 ')
 
 api POST /api/transactions "$BODY"
@@ -279,6 +308,8 @@ jq -r --argjson bal "$(cat "$BALANCES")" '
 		 | "\(.name) now \(.balance // .debt) \(.currency)");
 	"logged \(.type) \(.amount) \(.currency)"
 	+ (if .foreign_amount != null then " [\(.foreign_amount) \(.foreign_currency)]" else "" end)
+	+ (if .interest_amount != null then " + \(.interest_amount) interest" else "" end)
+	+ (if .fee_amount != null then " + \(.fee_amount) fees" else "" end)
 	+ (if .note != "" then " (\(.note))" else "" end)
 	+ (if .type == "return_on_investment"
 	   then " into \(.account) (from investment \(.to_account))"

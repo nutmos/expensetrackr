@@ -30,8 +30,8 @@ is always > 0.
 | `asset_purchase` (destination) | `to_balance_uid` (other_asset only) | `balance += amount` | n/a (not allowed) | the asset bought gains its value |
 | `return_on_investment` (receiver) | `balance_uid` (payment_account / credit_card) | `balance += amount` | `debt −= amount` (may go negative = in credit) | a dividend or interest paid into an account or onto a card |
 | `return_on_investment` (linked asset) | `to_balance_uid` (other_asset only) | none (link only) | n/a (not allowed) | the investment the return came from keeps its value |
-| `repay_debt` (source) | `balance_uid` (payment_account only) | `balance −= amount` | n/a (not allowed) | paying a card bill or a loan instalment from a bank account |
-| `repay_debt` (destination) | `to_balance_uid` (credit_card / other_liability) | n/a (not allowed) | `debt −= amount` (may go negative = in credit) | the card or loan repaid |
+| `repay_debt` (source) | `balance_uid` (payment_account only) | `balance −= amount + interest_amount + fee_amount` | n/a (not allowed) | paying a card bill or a loan instalment from a bank account |
+| `repay_debt` (destination) | `to_balance_uid` (credit_card / other_liability) | n/a (not allowed) | `debt −= amount` (the principal only; may go negative = in credit) | the card or loan repaid |
 | `balance_adjustment` | `balance_uid` (any type) | none | none | recorded by a manual balance edit, which already set the value (§2) |
 
 The code is `transaction.Effects` (signs) and

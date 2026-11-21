@@ -103,7 +103,7 @@ curl -s -X DELETE "http://127.0.0.1:8080/api/categories/$CAT_UID"
 
 Create a payable balance first (or use an existing `uid`), then log a transaction
 with `balance_uid` and a `category_uid` (`$CAT_UID` from the Categories example
-above; required for every type but transfer and repay_debt). The free-text `account` field is **not** accepted on write
+above; required for every type but transfer and repay_debt; on a repay_debt only allowed with `interest_amount` / `fee_amount`). The free-text `account` field is **not** accepted on write
 (unknown field → 400); responses still include `account` as the name snapshot.
 
 ```bash

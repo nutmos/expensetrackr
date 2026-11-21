@@ -68,7 +68,8 @@ info:
       for transactions, balances or categories (a `PATCH` there is a 404 like any unknown method). To
       clear an optional field (`note`, `to_balance_uid`, `description`), omit it or send `""` in
       the full `PUT` body. `category_uid` can't be cleared except on a transfer or repay_debt (it is
-      required on every other type).
+      required on every other type). Optional amounts (`interest_amount`, `fee_amount`,
+      `foreign_amount`) are cleared the same way.
 
     ## Transaction types
 
@@ -79,7 +80,7 @@ info:
     | `transfer` | any balance | **required**, any balance ≠ source | source −amount, destination +amount (debt moves the other way) |
     | `asset_purchase` | `payment_account` or `credit_card` | **required**, an `other_asset` ≠ source | source like an expense (balance −amount / card debt +amount), destination asset balance +amount |
     | `return_on_investment` | `payment_account` or `credit_card` | **required**, the `other_asset` it came from ≠ source | like income (balance +amount / card debt −amount, may go negative); the linked asset is **not** changed (dividend / interest) |
-    | `repay_debt` | `payment_account` | **required**, a `credit_card` or `other_liability` | account balance −amount, destination debt −amount (may go negative = in credit); same currency only, no category |
+    | `repay_debt` | `payment_account` | **required**, a `credit_card` or `other_liability` | account balance −(amount + `interest_amount` + `fee_amount`), destination debt −amount (the principal; may go negative = in credit); same currency only. Category only for the interest/fees (optional, expense category) |
     | `balance_adjustment` | the edited balance | — | none (**read-only**, server-created) |
 
     The transaction `currency` must equal the currency of its balance(s) (422 otherwise); the asset
@@ -880,9 +881,10 @@ paths:
       summary: Income and expenses in a time range
       description: |
         Sums the logged-in user's transactions spent in `[from, to]` per currency: `expense`
-        transactions as expenses; `income` and `return_on_investment` as income. Transfers, asset
-        purchases, debt repayments and balance adjustments are not counted (the same rule as the
-        totals under the web page's transaction list). Each side is also broken down by category,
+        transactions as expenses; `income` and `return_on_investment` as income. The interest and
+        fees of a `repay_debt` (`interest_amount` + `fee_amount`, under its category if any) count as
+        expenses; its principal does not. Transfers, asset purchases and balance adjustments are not
+        counted (the same rule as the totals under the web page's transaction list). Each side is also broken down by category,
         largest first; transactions saved before categories were required are grouped under a
         `null` category. Sums are exact (arbitrary precision); no currency conversion.
       parameters:
@@ -1669,7 +1671,8 @@ components:
         `expense`, `income`, `transfer`, `asset_purchase` (payment account / credit card → other asset;
         a value move, not counted as expense or income), `return_on_investment` (income into a payment
         account / credit card, linked to the other asset it came from, whose value does not change),
-        `repay_debt` (payment account → credit card / other liability, debt down; no category), or the
+        `repay_debt` (payment account → credit card / other liability, debt down by the principal;
+        optional interest and fees paid on top), or the
         read-only, server-created `balance_adjustment`.
       enum: [expense, income, transfer, asset_purchase, return_on_investment, repay_debt, balance_adjustment]
     TransactionWriteType:
@@ -1683,7 +1686,7 @@ components:
       description: Whether a manual edit raised or lowered the edited amount (balance of an asset, debt of a liability).
     Transaction:
       type: object
-      required: [uid, amount, amount_minor, currency, type, balance_uid, account, to_balance_uid, to_account, category_uid, spent_at, note, created_at, updated_at, version, adjusts_balances, adjustment_direction, to_amount, to_amount_minor, to_currency, exchange_rate, rate_source, rate_date, import_ref, foreign_amount, foreign_amount_minor, foreign_currency, conversion_rates]
+      required: [uid, amount, amount_minor, currency, type, balance_uid, account, to_balance_uid, to_account, category_uid, spent_at, note, created_at, updated_at, version, adjusts_balances, adjustment_direction, to_amount, to_amount_minor, to_currency, exchange_rate, rate_source, rate_date, import_ref, foreign_amount, foreign_amount_minor, foreign_currency, interest_amount, interest_amount_minor, fee_amount, fee_amount_minor, conversion_rates]
       properties:
         uid: { $ref: '#/components/schemas/Uid' }
         amount:
@@ -1819,6 +1822,33 @@ components:
           pattern: '^[A-Z]{3}$'
           description: ISO 4217 code of `foreign_amount`; never equal to `currency`. `null` when not recorded.
           example: USD
+        interest_amount:
+          type: string
+          nullable: true
+          description: |
+            `repay_debt` only: interest paid with the repayment, in `currency`. `amount` is the
+            principal (the debt goes down by it); the payment account pays `amount` +
+            `interest_amount` + `fee_amount`. Counted as an expense in reports. `null` when none.
+          example: '12.50'
+        interest_amount_minor:
+          type: integer
+          format: int64
+          nullable: true
+          minimum: 1
+          description: '`interest_amount` in minor units of `currency`; `null` when none.'
+          example: 1250
+        fee_amount:
+          type: string
+          nullable: true
+          description: '`repay_debt` only: other fees paid with the repayment (late fee, service charge, ...), in `currency`. Paid from the account like `interest_amount`; `null` when none.'
+          example: '3.00'
+        fee_amount_minor:
+          type: integer
+          format: int64
+          nullable: true
+          minimum: 1
+          description: '`fee_amount` in minor units of `currency`; `null` when none.'
+          example: 300
         conversion_rates:
           type: array
           nullable: true
@@ -1921,6 +1951,21 @@ components:
           nullable: true
           description: ISO 4217 code of `foreign_amount`; required with it, and must differ from `currency`.
           example: USD
+        interest_amount:
+          allOf:
+            - $ref: '#/components/schemas/DecimalInput'
+          nullable: true
+          description: |
+            `repay_debt` only (422 otherwise): interest paid on top of the principal (`amount`), in
+            `currency`, 0 or more; empty or 0 means none. The payment account pays amount + interest +
+            fees; the debt goes down by `amount` only. PUT is a full replace: omitting it clears it.
+          example: '12.50'
+        fee_amount:
+          allOf:
+            - $ref: '#/components/schemas/DecimalInput'
+          nullable: true
+          description: '`repay_debt` only (422 otherwise): other fees paid on top of the principal, in `currency`; same rules as `interest_amount`.'
+          example: '3.00'
         category_uid:
           type: string
           format: uuid
@@ -1929,7 +1974,8 @@ components:
             **Required** for expense, income, asset_purchase and return_on_investment (422 "is required
             for an expense", ... when missing, null or ""): an expense category for an expense or
             asset_purchase, an income category for income or return_on_investment. Not allowed for
-            transfers or repay_debt. Transactions saved before this rule may still have `null` until edited.
+            transfers. Optional for repay_debt, and only when it has `interest_amount` or `fee_amount`:
+            the expense category those charges are reported under. Transactions saved before this rule may still have `null` until edited.
         spent_at:
           type: string
           format: date-time
@@ -2441,7 +2487,7 @@ components:
         results:
           - index: 0
             status: created
-            transaction: { uid: ea67cb7c-9cef-4323-9b16-59a5139cb582, amount: '45.00', amount_minor: 4500, currency: THB, type: expense, balance_uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5, account: Wallet, to_balance_uid: null, to_account: null, category_uid: 32b0d51e-e81f-41f0-a77c-38e6ec384153, spent_at: '2026-10-01T08:15:00+07:00', note: SAMPLE COFFEE SHOP, created_at: '2026-10-17T05:31:00Z', updated_at: null, version: 1, adjusts_balances: true, adjustment_direction: null, to_amount: null, to_amount_minor: null, to_currency: null, exchange_rate: null, rate_source: null, rate_date: null, import_ref: 'stmt-2026-10:0001', foreign_amount: null, foreign_amount_minor: null, foreign_currency: null }
+            transaction: { uid: ea67cb7c-9cef-4323-9b16-59a5139cb582, amount: '45.00', amount_minor: 4500, currency: THB, type: expense, balance_uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5, account: Wallet, to_balance_uid: null, to_account: null, category_uid: 32b0d51e-e81f-41f0-a77c-38e6ec384153, spent_at: '2026-10-01T08:15:00+07:00', note: SAMPLE COFFEE SHOP, created_at: '2026-10-17T05:31:00Z', updated_at: null, version: 1, adjusts_balances: true, adjustment_direction: null, to_amount: null, to_amount_minor: null, to_currency: null, exchange_rate: null, rate_source: null, rate_date: null, import_ref: 'stmt-2026-10:0001', foreign_amount: null, foreign_amount_minor: null, foreign_currency: null, interest_amount: null, interest_amount_minor: null, fee_amount: null, fee_amount_minor: null }
         balances: []
     BulkResponseReimport:
       summary: Same import sent again (all skipped)

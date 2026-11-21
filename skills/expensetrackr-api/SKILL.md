@@ -118,7 +118,8 @@ The balances move automatically in the same DB transaction.
 | `currency` | ISO 4217; **must equal the (source) balance's currency** (422 otherwise) |
 | `balance_uid` | expense / asset_purchase / return_on_investment: `payment_account` or `credit_card`; income: `payment_account` or `credit_card` (cash rebate); repay_debt: `payment_account`; transfer: any |
 | `to_balance_uid` | transfer (any other balance), asset_purchase (an `other_asset`) and return_on_investment (the `other_asset` it came from; not moved) and repay_debt (the `credit_card` / `other_liability` paid down) only |
-| `category_uid` | **required** except on transfers and repay_debt (forbidden there): expense and asset_purchase need an `expense` category, income and return_on_investment an `income` one. If none clearly fits, ask the user |
+| `category_uid` | **required** except on transfers (forbidden) and repay_debt: expense and asset_purchase need an `expense` category, income and return_on_investment an `income` one. On repay_debt it is optional and only allowed with `interest_amount` / `fee_amount` (an `expense` category for them). If none clearly fits, ask the user |
+| `interest_amount`, `fee_amount` | repay_debt only, optional: interest and other fees paid on top of the principal (`amount`), in `currency`. The account pays amount + interest + fees; the debt goes down by `amount` only. Counted as expenses. Only when the user separates them |
 | `spent_at` | RFC 3339 **with offset**: `2026-10-06T21:06:00+08:00` (no date-only, no naive times) |
 | `note` | optional, ≤ 1000 chars |
 
@@ -144,6 +145,13 @@ curl -sS -b "$JAR" -c "$JAR" -X POST "$BASE/api/transactions" -H 'Content-Type: 
   -d "$(jq -n --arg b "$WALLET_UID" --arg t "$CARD_UID" \
         '{type:"repay_debt", amount:"5000", currency:"THB", balance_uid:$b, to_balance_uid:$t, spent_at:"2026-10-07T22:00:00+08:00"}')" \
   | jq '{uid, type, amount, account, to_account}'
+
+# Loan instalment of 1155.50 THB = 1000 principal + 125.50 interest + 30 fees:
+# Wallet -1155.50, loan debt -1000; the 155.50 counts as an expense.
+curl -sS -b "$JAR" -c "$JAR" -X POST "$BASE/api/transactions" -H 'Content-Type: application/json' \
+  -d "$(jq -n --arg b "$WALLET_UID" --arg t "$LOAN_UID" \
+        '{type:"repay_debt", amount:"1000", interest_amount:"125.50", fee_amount:"30", currency:"THB", balance_uid:$b, to_balance_uid:$t, spent_at:"2026-10-07T22:00:00+08:00"}')" \
+  | jq '{uid, amount, interest_amount, fee_amount}'
 
 # Asset purchase: laptop bought on the credit card, tracked as an other_asset
 ELECTRONICS_UID=$(category_uid Electronics expense)
@@ -236,7 +244,8 @@ Other filters: `category_uid=<uid>`, `type=income|transfer|asset_purchase|return
 `limit` is 1–5000 (default **500**; if `count` equals the limit there may be
 more — narrow the date range). There is no server-side sum: total the
 `amount` strings per currency yourself, count returns on investment as income,
-and exclude transfers, asset purchases, debt repayments and balance adjustments from
+count a repayment's `interest_amount` + `fee_amount` as spending, and exclude
+transfers, asset purchases, debt principal and balance adjustments from
 spending/income totals. Category names are not
 on transactions; join `category_uid` with `GET /api/categories`.
 

@@ -94,8 +94,10 @@ confirmations use human labels instead. For example, an edit page is titled
 
 - The list is newest first, with a date filter (whole days in the device's time
   zone), a Type filter and per-currency totals. Expenses and income are summed
-  separately (returns on investment count as income); transfers, asset purchases, debt
-  repayments and balance adjustments are excluded from both.
+  separately (returns on investment count as income, the interest and fees of a debt
+  repayment as spent); transfers, asset purchases, debt principal and balance
+  adjustments are excluded from both. A repayment's interest and fees are shown
+  under its amount.
 - **Balance Adjustment** rows (recorded by manual balance edits) have their
   own style and label, a signed amount (+/−), and "Automatic" instead of
   Edit/Delete; their edit URL shows a read-only message.
@@ -116,8 +118,12 @@ confirmations use human labels instead. For example, an edit page is titled
   **Investment** (other assets only), and for a debt repayment **Debt
   repaid** (credit cards and other liabilities only; paid from a payment
   account).
-- **Category** is required (except for transfers and debt repayments, where
-  it is hidden) and
+- For a debt repayment the amount is labelled **Principal**, and an optional
+  **Interest and fees** pair of inputs is shown, with the total paid from the
+  account underneath. Only the principal lowers the debt.
+- **Category** is required (except for transfers, where it is hidden, and
+  debt repayments, where it appears as an optional "Category of interest &
+  fees" only once interest or fees are filled in) and
   lists only categories of the selected type (expense categories for asset
   purchases, income categories for returns on investment). With no category
   of that type yet, a hint says to add one first. Editing an older

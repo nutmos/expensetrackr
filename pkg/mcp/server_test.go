@@ -141,6 +141,7 @@ func TestMergeUpdate(t *testing.T) {
 		"category_uid": nil, "spent_at": "2026-10-12T10:00:00+08:00", "note": "fx", "rate_source": "manual",
 		"to_amount": "3361.50", "to_currency": "THB", "version": json.Number("2"),
 	}
+	repayCharges := map[string]any{"type": "repay_debt", "amount": "100.00", "currency": "THB", "balance_uid": "a", "to_balance_uid": "l", "category_uid": "c", "spent_at": "2026-10-12T10:00:00+08:00", "note": "", "interest_amount": "12.50", "fee_amount": "3.00"}
 	foreignExpense := map[string]any{
 		"type": "expense", "amount": "850.00", "currency": "THB", "balance_uid": "a", "to_balance_uid": nil, "category_uid": "c",
 		"spent_at": "2026-10-12T10:00:00+08:00", "note": "", "foreign_amount": "25.00", "foreign_amount_minor": json.Number("2500"), "foreign_currency": "USD",
@@ -205,6 +206,24 @@ func TestMergeUpdate(t *testing.T) {
 			cur:     foreignExpense,
 			changes: map[string]string{"type": "transfer", "to_balance_uid": "b"},
 			want:    map[string]string{"type": "transfer", "amount": "850.00", "currency": "THB", "balance_uid": "a", "to_balance_uid": "b", "spent_at": "2026-10-12T10:00:00+08:00"},
+		},
+		{
+			name:    "repay_debt keeps its charges and category on a note change",
+			cur:     repayCharges,
+			changes: map[string]string{"note": "Nov"},
+			want:    map[string]string{"type": "repay_debt", "amount": "100.00", "currency": "THB", "balance_uid": "a", "to_balance_uid": "l", "category_uid": "c", "spent_at": "2026-10-12T10:00:00+08:00", "note": "Nov", "interest_amount": "12.50", "fee_amount": "3.00"},
+		},
+		{
+			name:    "clearing the last charge drops the repay_debt category",
+			cur:     repayCharges,
+			changes: map[string]string{"interest_amount": "", "fee_amount": ""},
+			want:    map[string]string{"type": "repay_debt", "amount": "100.00", "currency": "THB", "balance_uid": "a", "to_balance_uid": "l", "spent_at": "2026-10-12T10:00:00+08:00"},
+		},
+		{
+			name:    "repay_debt to transfer drops charges and category",
+			cur:     repayCharges,
+			changes: map[string]string{"type": "transfer"},
+			want:    map[string]string{"type": "transfer", "amount": "100.00", "currency": "THB", "balance_uid": "a", "to_balance_uid": "l", "spent_at": "2026-10-12T10:00:00+08:00"},
 		},
 		{
 			name:    "balance adjustments are read-only",
