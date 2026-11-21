@@ -334,10 +334,10 @@
     $("#user-bar").hidden = true;
     $("#user-name").textContent = "";
     $("#login-title").textContent = setup ? "Create account" : "Log in";
-    $("#login-intro").textContent = setup
-      ? "Choose a username (3–32 characters: lowercase letters, digits, . _ -) and a password (at least 8 characters)."
-      : "";
-    $("#login-intro").hidden = !setup;
+    // Rules only matter when choosing credentials (#150).
+    $("#username-info").hidden = !setup;
+    setUsernameHint(false);
+    $("#password-rules").hidden = !setup;
     const nt = $("#login-notice");
     nt.textContent = notice || "";
     nt.hidden = !notice;
@@ -361,10 +361,49 @@
     $("#login-error").hidden = true;
     $("#login-password").value = "";
     clearErrors($("#login-form"));
+    updatePasswordRules(false);
     document.title = (setup ? "Create account" : "Log in") + " · Expense Log";
     $("#view-login").hidden = false;
     $("#login-username").focus();
   }
+
+  // ---- Create account: username (i) hint and password checklist (#150) ----
+  // Mirrors pkg/auth.CheckPasswordRules: 8..72 bytes (bcrypt's limit), so the
+  // length is measured in UTF-8 bytes like the server does.
+  const PASSWORD_RULES = {
+    min: (n) => n >= 8,
+    max: (n) => n <= 72,
+  };
+  const utf8 = new TextEncoder();
+
+  function setUsernameHint(open) {
+    $("#username-info").setAttribute("aria-expanded", open ? "true" : "false");
+    $("#username-hint").hidden = !open;
+  }
+  $("#username-info").addEventListener("click", () => {
+    setUsernameHint($("#username-hint").hidden);
+  });
+
+  // Marks each rule met / not met for the current password and returns whether
+  // all are met. While the box is empty the rules stay neutral; an unmet rule
+  // only turns red once it can no longer be fixed by typing more (max), or
+  // when strict (on submit).
+  function updatePasswordRules(strict) {
+    const pw = $("#login-password").value;
+    const n = utf8.encode(pw).length;
+    let ok = true;
+    $("#password-rules").querySelectorAll("li[data-rule]").forEach((li) => {
+      const met = PASSWORD_RULES[li.dataset.rule](n);
+      ok = ok && met;
+      const bad = !met && (strict || (pw !== "" && li.dataset.rule === "max"));
+      li.classList.toggle("met", pw !== "" && met);
+      li.classList.toggle("unmet", bad);
+    });
+    return ok;
+  }
+  $("#login-password").addEventListener("input", () => {
+    if (setupMode) updatePasswordRules(false);
+  });
 
   function showLogin(setup) { registrationOpen = !!setup; showAuth(); }
 
@@ -394,6 +433,11 @@
     clearErrors(form);
     const err = $("#login-error");
     err.hidden = true;
+    if (setupMode && !updatePasswordRules(true)) {
+      $("#login-password").classList.add("invalid");
+      $("#login-password").focus();
+      return;
+    }
     const body = { username: $("#login-username").value.trim(), password: $("#login-password").value };
     if (setupMode && $("#login-display").value.trim()) body.display_name = $("#login-display").value.trim();
     const btn = $("#login-submit");
@@ -418,6 +462,7 @@
       err.textContent = data.error === "validation failed" ? "Please fix the fields above." : (data.error || "Something went wrong.");
       err.hidden = false;
       $("#login-password").value = "";
+      updatePasswordRules(false);
       $("#login-password").focus();
     } catch (e) {
       err.textContent = "Network error: " + e.message;

@@ -21,16 +21,27 @@
     <section class="card form-card auth-card">
       <h2 id="login-title">Log in</h2>
       <p id="login-notice" class="flash" role="status" hidden></p>
-      <p id="login-intro" class="muted"></p>
       <form id="login-form" novalidate>
-        <label>Username
+        <!-- On Create account, the username rules sit behind the (i) button
+             and the password rules are a live checklist under the box (#150). -->
+        <div class="field">
+          <div class="field-label">
+            <label for="login-username">Username</label>
+            <button type="button" id="username-info" class="info-btn" aria-label="Username rules" aria-expanded="false" aria-controls="username-hint" title="Username rules" hidden>i</button>
+          </div>
+          <p id="username-hint" class="field-hint" hidden>3–32 characters: lowercase letters, digits, <code>.</code> <code>_</code> or <code>-</code>, starting with a letter or digit. Capital letters are turned into lowercase.</p>
           <input id="login-username" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required>
           <small class="err" data-for="username"></small>
-        </label>
-        <label>Password
-          <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+        </div>
+        <div class="field">
+          <div class="field-label"><label for="login-password">Password</label></div>
+          <input id="login-password" name="password" type="password" autocomplete="current-password" aria-describedby="password-rules" required>
+          <ul id="password-rules" class="pw-rules" aria-live="polite" hidden>
+            <li data-rule="min">At least 8 characters</li>
+            <li data-rule="max">At most 72 bytes (accented letters and emoji count as more than one)</li>
+          </ul>
           <small class="err" data-for="password"></small>
-        </label>
+        </div>
         <label id="login-display-row" hidden>Display name <span class="muted">(optional)</span>
           <input id="login-display" name="display_name" type="text" autocomplete="name">
           <small class="err" data-for="display_name"></small>
