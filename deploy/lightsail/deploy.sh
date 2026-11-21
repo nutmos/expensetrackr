@@ -146,7 +146,9 @@ fi
 
 # --- Smoke test through HTTPS -----------------------------------------------
 # -k: with a bare IP Caddy serves a certificate from its own internal CA.
-for _ in $(seq 1 30); do
+# Up to 3 minutes: with a domain, the first Let's Encrypt certificate is
+# obtained while we wait.
+for _ in $(seq 1 90); do
   if curl -fsSk --resolve "${SITE_ADDRESS}:443:127.0.0.1" "https://${SITE_ADDRESS}/api/healthz" >/dev/null 2>&1; then
     echo "==> Healthy at https://${SITE_ADDRESS}"
     docker image prune -f >/dev/null
