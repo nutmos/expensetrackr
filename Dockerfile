@@ -23,7 +23,7 @@ COPY pkg ./pkg
 RUN GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/expense-server ./cmd/server \
  && GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/expense-mcp ./cmd/mcp
 
-FROM alpine:3.22
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates \
  && adduser -D -H -u 10001 expense
 COPY --from=build /out/expense-server /usr/local/bin/expense-server
