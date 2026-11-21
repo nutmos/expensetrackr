@@ -18,6 +18,15 @@ func (s *Server) registerBalanceRoutes(api *gin.RouterGroup) {
 	api.GET("/balances/:uid", s.getBalance)
 	api.PUT("/balances/:uid", s.replaceBalance)
 	api.DELETE("/balances/:uid", s.deleteBalance)
+	api.POST("/balances/:uid/hide", s.hideBalance)
+	api.POST("/balances/:uid/unhide", s.unhideBalance)
+}
+
+// queryFlag reports whether query parameter name is "1" or "true"
+// (case-insensitive); any other value counts as not set.
+func queryFlag(c *gin.Context, name string) bool {
+	v := c.Query(name)
+	return strings.EqualFold(v, "1") || strings.EqualFold(v, "true")
 }
 
 // resolveBalance looks up /api/balances/:uid. Only the UUID uid is accepted:
@@ -56,7 +65,8 @@ func (s *Server) createBalance(c *gin.Context) {
 
 func (s *Server) listBalances(c *gin.Context) {
 	typ := balance.Type(strings.ToLower(strings.TrimSpace(c.Query("type"))))
-	payableOnly := strings.EqualFold(c.Query("payable"), "1") || strings.EqualFold(c.Query("payable"), "true")
+	payableOnly := queryFlag(c, "payable")
+	includeHidden := queryFlag(c, "include_hidden")
 	if typ != "" && payableOnly {
 		c.JSON(http.StatusBadRequest, errorBody{Error: "invalid query parameters",
 			Fields: map[string]string{"payable": "cannot be combined with type"}})
@@ -83,6 +93,15 @@ func (s *Server) listBalances(c *gin.Context) {
 	if err != nil {
 		internalError(c, err)
 		return
+	}
+	if !includeHidden {
+		shown := items[:0]
+		for _, b := range items {
+			if !b.Hidden {
+				shown = append(shown, b)
+			}
+		}
+		items = shown
 	}
 	c.JSON(http.StatusOK, gin.H{"balances": items, "count": len(items), "totals": balance.ComputeTotals(items)})
 }
@@ -151,8 +170,12 @@ func (s *Server) replaceBalance(c *gin.Context) {
 	})
 }
 
-// deleteBalance handles DELETE. An If-Match header is optional; if sent and
-// stale the answer is 409 with the current balance.
+// deleteBalance handles DELETE: the balance is removed together with every
+// transaction that references it, and those transactions' effects on the
+// user's other balances are reversed (see store.DeleteBalanceWith). To keep
+// the transactions, hide the balance instead (POST .../hide). An If-Match
+// header is optional; if sent and stale the answer is 409 with the current
+// balance. 200 with the number of transactions removed.
 func (s *Server) deleteBalance(c *gin.Context) {
 	cur, ok := s.resolveBalance(c)
 	if !ok {
@@ -162,7 +185,7 @@ func (s *Server) deleteBalance(c *gin.Context) {
 	if !ok {
 		return
 	}
-	err := s.Store.DeleteBalanceWith(c.Request.Context(), sessionUserUID(c), cur.ID, store.WriteOptions{Version: version})
+	n, err := s.Store.DeleteBalanceWith(c.Request.Context(), sessionUserUID(c), cur.ID, store.WriteOptions{Version: version})
 	if errors.Is(err, store.ErrVersionConflict) {
 		s.balanceConflict(c, cur.UID)
 		return
@@ -171,5 +194,36 @@ func (s *Server) deleteBalance(c *gin.Context) {
 		writeBalanceError(c, err)
 		return
 	}
-	c.Status(http.StatusNoContent)
+	c.JSON(http.StatusOK, gin.H{"deleted_transactions": n})
+}
+
+// hideBalance handles POST /api/balances/:uid/hide: the balance is left out
+// of the list (unless ?include_hidden=true) but kept, with its transactions.
+func (s *Server) hideBalance(c *gin.Context) { s.setBalanceHidden(c, true) }
+
+// unhideBalance handles POST /api/balances/:uid/unhide: the reverse of hide.
+func (s *Server) unhideBalance(c *gin.Context) { s.setBalanceHidden(c, false) }
+
+// setBalanceHidden takes no body. If-Match is optional (409 if stale). 200
+// with the balance; its version goes up only if the flag changed.
+func (s *Server) setBalanceHidden(c *gin.Context, hidden bool) {
+	cur, ok := s.resolveBalance(c)
+	if !ok {
+		return
+	}
+	version, ok := clientVersion(c, nil, false)
+	if !ok {
+		return
+	}
+	b, err := s.Store.SetBalanceHidden(c.Request.Context(), sessionUserUID(c), cur.ID, store.WriteOptions{Version: version}, hidden)
+	if errors.Is(err, store.ErrVersionConflict) {
+		s.balanceConflict(c, cur.UID)
+		return
+	}
+	if err != nil {
+		writeBalanceError(c, err)
+		return
+	}
+	setETag(c, b.Version)
+	c.JSON(http.StatusOK, b)
 }

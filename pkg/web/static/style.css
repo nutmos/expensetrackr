@@ -179,7 +179,7 @@ td.acct, td.cat { min-width: 7em; }
 .balance-table .col-name { width: 24%; }
 .balance-table .col-cur { width: 11%; }
 .balance-table th.num { width: 13%; }
-.balance-table .col-actions { width: 140px; }
+.balance-table .col-actions { width: 205px; }
 .balance-table td { overflow-wrap: break-word; }
 
 @media (max-width: 640px) {
@@ -258,3 +258,13 @@ td.acct, td.cat { min-width: 7em; }
   .bar-track { grid-area: track; height: 12px; }
   .report-filters label { flex: 1 1 40%; }
 }
+
+/* Hidden balances (issue #147) and the delete dialog. */
+.show-hidden { display: flex; flex-direction: row; align-items: center; gap: 6px; font-weight: 400; color: var(--muted); font-size: 0.9rem; margin-left: auto; }
+.show-hidden + .add-btn { margin-left: 0; }
+.badge.hidden-badge { background: #e5e7eb; color: var(--muted); }
+tr.is-hidden td { color: var(--muted); }
+#b-delete-dialog { border: 1px solid var(--border); border-radius: 10px; padding: 20px; max-width: min(460px, calc(100vw - 32px)); }
+#b-delete-dialog::backdrop { background: rgba(15, 23, 42, 0.35); }
+#b-delete-dialog h3 { margin-top: 0; }
+#b-delete-dialog button.danger { padding: 8px 14px; font-size: inherit; border-color: var(--err); }

@@ -114,11 +114,16 @@ Every balance also has:
 - a **`name`** (required, up to 100 characters; need not be unique)
 - a **base `currency`** (ISO 4217)
 - an optional **`description`** (up to 1000 characters)
+- **`hidden`**: `false` unless hidden with `POST /api/balances/:uid/hide`
 
 The name is a short label like "Wallet". Transactions identify the payment
 account by the balance's immutable **`uid`** (`balance_uid` on the transaction).
-There is **no foreign key**: deleting a balance leaves the transaction's
-`balance_uid` and the denormalized `account` name snapshot intact.
+There is **no foreign key**, but deleting a balance also deletes every
+transaction that references it, so none is left pointing at a missing balance
+(older versions deleted only the balance; such leftovers keep their
+`balance_uid` and `account` name snapshot). A balance you want to keep the
+history of can be **hidden** instead (`hidden: true`). See
+[balances.md §5](balances.md#5-hiding-and-deleting-a-balance).
 
 **Balances adjust automatically.** Creating, editing or deleting
 a transaction moves its balances in the same database transaction:
@@ -378,6 +383,7 @@ versioning lives in `pkg/store/migrate.go`.
 | 4       | optional foreign-currency amount: adds `transactions.foreign_amount_minor`, `foreign_amount_scale`, `foreign_currency` and `transactions_foreign_amount_check` |
 | 5       | optional interest and fees on debt repayments: adds `transactions.interest_amount_minor`, `fee_amount_minor`, `transactions_repay_charges_check` and `transactions_repay_category_check` |
 | 6       | balance adjustments editable and deletable: sets `balance_applied = true` on `balance_adjustment` rows, replaces the baseline check that required it false with `transactions_adjustment_check` (no destination or category) |
+| 7       | balances can be hidden: adds `balances.hidden boolean NOT NULL DEFAULT false` |
 
 **Coming from SQLite?** Earlier versions stored everything in
 `data/expenses.db`. That data is **not migrated**: the Postgres version starts

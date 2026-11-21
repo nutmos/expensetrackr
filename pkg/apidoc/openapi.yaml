@@ -98,7 +98,7 @@ tags:
   - name: transactions
     description: Expenses, income, transfers, asset purchases, returns on investment, debt repayments and (server-created, editable) balance adjustments. Writes move the linked balances in the same database transaction.
   - name: balances
-    description: Payment accounts, credit cards, other assets and liabilities. Type is fixed after creation. Manual amount edits record a balance_adjustment transaction.
+    description: Payment accounts, credit cards, other assets and liabilities. Type is fixed after creation. Manual amount edits record a balance_adjustment transaction. A balance can be hidden (kept with its transactions, left out of the list) or deleted (removed together with every transaction that references it).
   - name: categories
     description: Expense and income categories. Categories belong to the logged-in user (each user has their own set; another user's category uid is a 404). Expense transactions may only use expense categories, income transactions income categories.
   - name: reports
@@ -447,7 +447,8 @@ paths:
       summary: List balances
       description: |
         Grouped by type (payment accounts, credit cards, other assets, other liabilities), then by
-        name. `totals` sums the returned rows per currency.
+        name. Hidden balances (`hidden: true`) are left out unless `include_hidden` is set. `totals`
+        sums the returned rows per currency.
       parameters:
         - name: type
           in: query
@@ -459,6 +460,12 @@ paths:
             `1` or `true` (case-insensitive) returns only `payment_account` and `credit_card`
             balances. **Any other value is treated as "not set"** (not a 400).
           schema: { type: string, example: '1' }
+        - name: include_hidden
+          in: query
+          description: |
+            `1` or `true` (case-insensitive) also returns hidden balances (combines with `type` and
+            `payable`). Any other value is treated as "not set".
+          schema: { type: string, example: 'true' }
       responses:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '200':
@@ -541,16 +548,24 @@ paths:
     delete:
       tags: [balances]
       operationId: deleteBalance
-      summary: Delete a balance
+      summary: Delete a balance and its transactions
       description: |
-        Deletes the balance. `If-Match` is optional; a stale one is a 409. Transactions that
-        reference the balance are **not** blocked or deleted: they keep its uid and name snapshot, and
-        later edits or deletes of them skip the missing balance.
+        Deletes the balance **together with every transaction that references it** (as `balance_uid`
+        or `to_balance_uid`, including returns on investment linked to it and its balance
+        adjustments), in one database transaction. Each removed transaction's effect on the user's
+        other balances is reversed, as if it had been deleted on its own: e.g. removing a transfer
+        from account A into the deleted balance puts the amount back on A. To keep the transactions,
+        hide the balance instead (`POST /api/balances/{uid}/hide`). `If-Match` is optional; a stale
+        one is a 409 and nothing is deleted.
       parameters:
         - $ref: '#/components/parameters/IfMatchOptional'
       responses:
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '204': { description: Deleted. }
+        '200':
+          description: Deleted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BalanceDeleted' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '404': { $ref: '#/components/responses/BalanceNotFound' }
         '409':
@@ -562,6 +577,59 @@ paths:
               schema: { $ref: '#/components/schemas/BalanceConflictError' }
               examples:
                 version_conflict: { $ref: '#/components/examples/ErrBalanceVersionConflict' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/balances/{uid}/hide:
+    parameters:
+      - $ref: '#/components/parameters/BalanceUid'
+    post:
+      tags: [balances]
+      operationId: hideBalance
+      summary: Hide a balance
+      description: |
+        Marks the balance `hidden`: `GET /api/balances` leaves it out (unless `include_hidden`) and
+        the web page leaves it out of its pickers. Nothing else changes: its amount and its
+        transactions are kept and keep counting (reports included), and it can still be read,
+        edited and used by transactions. No body. `If-Match` is optional; a stale one is a 409.
+        Hiding a hidden balance changes nothing (same version).
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+      responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '200':
+          description: The balance, now hidden. `ETag` carries its version.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Balance' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/BalanceNotFound' }
+        '409': { $ref: '#/components/responses/BalanceConflict' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/balances/{uid}/unhide:
+    parameters:
+      - $ref: '#/components/parameters/BalanceUid'
+    post:
+      tags: [balances]
+      operationId: unhideBalance
+      summary: Show a hidden balance again
+      description: The reverse of hide. No body. `If-Match` is optional; a stale one is a 409.
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+      responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '200':
+          description: The balance, now visible. `ETag` carries its version.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Balance' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/BalanceNotFound' }
+        '409': { $ref: '#/components/responses/BalanceConflict' }
         '500': { $ref: '#/components/responses/InternalError' }
 
   /api/categories:
@@ -2128,7 +2196,7 @@ components:
       description: |
         Fields that do not apply to the type are `null`: assets have `balance`; liabilities have
         `debt`, `limit`, `available` and `over_limit`.
-      required: [uid, name, type, kind, currency, description, balance, balance_minor, debt, debt_minor, limit, limit_minor, available, available_minor, over_limit, created_at, updated_at, version]
+      required: [uid, name, type, kind, currency, description, balance, balance_minor, debt, debt_minor, limit, limit_minor, available, available_minor, over_limit, hidden, created_at, updated_at, version]
       properties:
         uid: { $ref: '#/components/schemas/Uid' }
         name: { type: string, maxLength: 100, example: Wallet }
@@ -2168,6 +2236,12 @@ components:
           nullable: true
           description: debt > limit (liabilities only).
           example: null
+        hidden:
+          type: boolean
+          description: |
+            Hidden with `POST /api/balances/{uid}/hide`: left out of `GET /api/balances` unless
+            `include_hidden` is set. Its transactions are kept. Not a PUT field.
+          example: false
         created_at: { $ref: '#/components/schemas/Timestamp' }
         updated_at:
           type: string
@@ -2181,7 +2255,7 @@ components:
       description: |
         Body of POST and PUT. Amounts that are absent, `null` or `""` count as not provided. Unknown
         fields are a 400. This includes read-only response fields such as `kind`, `*_minor`, `available`,
-        `over_limit`, `created_at` and `updated_at`.
+        `over_limit`, `hidden`, `created_at` and `updated_at` (hide with `POST .../hide`).
       required: [name, type, currency]
       properties:
         name:
@@ -2230,6 +2304,14 @@ components:
         net: { type: string, description: assets − liabilities., example: '-42000.00' }
         credit_limit: { type: string, description: Sum of liability limits., example: '50000.00' }
         available_credit: { type: string, description: credit_limit − liabilities., example: '-2000.00' }
+    BalanceDeleted:
+      type: object
+      required: [deleted_transactions]
+      properties:
+        deleted_transactions:
+          type: integer
+          description: How many transactions were deleted with the balance.
+          example: 3
     BalanceList:
       type: object
       required: [balances, count, totals]
@@ -2653,6 +2735,7 @@ components:
         available: null
         available_minor: null
         over_limit: null
+        hidden: false
         created_at: '2026-10-08T13:28:56Z'
         updated_at: null
         version: 1
@@ -2674,6 +2757,7 @@ components:
         available: '-2000.00'
         available_minor: -200000
         over_limit: true
+        hidden: false
         created_at: '2026-10-08T13:28:56Z'
         updated_at: null
         version: 1

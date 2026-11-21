@@ -31,26 +31,51 @@ import (
 // rules; a balance adjustment's effect (Effect.ByAmount) is converted to a
 // value change with the locked balance's kind.
 func applyBalanceEffects(ctx context.Context, tx *sql.Tx, userUID string, old, next *transaction.Transaction, now string) error {
+	var olds []*transaction.Transaction
+	if old != nil {
+		olds = []*transaction.Transaction{old}
+	}
+	return applyEffects(ctx, tx, userUID, olds, next, now)
+}
+
+// reverseBalanceEffects reverses the effects of several removed transactions
+// at once (see applyBalanceEffects), summed per balance so each touched
+// balance is written once. Balances that no longer exist are skipped.
+func reverseBalanceEffects(ctx context.Context, tx *sql.Tx, userUID string, olds []*transaction.Transaction, now string) error {
+	return applyEffects(ctx, tx, userUID, olds, nil, now)
+}
+
+// applyEffects is applyBalanceEffects for any number of reversed
+// transactions (olds) and at most one applied one (next).
+func applyEffects(ctx context.Context, tx *sql.Tx, userUID string, olds []*transaction.Transaction, next *transaction.Transaction, now string) error {
 	// Lock every balance this write touches before reading any of them, in
 	// one statement and in uid order: concurrent writes to the same balance
 	// then queue instead of losing an update (the reads below are followed by
 	// absolute writes), and a fixed order rules out deadlocks between them.
 	// The locked rows are returned and used below; they can't change until
 	// this transaction ends.
-	locked, err := lockBalances(ctx, tx, userUID, old, next)
+	locked, err := lockBalances(ctx, tx, userUID, append(olds[:len(olds):len(olds)], next)...)
 	if err != nil {
 		return err
 	}
 	deltas := map[string]int64{}
 	var order []string
 	reversedCurrency := map[string]string{}
+	overflow := false // a sum of many reversals that does not fit in int64
 	add := func(uid string, d int64) {
 		if _, ok := deltas[uid]; !ok {
 			order = append(order, uid)
 		}
-		deltas[uid] += d // |amount| < 10^17, so a sum of two never overflows
+		sum, ok := addInt64(deltas[uid], d)
+		if !ok {
+			overflow = true
+		}
+		deltas[uid] = sum
 	}
-	if old != nil && old.AdjustsBalances {
+	for _, old := range olds {
+		if old == nil || !old.AdjustsBalances {
+			continue
+		}
 		for _, ef := range old.Effects() {
 			uid := string(ef.BalanceUID)
 			b, ok := locked[uid]
@@ -77,6 +102,9 @@ func applyBalanceEffects(ctx context.Context, tx *sql.Tx, userUID string, old, n
 			}
 			add(uid, ef.ValueDelta(b.Type.IsLiability()))
 		}
+	}
+	if overflow {
+		return &validate.ValidationError{Fields: map[string]string{"amount": "the combined change is out of range"}}
 	}
 	for _, uid := range order {
 		d := deltas[uid]
@@ -118,17 +146,28 @@ func effectCurrency(e transaction.Transaction, ef transaction.Effect) string {
 // balances referenced by txs, in uid order, and returns them by uid. Missing
 // balances are simply absent; the caller reports them.
 func lockBalances(ctx context.Context, tx *sql.Tx, userUID string, txs ...*transaction.Transaction) (map[string]balance.Balance, error) {
-	seen := map[string]bool{}
 	var uids []string
 	for _, e := range txs {
 		if e == nil {
 			continue
 		}
 		for _, ef := range e.Effects() {
-			if u := string(ef.BalanceUID); !seen[u] {
-				seen[u] = true
-				uids = append(uids, u)
-			}
+			uids = append(uids, string(ef.BalanceUID))
+		}
+	}
+	return lockBalanceUIDs(ctx, tx, userUID, uids)
+}
+
+// lockBalanceUIDs takes row locks on the user's balances with the given uids
+// (duplicates allowed), in uid order, and returns them by uid. Missing
+// balances are simply absent.
+func lockBalanceUIDs(ctx context.Context, tx *sql.Tx, userUID string, list []string) (map[string]balance.Balance, error) {
+	seen := map[string]bool{}
+	var uids []string
+	for _, u := range list {
+		if !seen[u] {
+			seen[u] = true
+			uids = append(uids, u)
 		}
 	}
 	out := map[string]balance.Balance{}
@@ -158,4 +197,13 @@ func balanceByUIDTx(ctx context.Context, tx *sql.Tx, userUID, uid string) (balan
 		return balance.Balance{}, ErrNotFound
 	}
 	return b, err
+}
+
+// addInt64 returns a+b and whether it did not overflow.
+func addInt64(a, b int64) (int64, bool) {
+	s := a + b
+	if (b > 0 && s < a) || (b < 0 && s > a) {
+		return 0, false
+	}
+	return s, true
 }

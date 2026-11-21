@@ -69,8 +69,13 @@ func TestPerUserStoreIsolation(t *testing.T) {
 			})
 			return err
 		}},
+		{"bob hide alice balance", func() error {
+			_, err := st.SetBalanceHidden(ctx, bob.UID, aPay.ID, WriteOptions{}, true)
+			return err
+		}},
 		{"bob delete alice balance", func() error {
-			return st.DeleteBalance(ctx, bob.UID, aPay.ID)
+			_, err := st.DeleteBalance(ctx, bob.UID, aPay.ID)
+			return err
 		}},
 	}
 	for _, c := range cases {

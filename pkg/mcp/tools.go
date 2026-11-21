@@ -170,17 +170,20 @@ func listBalancesTool(c *Client) Tool {
 		Name:  "list_balances",
 		Title: "List balances",
 		Description: "List the user's balances (bank accounts, wallets, credit cards, assets, loans) with uid, name, type, currency and current amount, plus per-currency totals. " +
-			"Use it to turn an account name into the balance_uid a transaction needs. Names can repeat: if a name matches more than one balance, ask the user which.",
+			"Use it to turn an account name into the balance_uid a transaction needs. Names can repeat: if a name matches more than one balance, ask the user which. " +
+			"Balances the user hid (closed accounts, paid-off loans) are left out unless include_hidden is true.",
 		InputSchema: obj(map[string]any{
-			"type":    enum("Only balances of this type.", "payment_account", "credit_card", "other_asset", "other_liability"),
-			"payable": map[string]any{"type": "boolean", "description": "Only balances that can pay for an expense (payment_account and credit_card). Cannot be combined with type."},
+			"type":           enum("Only balances of this type.", "payment_account", "credit_card", "other_asset", "other_liability"),
+			"payable":        map[string]any{"type": "boolean", "description": "Only balances that can pay for an expense (payment_account and credit_card). Cannot be combined with type."},
+			"include_hidden": map[string]any{"type": "boolean", "description": "Also list hidden balances (each has hidden: true). Use it when the user names an account that is not in the normal list."},
 		}),
 		ReadOnly:   true,
 		Idempotent: true,
 		Handler: func(ctx context.Context, raw json.RawMessage) (any, error) {
 			var a struct {
-				Type    string `json:"type"`
-				Payable bool   `json:"payable"`
+				Type          string `json:"type"`
+				Payable       bool   `json:"payable"`
+				IncludeHidden bool   `json:"include_hidden"`
 			}
 			if err := decodeArgs(raw, &a); err != nil {
 				return nil, err
@@ -189,6 +192,9 @@ func listBalancesTool(c *Client) Tool {
 			setIf(q, "type", a.Type)
 			if a.Payable {
 				q.Set("payable", "true")
+			}
+			if a.IncludeHidden {
+				q.Set("include_hidden", "true")
 			}
 			v, _, err := c.getJSON(ctx, "/api/balances", q)
 			return v, err

@@ -19,7 +19,7 @@ path, and `router.js` shows the view for `location.pathname`:
 | `/transactions/new`          | Add a transaction, step 1: pick the type (Expense, Income, Transfer, Asset Purchase, Return on Investment, Repay Debt) |
 | `/transactions/new?type=<type>` | Add a transaction, step 2: the form with that type selected (it can still be changed there). An unknown `type` shows the picker |
 | `/transactions/<uid>/edit`   | Edit a transaction (same form) |
-| `/balances`, `/balances/new`, `/balances/<uid>/edit` | Balances list / add / edit |
+| `/balances`, `/balances/new`, `/balances/<uid>/edit` | Balances list / add / edit. `/balances?hidden=1` also lists hidden balances (the **Show hidden** box) |
 | `/categories`, `/categories/new`, `/categories/<uid>/edit` | Categories list / add / edit |
 | `/reports`, `/reports/income-expense?from=…&to=…`, `/reports/assets-liabilities` | Reports with bar charts (see [docs/reports.md](reports.md)); `/reports` opens Income & expenses |
 | `/swagger/`                  | API documentation (Swagger UI; opens in a new tab from the header) |

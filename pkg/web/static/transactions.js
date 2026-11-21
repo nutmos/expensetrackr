@@ -215,14 +215,16 @@
   function fillSelect(sel, types, keep) {
     sel.replaceChildren(Object.assign(document.createElement("option"), { value: "", textContent: "Select a balance…" }));
     for (const type of types) {
-      const rows = allBalances.filter((b) => b.type === type);
+      // Hidden balances are offered only when already selected (editing an
+      // older transaction on one).
+      const rows = allBalances.filter((b) => b.type === type && (!b.hidden || b.uid === keep));
       if (!rows.length) continue;
       const group = document.createElement("optgroup");
       group.label = BALANCE_TYPE_GROUP[type] || type;
       for (const b of rows) {
         const opt = document.createElement("option");
         opt.value = b.uid;
-        opt.textContent = balanceLabel(b);
+        opt.textContent = balanceLabel(b) + (b.hidden ? " (hidden)" : "");
         group.append(opt);
       }
       sel.append(group);
@@ -747,7 +749,9 @@
     const list = await App.loadCurrencies();
     currencyScale = new Map(list.filter((c) => Number.isInteger(c.scale)).map((c) => [c.code, c.scale]));
     try {
-      const res = await fetch("/api/balances");
+      // Hidden ones too: an edited transaction may use one (fillSelect keeps
+      // them out of the choices otherwise).
+      const res = await fetch("/api/balances?include_hidden=true");
       const body = await res.json();
       if (res.ok) allBalances = body.balances || [];
     } catch (_) { /* keep previous list */ }
