@@ -23,7 +23,10 @@ All responses are JSON. Every error looks like
 only on validation and conflict errors.
 - Some errors also carry a machine-readable `"code"`: `version_required`,
   `version_conflict` (with `"current"`, the record as it is now),
-  `balance_in_use`, or `balance_adjustment_readonly`.
+  `balance_in_use`, or `balance_adjustment_readonly` (a write that would
+  create a balance adjustment or change a transaction's type to or from
+  `balance_adjustment`; in practice only seen per item in bulk imports, since
+  single writes are rejected with 422 first).
 
 **Versioning** applies to balances and transactions (details in
 [docs/balances.md](balances.md#3-optimistic-locking-versions)):
@@ -39,8 +42,8 @@ only on validation and conflict errors.
 | POST   | `/api/transactions/bulk` | 201 / 200 `{"created","skipped","failed","valid","dry_run","atomic","written","results":[...],"balances":[...]}` | Up to 500 items with the POST body shape (+ `import_ref`); `atomic` (default true: 422 and nothing written if any item fails), `dry_run`. Duplicate `import_ref` per balance → `skipped`. 413 over 500 items, 2 MiB body. See [docs/bulk-import.md](bulk-import.md) |
 | GET    | `/api/transactions`      | 200 `{"transactions":[...],"count":n,"next_cursor":...}` | Newest first by spend time. Optional `from`, `to` (RFC 3339 with offset, both inclusive), `limit` (1–5000 per page, default 500), `type` (`expense`/`income`/`transfer`/`asset_purchase`/`return_on_investment`/`repay_debt`/`balance_adjustment`; 400 if invalid), `category_uid` (UUID; 400 if malformed), `balance_uid` (UUID; source or destination). **Paged:** while `next_cursor` is not null, send it back as `cursor` with the same filters for the next page (keyset pagination, stable under inserts and deletes) |
 | GET    | `/api/transactions/:uid`  | 200 + transaction | `:uid` is the transaction UUID (case-insensitive). **400** if it is not UUID-shaped (including numeric ids such as `/api/transactions/1`), **404** if no such uid. Same for PUT/DELETE |
-| PUT    | `/api/transactions/:uid`  | 200 + updated transaction | Full replace with the same body and rules as POST. An omitted `note` (or `foreign_amount` / `foreign_currency`) clears it; an omitted `import_ref` is kept (`""` clears it). Requires `If-Match` or `"version"` (428 / 409). Reverses the old balance effect and applies the new one. 409 `balance_adjustment_readonly` on a balance adjustment (also DELETE). 404 if missing, 422 for invalid values, 400 for malformed JSON or unknown fields |
-| DELETE | `/api/transactions/:uid`  | 204 | Reverses the balance effect. Optional `If-Match` (409 if stale). 404 if missing |
+| PUT    | `/api/transactions/:uid`  | 200 + updated transaction | Full replace with the same body and rules as POST. An omitted `note` (or `foreign_amount` / `foreign_currency`) clears it; an omitted `import_ref` is kept (`""` clears it). Requires `If-Match` or `"version"` (428 / 409). Reverses the old balance effect and applies the new one. On a **balance adjustment** the body may change `amount`, `currency`, `balance_uid` (any balance type), `spent_at`, `note` and `adjustment_direction` (`increase`/`decrease`, required); `type` must be omitted or `balance_adjustment`, and destination, category, `to_amount`, foreign amount and `import_ref` are not allowed (422). `adjustment_direction` on any other type is a 422. 404 if missing, 422 for invalid values, 400 for malformed JSON or unknown fields |
+| DELETE | `/api/transactions/:uid`  | 204 | Reverses the balance effect (for a balance adjustment: reverts the manual change it recorded). Optional `If-Match` (409 if stale). 404 if missing |
 | POST   | `/api/balances`      | 201 + balance, `Location` header | 422 on validation errors (incl. per-type amount rules), 400 on malformed JSON or unknown fields. Names need not be unique |
 | GET    | `/api/balances`      | 200 `{"balances":[...],"count":n,"totals":[...]}` | Grouped by type, then by name. Optional `type=` filter (400 if invalid). Optional `payable=1` / `payable=true` returns only `payment_account` and `credit_card` (cannot combine with `type=`). `totals` covers the returned rows, per currency |
 | GET    | `/api/balances/:uid`  | 200 + balance | `:uid` is the balance UUID. 400 if not UUID-shaped (numeric ids are no longer accepted), 404 if missing. Same for PUT/DELETE |

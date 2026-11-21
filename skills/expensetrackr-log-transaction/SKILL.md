@@ -20,7 +20,8 @@ live in `GET $BASE/api/openapi.yaml` and the Go types in `pkg/transaction`.
 - **Talk in names, not uids.** Use uids only in API calls; confirm back with
   account/category names, amounts and dates.
 - **Never create `balance_adjustment`.** The server records those itself when
-  a balance amount is edited; POST with that type is **422**.
+  a balance amount is edited; POST with that type is **422**. (Existing ones
+  can be edited or deleted, which moves the balance; this skill only logs.)
 - **Protect the token.** Read it from `EXPENSETRACKR_TOKEN`. Never echo, log,
   or put it in argv (process lists show curl `-H "Authorization: Bearer …"`).
   Pass the header through a curl config on stdin (`-K -`) or `-H @file`.

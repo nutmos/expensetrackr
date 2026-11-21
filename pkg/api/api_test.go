@@ -223,7 +223,7 @@ func TestPayableBalancesFilter(t *testing.T) {
 
 // editableFields lists the fields a PUT body carries, per resource prefix.
 var editableFields = map[string][]string{
-	"/api/transactions/": {"amount", "currency", "type", "balance_uid", "to_balance_uid", "category_uid", "spent_at", "note"},
+	"/api/transactions/": {"amount", "currency", "type", "balance_uid", "to_balance_uid", "category_uid", "spent_at", "note", "adjustment_direction"},
 	"/api/balances/":     {"name", "type", "currency", "description", "balance", "debt", "limit"},
 	"/api/categories/":   {"name", "type", "description"},
 }

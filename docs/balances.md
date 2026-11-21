@@ -2,7 +2,8 @@
 
 Balances now follow the transactions recorded against them. You can still set
 the amount by hand when it has to match a statement; that edit is recorded as
-a read-only **Balance Adjustment** transaction. Every balance and
+a **Balance Adjustment** transaction, which you can later edit or delete like
+any other transaction. Every balance and
 transaction has a **version**, so two edits based on the same data cannot
 silently overwrite each other.
 
@@ -32,7 +33,7 @@ is always > 0.
 | `return_on_investment` (linked asset) | `to_balance_uid` (other_asset only) | none (link only) | n/a (not allowed) | the investment the return came from keeps its value |
 | `repay_debt` (source) | `balance_uid` (payment_account only) | `balance −= amount + interest_amount + fee_amount` | n/a (not allowed) | paying a card bill or a loan instalment from a bank account |
 | `repay_debt` (destination) | `to_balance_uid` (credit_card / other_liability) | n/a (not allowed) | `debt −= amount` (the principal only; may go negative = in credit) | the card or loan repaid |
-| `balance_adjustment` | `balance_uid` (any type) | none | none | recorded by a manual balance edit, which already set the value (§2) |
+| `balance_adjustment` | `balance_uid` (any type) | `increase`: `balance += amount`; `decrease`: `balance −= amount` | `increase`: `debt += amount`; `decrease`: `debt −= amount` | recorded by a manual balance edit, which already set the value; applied only when the adjustment is later edited or deleted (§2) |
 
 The code is `transaction.Effects` (signs) and
 `store.applyBalanceEffects` (writes).
@@ -47,9 +48,11 @@ The code is `transaction.Effects` (signs) and
 - **Delete:** the effect is reversed.
 - **Balance deleted meanwhile:** if a referenced balance was deleted, its part
   of the reversal is skipped. The other balance is still adjusted.
-- **`adjusts_balances`:** every expense, income, transfer, asset purchase,
-  return on investment and debt repayment has `"adjusts_balances": true`. Balance Adjustment rows (§2) have `false`:
-  they record a manual edit and never move a balance themselves.
+- **`adjusts_balances`:** every transaction has `"adjusts_balances": true`,
+  Balance Adjustment rows (§2) included: their change is already in the
+  balance (the manual edit set it), so editing or deleting one moves the
+  balance like any other transaction. (Until schema v5 adjustments had
+  `false` and could not be changed.)
 
 Cross-currency transfers: the source changes by `amount` (source currency)
 and the destination by the stored `to_amount` (destination currency). An
@@ -118,8 +121,8 @@ neither is (a stale or invalid edit records nothing).
 | `spent_at` | the time of the edit: the **server's** current local time with its UTC offset (e.g. `2026-10-08T21:30:00+08:00`), whole seconds |
 | `note` | generated, e.g. `Manual edit of balance: 1000.00 → 950.00` |
 | `category_uid`, `to_balance_uid` | `null` |
-| `adjusts_balances` | `false`: it never moves a balance (no double counting) |
-| `version` | 1 (it never changes) |
+| `adjusts_balances` | `true`: its change is already in the balance (recording it does not move the balance again: no double counting) |
+| `version` | 1, then +1 on every edit |
 
 When nothing is recorded:
 - **Limit changes** (`limit` is not money moving): a limit-only edit records
@@ -131,25 +134,40 @@ When nothing is recorded:
   the balance; afterwards the currency is fixed (409 `balance_in_use`), and a
   recorded adjustment counts as a reference.
 
-**Read-only via the API.** Adjustments are created only by balance edits:
+**Created only by balance edits; editable and deletable afterwards.**
 - `POST /api/transactions` with `"type":"balance_adjustment"`, or a PUT
-  that changes a transaction to that type: **422** on `type`.
-- `PUT` or `DELETE` on an existing adjustment: **409** with
-  `"code":"balance_adjustment_readonly"` (whatever the body or version).
-  To correct one, edit the balance again (which records another adjustment).
+  that changes another transaction to that type: **422** on `type` (bulk
+  import: `balance_adjustment_readonly` per item).
+- `PUT /api/transactions/:uid` on an adjustment (versioned as usual) may
+  change `amount`, `adjustment_direction` (**required**), `balance_uid` (any
+  balance type), `currency` (must match the balance), `spent_at` and `note`.
+  `type` must be omitted or `balance_adjustment` (422 otherwise: an
+  adjustment stays one); `category_uid`, `to_balance_uid`,
+  `to_amount`/`to_currency`, `foreign_amount`/`foreign_currency` and
+  `import_ref` are not allowed (422). The old change is reversed and the
+  new one applied, like any edit: e.g. turning *decrease 100.00* on an
+  account into *decrease 40.00* raises its balance by 60.00; moving an
+  *increase* from an account to a card lowers the account and raises the
+  card's debt.
+- `DELETE` on an adjustment reverts its change: deleting *decrease 50.00*
+  (1000.00 → 950.00) puts the balance back up by 50.00. If the balance was
+  deleted meanwhile, only the row is removed.
 - They appear in `GET /api/transactions` and can be filtered with
   `?type=balance_adjustment`.
 
 Guarded in the database too: transactions `CHECK`s require
 `adjustment_direction` exactly on `balance_adjustment` rows, and forbid
-those rows a destination, a category or `balance_applied = 1`.
+those rows a destination or a category.
 
 **Web UI.** The balance edit page notes that a typed balance/debt is recorded
 as a Balance Adjustment. On the transactions list, adjustments have their own
-style, the label "Balance Adjustment", a signed amount (+/−), "Automatic"
-instead of Edit/Delete, and are **excluded from the expense/income totals**
-(like transfers). The list has a Type filter. Opening an adjustment's edit URL
-shows a read-only message.
+style, the label "Balance Adjustment", a signed amount (+/−) and Edit/Delete
+like other rows, and are **excluded from the expense/income totals** (like
+transfers). The list has a Type filter. The edit form of an adjustment keeps
+its type (shown, not changeable) and has a **Direction** field (Increase /
+Decrease, with a hint saying whether it moves the balance or the debt); the
+adjusted balance may be any balance. Deleting one asks for confirmation and
+says that its change will be reverted.
 
 ## 3. Optimistic locking (versions)
 
@@ -234,11 +252,14 @@ These columns are part of the baseline schema (`pkg/store/schema.go`):
 - `balances.version` and `transactions.version`: optimistic-locking
   counters, 1 on insert. `balances` has no `CHECK (debt_minor >= 0)`
   (negative debt = in credit); `limit_minor` must be ≥ 0.
-- `transactions.balance_applied` (shown as `adjusts_balances`): 1 when the
-  row moved its balances, 0 for `balance_adjustment` rows.
+- `transactions.balance_applied` (shown as `adjusts_balances`): true when
+  the row's change is reflected in its balances. Since v5
+  (`pkg/store/migrate_v5.go`) that is every row; before, `balance_adjustment`
+  rows had false (the migration sets it to true and drops the check that
+  required false).
 - `transactions.adjustment_direction` (`increase` / `decrease`): set exactly
   for type `balance_adjustment`; table `CHECK`s keep such rows free of a
-  destination or category and with `balance_applied = 0`.
+  destination or category (`transactions_adjustment_check` since v5).
 - Index `idx_transactions_to_balance_uid` on `to_balance_uid`.
 
 ## Follow-ups

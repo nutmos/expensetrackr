@@ -159,10 +159,6 @@ func (s *Server) replaceTransaction(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if cur.Type == transaction.BalanceAdjustment { // read-only, whatever the body or version
-		writeTransactionError(c, store.ErrReadOnly)
-		return
-	}
 	var in transaction.CreateInput
 	if !decodeBody(c, &in, true) {
 		return
@@ -175,7 +171,12 @@ func (s *Server) replaceTransaction(c *gin.Context) {
 		s.transactionConflict(c, cur.ID)
 		return
 	}
-	next, err := in.Validate()
+	validate := in.Validate
+	if cur.Type == transaction.BalanceAdjustment {
+		// Editable, but it stays a balance adjustment (see ValidateAdjustment).
+		validate = in.ValidateAdjustment
+	}
+	next, err := validate()
 	if err != nil {
 		writeTransactionError(c, err)
 		return
@@ -307,10 +308,6 @@ func (s *Server) getTransaction(c *gin.Context) {
 func (s *Server) deleteTransaction(c *gin.Context) {
 	cur, ok := s.resolveTransaction(c)
 	if !ok {
-		return
-	}
-	if cur.Type == transaction.BalanceAdjustment { // read-only, whatever the body or version
-		writeTransactionError(c, store.ErrReadOnly)
 		return
 	}
 	version, ok := clientVersion(c, nil, false)

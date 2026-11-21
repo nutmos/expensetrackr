@@ -16,7 +16,7 @@ import (
 // caller's database transaction tx:
 //
 //   - old (update/delete): its effect is reversed, if it ever applied one
-//     (old.AdjustsBalances; balance_adjustment rows never do).
+//     (old.AdjustsBalances).
 //   - next (create/update): its effect is applied (if next.AdjustsBalances).
 //     Every balance it references must exist and use the transaction's
 //     currency, else a *validate.ValidationError on balance_uid /
@@ -28,7 +28,8 @@ import (
 // (version +1, updated_at = now); a balance whose net change is zero (e.g. an
 // edit of the note only) is not written at all. A reversed balance that no
 // longer exists (deleted) is skipped. See transaction.Effects for the sign
-// rules.
+// rules; a balance adjustment's effect (Effect.ByAmount) is converted to a
+// value change with the locked balance's kind.
 func applyBalanceEffects(ctx context.Context, tx *sql.Tx, userUID string, old, next *transaction.Transaction, now string) error {
 	// Lock every balance this write touches before reading any of them, in
 	// one statement and in uid order: concurrent writes to the same balance
@@ -52,7 +53,11 @@ func applyBalanceEffects(ctx context.Context, tx *sql.Tx, userUID string, old, n
 	if old != nil && old.AdjustsBalances {
 		for _, ef := range old.Effects() {
 			uid := string(ef.BalanceUID)
-			add(uid, -ef.Delta)
+			b, ok := locked[uid]
+			if !ok {
+				continue // balance deleted since: nothing left to adjust
+			}
+			add(uid, -ef.ValueDelta(b.Type.IsLiability()))
 			reversedCurrency[uid] = effectCurrency(*old, ef)
 		}
 	}
@@ -70,7 +75,7 @@ func applyBalanceEffects(ctx context.Context, tx *sql.Tx, userUID string, old, n
 				}
 				return &validate.ValidationError{Fields: map[string]string{ef.Field: msg}}
 			}
-			add(uid, ef.Delta)
+			add(uid, ef.ValueDelta(b.Type.IsLiability()))
 		}
 	}
 	for _, uid := range order {

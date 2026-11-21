@@ -30,11 +30,12 @@ var ErrNotFound = errors.New("not found")
 // else changed it since the caller read it. Nothing is written.
 var ErrVersionConflict = errors.New("version conflict: the record was changed since it was read")
 
-// ErrReadOnly is returned when an update or delete targets a
-// balance_adjustment transaction, or a write tries to give a transaction that
-// type. Balance adjustments are created automatically by manual balance edits
-// (UpdateBalanceWith) and are never changed afterwards.
-var ErrReadOnly = errors.New("balance adjustments are created automatically and cannot be created, edited or deleted directly")
+// ErrReadOnly is returned when a write tries to create a balance_adjustment
+// transaction, or to change the type of a transaction to or from
+// balance_adjustment. Balance adjustments are created automatically by manual
+// balance edits (UpdateBalanceWith); once recorded they can be edited (as
+// balance adjustments) and deleted like any other transaction.
+var ErrReadOnly = errors.New("balance adjustments are created automatically by balance edits; they cannot be created directly, and a transaction cannot change type to or from balance_adjustment")
 
 // WriteOptions controls optimistic locking for updates and deletes.
 type WriteOptions struct {

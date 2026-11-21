@@ -17,7 +17,7 @@ Transactions are stored in the Postgres table **`transactions`**, with index
 | amount        | `amount`       | `amount_minor bigint` + `amount_scale smallint` (see below)             |
 | amount (raw)  | `amount_minor` | the integer itself, e.g. `12050`                                       |
 | currency      | `currency`     | `char(3)`, ISO 4217 alphabetic code, upper-cased (`THB`, `SGD`, `USD`, …) |
-| type          | `type`         | `text NOT NULL DEFAULT 'expense'`: `expense`, `income`, `transfer`, `asset_purchase`, `return_on_investment`, `repay_debt`, or `balance_adjustment` (server-created only; see "Transaction types") |
+| type          | `type`         | `text NOT NULL DEFAULT 'expense'`: `expense`, `income`, `transfer`, `asset_purchase`, `return_on_investment`, `repay_debt`, or `balance_adjustment` (created by the server only, then editable and deletable; see "Transaction types") |
 | adj. direction | `adjustment_direction` | `text`, `increase` / `decrease` on `balance_adjustment` rows, `NULL` (JSON `null`) otherwise |
 | payment acct  | `balance_uid`  | `uuid` of of the balance paid from (expense), received into (income, return_on_investment) or moved from (transfer, asset_purchase, repay_debt); no FK |
 | destination   | `to_balance_uid` | `uuid`, transfers, asset purchases, returns on investment and debt repayments only (else `null`); UUID of the destination balance (for a return on investment, the linked `other_asset`; for a debt repayment, the `credit_card` / `other_liability` repaid); no FK |
@@ -132,7 +132,8 @@ the destination moves by `to_amount` in its own currency, either sent by the
 client (manual rate) or computed from the ECB rate via Frankfurter (see
 [docs/exchange-rates.md](exchange-rates.md)). Manual PUT still sets amounts directly and overrides those
 changes (no separate adjustments API); a change of the balance/debt amount
-is recorded as a read-only `balance_adjustment` transaction. Every balance and
+is recorded as a `balance_adjustment` transaction (editable and deletable
+afterwards; editing or deleting it moves the balance). Every balance and
 transaction has a `version`; PUT must send it (`If-Match` or
 `"version"`), else 428, and get 409 when stale. Sign rules, manual
 overrides and versioning are covered in [docs/balances.md](balances.md).
@@ -228,7 +229,7 @@ adjusts its balances automatically:
 | `asset_purchase` ("Asset Purchase") | like an expense: asset `balance −= amount`; card `debt += amount` | the `other_asset` bought: `balance += amount` |
 | `return_on_investment` ("Return on Investment") | like income: account `balance += amount`; card `debt −= amount` (may go negative = in credit) | the linked `other_asset`: **unchanged** (link only) |
 | `repay_debt` ("Repay Debt") | the `payment_account` paid from: `balance −= amount + interest_amount + fee_amount` | the `credit_card` / `other_liability` repaid: `debt −= amount` (may go negative = in credit) |
-| `balance_adjustment` ("Balance Adjustment") | none: records a manual balance edit that already set the value | n/a |
+| `balance_adjustment` ("Balance Adjustment") | any balance: `increase` raises an asset's `balance` or a liability's `debt` by `amount`, `decrease` lowers it. Recorded by a manual balance edit that already set the value, so this applies only when the adjustment is edited or deleted | n/a |
 
 **Balance adjustments** are created only by the server, in the same database
 transaction as a manual `PUT /api/balances/:uid` that changes the
@@ -239,9 +240,14 @@ transaction as a manual `PUT /api/balances/:uid` that changes the
   generated `note` such as `Manual edit of debt: 100.00 → 175.00`; no
   category or destination.
 - Limit-only changes, no-op edits and currency changes record nothing.
-- They never move a balance (`"adjusts_balances": false`).
-- Read-only: POST/PUT with `"type":"balance_adjustment"` → 422;
-  PUT/DELETE of an existing one → 409 `balance_adjustment_readonly`.
+- Recording one does not move the balance again (the edit set it); it has
+  `"adjusts_balances": true` because its change is in the balance.
+- They cannot be created through the API: POST, or a PUT turning another
+  transaction into one, with `"type":"balance_adjustment"` → 422.
+- An existing one can be edited with PUT (`amount`, `adjustment_direction`
+  — required —, `balance_uid` of any balance type, `currency`, `spent_at`,
+  `note`; it stays a `balance_adjustment`) and deleted with DELETE. The
+  balance moves by the difference, or back by the whole change on delete.
 
 Details (updates, deletes, older transactions, currency rule) are in
 [docs/balances.md](balances.md). The table below says which balance
@@ -371,6 +377,7 @@ versioning lives in `pkg/store/migrate.go`.
 | 3       | transaction type `repay_debt` allowed: widens `transactions_type_check` |
 | 4       | optional foreign-currency amount: adds `transactions.foreign_amount_minor`, `foreign_amount_scale`, `foreign_currency` and `transactions_foreign_amount_check` |
 | 5       | optional interest and fees on debt repayments: adds `transactions.interest_amount_minor`, `fee_amount_minor`, `transactions_repay_charges_check` and `transactions_repay_category_check` |
+| 6       | balance adjustments editable and deletable: sets `balance_applied = true` on `balance_adjustment` rows, replaces the baseline check that required it false with `transactions_adjustment_check` (no destination or category) |
 
 **Coming from SQLite?** Earlier versions stored everything in
 `data/expenses.db`. That data is **not migrated**: the Postgres version starts
