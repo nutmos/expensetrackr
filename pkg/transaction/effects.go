@@ -14,7 +14,10 @@ func (e Transaction) Effects() []Effect {
 	amt := e.AmountMinor
 	switch e.Type {
 	case BalanceAdjustment:
-		return nil
+		if e.AdjustmentDirection != nil && *e.AdjustmentDirection == Decrease {
+			amt = -amt
+		}
+		return []Effect{{BalanceUID: e.BalanceUID, Field: "balance_uid", Delta: amt, ByAmount: true}}
 	case Income, ReturnOnInvestment: // ROI: the linked asset is not moved
 		return []Effect{{BalanceUID: e.BalanceUID, Field: "balance_uid", Delta: amt}}
 	case Transfer, AssetPurchase, RepayDebt:

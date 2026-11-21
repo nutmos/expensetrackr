@@ -33,9 +33,10 @@ type Transaction struct {
 	// Version starts at 1 and is incremented on every change. PUT must
 	// send the version they last read (If-Match or "version"); see docs/balances.md.
 	Version int64 `json:"version"`
-	// AdjustsBalances is true when this transaction moved its balances (every
-	// transaction except balance_adjustment rows, which never do). Editing or
-	// deleting a row with false leaves balances alone.
+	// AdjustsBalances is true when this transaction's effect is reflected in
+	// its balances (every transaction; for a balance_adjustment the manual
+	// edit that recorded it already set the value). Editing or deleting a row
+	// with false leaves balances alone.
 	AdjustsBalances bool `json:"adjusts_balances"`
 	// AdjustmentDirection is set only for type balance_adjustment: whether the
 	// manual edit increased or decreased the edited amount (balance for an
@@ -117,6 +118,10 @@ type CreateInput struct {
 	// replace).
 	InterestAmount DecimalInput `json:"interest_amount"`
 	FeeAmount      DecimalInput `json:"fee_amount"`
+	// AdjustmentDirection ("increase" | "decrease") is required when editing
+	// a balance_adjustment (PUT only; see ValidateAdjustment) and must be
+	// empty or null otherwise.
+	AdjustmentDirection *string `json:"adjustment_direction"`
 
 	// IgnoredUID accepts a "uid" in PUT bodies so a previous response can be
 	// round-tripped; it is never used (the uid is server-assigned, immutable).
@@ -171,9 +176,13 @@ const (
 	// not counted as an expense or income.
 	RepayDebt Type = "repay_debt"
 	// BalanceAdjustment ("Balance Adjustment") is recorded automatically when
-	// a balance's amount is edited by hand (PUT /api/balances/:uid). It
-	// cannot be created, edited or deleted through the transactions API and
-	// never moves a balance itself (the manual edit already set the value).
+	// a balance's amount is edited by hand (PUT /api/balances/:uid); the edit
+	// itself sets the new value. It cannot be created through the
+	// transactions API, but it can be edited (amount, direction, balance,
+	// date, note) and deleted like any other transaction: deleting it
+	// reverts its change and editing it moves the balance(s) by the
+	// difference. Its effect is on the balance's amount as shown: increase
+	// raises an asset's balance or a liability's debt.
 	BalanceAdjustment Type = "balance_adjustment"
 )
 
@@ -209,9 +218,14 @@ func (e Transaction) ChargesMinor() int64 {
 	return n
 }
 
-// ErrAdjustmentType is the field message for an attempt to use type
-// balance_adjustment in POST/PUT /api/transactions.
-const ErrAdjustmentType = "balance_adjustment transactions are created automatically when a balance amount is edited (PUT /api/balances/:uid); they cannot be created or changed here"
+// ErrAdjustmentType is the field message for an attempt to create a
+// balance_adjustment, or turn another transaction into one, through
+// POST/PUT /api/transactions.
+const ErrAdjustmentType = "balance_adjustment transactions are created automatically when a balance amount is edited (PUT /api/balances/:uid); they cannot be created here, and other transactions cannot be turned into one"
+
+// ErrAdjustmentTypeChange is the field message for a PUT that tries to give
+// an existing balance_adjustment another type.
+const ErrAdjustmentTypeChange = "a balance adjustment keeps type balance_adjustment (omit type or send balance_adjustment); delete it and record a new transaction instead"
 
 // ConversionRate is one direction of the conversion a cross-currency
 // transfer actually made: Rate units of To per 1 From. It has the same
@@ -245,10 +259,25 @@ type ConversionRate struct {
 //	                           (payment_account balance down by everything paid)
 //	          to_balance_uid   value += amount  (credit_card / other_liability debt down by
 //	                           the principal only; overpaying leaves it in credit)
-//	balance_adjustment         none             (records a manual edit that already set the value)
+//	balance_adjustment balance_uid amount ±= amount (ByAmount: increase raises an asset's
+//	                           balance or a liability's debt; decrease lowers it)
 type Effect struct {
 	BalanceUID UID
 	Field      string // "balance_uid" or "to_balance_uid" (for error messages)
 	Delta      int64  // signed value change in minor units of Currency
 	Currency   string // currency of Delta ("" = the transaction currency)
+	// ByAmount means Delta changes the balance's amount as shown (balance
+	// of an asset, debt of a liability) instead of its value; the value
+	// change is -Delta for a liability. Only balance adjustments use it,
+	// since the transaction alone does not know the balance's kind.
+	ByAmount bool
+}
+
+// ValueDelta is the change e makes to the value of a balance of kind
+// liability (true) or asset (false). See Effect.ByAmount.
+func (e Effect) ValueDelta(liability bool) int64 {
+	if e.ByAmount && liability {
+		return -e.Delta
+	}
+	return e.Delta
 }

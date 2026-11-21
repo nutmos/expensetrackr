@@ -259,9 +259,6 @@ func (s *Store) UpdateWith(ctx context.Context, userUID string, id int64, opts W
 		if err != nil {
 			return err
 		}
-		if cur.Type == transaction.BalanceAdjustment {
-			return ErrReadOnly
-		}
 		if opts.Version > 0 && cur.Version != opts.Version {
 			return ErrVersionConflict
 		}
@@ -269,10 +266,15 @@ func (s *Store) UpdateWith(ctx context.Context, userUID string, id int64, opts W
 		if err != nil {
 			return err
 		}
-		if next.Type == transaction.BalanceAdjustment {
+		// A balance adjustment stays one, and nothing else becomes one.
+		if (cur.Type == transaction.BalanceAdjustment) != (next.Type == transaction.BalanceAdjustment) {
 			return ErrReadOnly
 		}
-		next.AdjustmentDirection = nil
+		if next.Type != transaction.BalanceAdjustment {
+			next.AdjustmentDirection = nil
+		} else if next.AdjustmentDirection == nil {
+			return errors.New("balance adjustment without adjustment_direction")
+		}
 		if err := checkFX(next); err != nil {
 			return err
 		}
@@ -297,10 +299,10 @@ func (s *Store) UpdateWith(ctx context.Context, userUID string, id int64, opts W
 			        spent_at = $10, spent_at_utc = $11, note = $12, updated_at = $13, version = $14,
 			        to_amount_minor = $15, to_amount_scale = $16, to_currency = $17, exchange_rate = $18, rate_source = $19, rate_date = $20, import_ref = $21,
 			        foreign_amount_minor = $22, foreign_amount_scale = $23, foreign_currency = $24,
-			        interest_amount_minor = $25, fee_amount_minor = $26
-			 WHERE id = $27 AND version = $28`,
+			        interest_amount_minor = $25, fee_amount_minor = $26, adjustment_direction = $27
+			 WHERE id = $28 AND version = $29`,
 				append(append(append(append([]any{string(next.Type), next.AmountMinor, scale, next.Currency, next.BalanceUID, next.Account, next.ToBalanceUID, next.ToAccount, next.CategoryUID,
-					next.SpentAt, spentUTC(next), next.Note, now, next.Version}, fxArgs(next)...), next.ImportRef), foreignArgs(next)...), next.InterestAmountMinor, next.FeeAmountMinor, id, cur.Version)...)
+					next.SpentAt, spentUTC(next), next.Note, now, next.Version}, fxArgs(next)...), next.ImportRef), foreignArgs(next)...), next.InterestAmountMinor, next.FeeAmountMinor, directionArg(next), id, cur.Version)...)
 			if err != nil {
 				return err
 			}
@@ -339,9 +341,6 @@ func (s *Store) DeleteWith(ctx context.Context, userUID string, id int64, opts W
 		if err != nil {
 			return err
 		}
-		if cur.Type == transaction.BalanceAdjustment {
-			return ErrReadOnly
-		}
 		if opts.Version > 0 && cur.Version != opts.Version {
 			return ErrVersionConflict
 		}
@@ -353,6 +352,15 @@ func (s *Store) DeleteWith(ctx context.Context, userUID string, id int64, opts W
 		}
 		return nil
 	})
+}
+
+// directionArg is the adjustment_direction column value (NULL unless next is
+// a balance adjustment).
+func directionArg(next transaction.Transaction) any {
+	if next.AdjustmentDirection == nil {
+		return nil
+	}
+	return string(*next.AdjustmentDirection)
 }
 
 // checkFX enforces the cross-currency invariants: the to_* fields are set

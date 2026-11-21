@@ -74,15 +74,16 @@ func IsPayableType(t balance.Type) bool {
 //   - return_on_investment: payment_account, credit_card (the return is
 //     received there; the linked other_asset is not a receiver)
 //   - repay_debt: payment_account only (the money that pays the debt)
+//   - balance_adjustment: any balance type (the adjusted balance)
 func SourceAllowed(tt Type, bt balance.Type) bool {
+	if tt == Transfer || tt == BalanceAdjustment {
+		return bt.Valid()
+	}
 	if tt == RepayDebt {
 		return bt == balance.TypePaymentAccount
 	}
 	if tt == Expense || tt == Income || tt == AssetPurchase || tt == ReturnOnInvestment {
 		return IsPayableType(bt)
-	}
-	if tt == Transfer {
-		return bt.Valid()
 	}
 	return false
 }
@@ -134,8 +135,26 @@ func DestinationAllowed(tt Type, bt balance.Type) bool {
 
 // Validate checks the input and returns a normalized Transaction (without ID,
 // CreatedAt, or Account). Account is filled later by AttachPaymentBalance once
-// the balance_uid has been resolved against the store.
+// the balance_uid has been resolved against the store. Type
+// balance_adjustment is rejected (see ValidateAdjustment).
 func (in CreateInput) Validate() (Transaction, error) {
+	return in.validate(false)
+}
+
+// ValidateAdjustment checks a PUT body for an existing balance_adjustment:
+// type must be omitted or balance_adjustment, adjustment_direction is
+// required, balance_uid may name any balance, and to_balance_uid,
+// category_uid, to_amount/to_currency, foreign_amount/foreign_currency and
+// import_ref are not allowed.
+func (in CreateInput) ValidateAdjustment() (Transaction, error) {
+	if t := normalizeType(in.Type); t != "" && t != BalanceAdjustment {
+		return Transaction{}, fieldError("type", ErrAdjustmentTypeChange)
+	}
+	in.Type = string(BalanceAdjustment)
+	return in.validate(true)
+}
+
+func (in CreateInput) validate(adjustment bool) (Transaction, error) {
 	fields := map[string]string{}
 	var exp Transaction
 
@@ -161,7 +180,9 @@ func (in CreateInput) Validate() (Transaction, error) {
 	}
 
 	tt, okType := ParseType(in.Type)
-	if normalizeType(in.Type) == BalanceAdjustment {
+	if adjustment {
+		tt, okType = BalanceAdjustment, true
+	} else if normalizeType(in.Type) == BalanceAdjustment {
 		fields["type"] = ErrAdjustmentType
 	} else if !okType {
 		fields["type"] = "must be one of: expense, income, transfer, asset_purchase, return_on_investment, repay_debt"
@@ -202,8 +223,8 @@ func (in CreateInput) Validate() (Transaction, error) {
 
 	// A category is required for every type but transfer and repay_debt.
 	// A transfer may not have one; a repay_debt may have an expense category
-	// for its interest and fees only when it has some (balance adjustments
-	// never come through here).
+	// for its interest and fees only when it has some. A balance_adjustment
+	// may not have one.
 	cat := common_type.NormalizeUID(in.CategoryUID)
 	if cat == "" {
 		if okType && tt.NeedsCategory() {
@@ -243,6 +264,24 @@ func (in CreateInput) Validate() (Transaction, error) {
 		validateForeign(in, tt, cur, fields, &exp)
 	}
 
+	dir := ""
+	if in.AdjustmentDirection != nil {
+		dir = strings.ToLower(strings.TrimSpace(*in.AdjustmentDirection))
+	}
+	switch {
+	case tt != BalanceAdjustment || !okType:
+		if dir != "" {
+			fields["adjustment_direction"] = "is only allowed when editing a balance_adjustment"
+		}
+	case dir == "":
+		fields["adjustment_direction"] = "is required for a balance adjustment (increase or decrease)"
+	case dir != string(Increase) && dir != string(Decrease):
+		fields["adjustment_direction"] = "must be increase or decrease"
+	default:
+		d := Direction(dir)
+		exp.AdjustmentDirection = &d
+	}
+
 	note := strings.TrimSpace(in.Note)
 	if utf8.RuneCountInString(note) > MaxNoteLen {
 		fields["note"] = fmt.Sprintf("must be at most %d characters", MaxNoteLen)
@@ -252,7 +291,9 @@ func (in CreateInput) Validate() (Transaction, error) {
 	// A nil ImportRef means none (create) / keep the stored ref (PUT).
 	if in.ImportRef != nil {
 		if ref := strings.TrimSpace(*in.ImportRef); ref != "" {
-			if utf8.RuneCountInString(ref) > MaxImportRefLen {
+			if tt == BalanceAdjustment {
+				fields["import_ref"] = "is not allowed for a balance adjustment"
+			} else if utf8.RuneCountInString(ref) > MaxImportRefLen {
 				fields["import_ref"] = fmt.Sprintf("must be at most %d characters", MaxImportRefLen)
 			} else if strings.ContainsFunc(ref, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
 				fields["import_ref"] = "must not contain control characters"

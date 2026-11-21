@@ -131,7 +131,9 @@
               <option value="asset_purchase">Asset Purchase</option>
               <option value="return_on_investment">Return on Investment</option>
               <option value="repay_debt">Repay Debt</option>
+              <option value="balance_adjustment" hidden disabled>Balance Adjustment</option>
             </select>
+            <small class="muted" id="type-hint" hidden>A balance adjustment keeps its type.</small>
             <small class="err" data-for="type"></small>
           </label>
           <label><span id="balance-label">Payment account</span>
@@ -140,6 +142,14 @@
             </select>
             <small class="muted"><span id="balance-hint">Payment accounts and credit cards.</span> <a href="/balances">Manage balances</a></small>
             <small class="err" data-for="balance_uid"></small>
+          </label>
+          <label id="direction-field" hidden>Direction
+            <select id="adjustment_direction" name="adjustment_direction">
+              <option value="increase">Increase</option>
+              <option value="decrease">Decrease</option>
+            </select>
+            <small class="muted" id="direction-hint"></small>
+            <small class="err" data-for="adjustment_direction"></small>
           </label>
           <label><span id="amount-label">Amount</span>
             <input id="amount" name="amount" type="text" inputmode="decimal" placeholder="120.50" autocomplete="off" required>
@@ -203,7 +213,7 @@
           <input id="note" name="note" type="text" maxlength="1000" placeholder="Lunch with team">
           <small class="err" data-for="note"></small>
         </label>
-        <p class="muted small" id="auto-adjust-note">Saving updates the selected balance(s) automatically: an expense lowers an account’s balance or raises a card’s debt, income raises a balance, a transfer moves the amount from source to destination, an asset purchase pays like an expense and raises the asset’s value, a debt repayment lowers the account’s balance by the principal plus any interest and fees, and the card’s or loan’s debt by the principal. The currency must match the (source) balance’s currency; a transfer between balances in different currencies credits the received amount, converted at the ECB reference rate from <a href="https://frankfurter.dev" target="_blank" rel="noopener">Frankfurter</a> unless you type it yourself.</p>
+        <p class="muted small" id="auto-adjust-note">Saving updates the selected balance(s) automatically: an expense lowers an account’s balance or raises a card’s debt, income raises a balance, a transfer moves the amount from source to destination, an asset purchase pays like an expense and raises the asset’s value, a debt repayment lowers the account’s balance by the principal plus any interest and fees, and the card’s or loan’s debt by the principal. The currency must match the (source) balance’s currency; a transfer between balances in different currencies credits the received amount, converted at the ECB reference rate from <a href="https://frankfurter.dev" target="_blank" rel="noopener">Frankfurter</a> unless you type it yourself. Editing a balance adjustment moves its balance by the difference.</p>
         <div class="conflict" id="conflict" role="alert" hidden>
           <p class="conflict-msg"></p>
           <button type="button" class="conflict-reload">Reload latest transaction</button>

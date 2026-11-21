@@ -172,7 +172,8 @@ index on `(balance_uid, import_ref) WHERE import_ref IS NOT NULL`.
      `credit_card`, with `to_balance_uid` = that asset (its value is not
      changed); with an income category.
    - never `balance_adjustment`. It is rejected per item. To reconcile a
-     final difference, edit the balance instead.
+     final difference, edit the balance instead (the recorded adjustment can
+     be edited or deleted later).
 4. **`spent_at`** must have an offset. Use the bank's local time zone, e.g.
    `2026-10-03T00:00:00+07:00` for a date-only Thai statement.
 5. **Categories** are optional and per user. Map them with

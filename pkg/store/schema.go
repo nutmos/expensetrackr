@@ -54,8 +54,10 @@ package store
 //   - spent_at: the RFC 3339 text exactly as entered, offset included (a
 //     timestamptz would lose the offset). spent_at_utc is the same instant,
 //     used for ordering, filtering and paging.
-//   - balance_applied: whether the row moved its balances (false only for
-//     balance_adjustment rows, recorded by manual balance edits).
+//   - balance_applied: whether the row's effect is reflected in its
+//     balances. Until v4 it was false for balance_adjustment rows (recorded by
+//     manual balance edits); since v5 (migrate_v5.go) it is true for every
+//     row, so editing or deleting an adjustment moves the balance.
 //   - to_amount_minor ... rate_date: cross-currency transfers
 //     (docs/exchange-rates.md); NULL otherwise. Rates are decimal text as
 //     received or computed (exact, never floats).

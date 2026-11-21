@@ -51,7 +51,7 @@ Rules:
 - Amounts are decimal strings (e.g. "120.50"); currency must equal the source balance's currency.
 - spent_at and the from/to filters are RFC 3339 with a UTC offset (e.g. 2026-10-06T12:30:00+08:00); ask for the user's offset if unknown.
 - category_uid is required for every type except transfer and repay_debt, where it is not allowed (expense/asset_purchase: an expense category; income/return_on_investment: an income category).
-- balance_adjustment rows are written by the server when a balance is corrected; they cannot be created, edited or deleted here.
+- balance_adjustment rows are written by the server when a balance is corrected; they cannot be created here, but can be edited (amount, adjustment_direction, balance, date, note) or deleted, which moves the balance by the difference or reverts the correction.
 - Confirm with the user before deleting a transaction.`
 
 // Server is an MCP server exposing Tools. Serve handles one client.

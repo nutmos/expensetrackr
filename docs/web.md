@@ -99,15 +99,19 @@ confirmations use human labels instead. For example, an edit page is titled
   adjustments are excluded from both. A repayment's interest and fees are shown
   under its amount.
 - **Balance Adjustment** rows (recorded by manual balance edits) have their
-  own style and label, a signed amount (+/−), and "Automatic" instead of
-  Edit/Delete; their edit URL shows a read-only message.
+  own style and label, a signed amount (+/−), and Edit/Delete like other
+  rows. Their edit form keeps the type (shown but disabled), lets you pick
+  any balance, and adds a **Direction** select (Increase / Decrease) with a
+  hint saying whether it raises or lowers the balance or the debt. Saving
+  moves the balance(s) by the difference; deleting (after a confirmation
+  that says so) reverts the change.
 - Columns: time (shown in the device's time zone, with the stored value on
   hover, and an "edited" marker), Type, Amount,
   Currency, Account ("from → to" for transfers, asset purchases and debt repayments, "investment → account" for returns on investment), Category, Note.
 - The category name is looked up client-side from `/api/categories` by
   `category_uid`.
 - The form has a **Type** selector (Expense / Income / Transfer / Asset Purchase / Return on Investment / Repay Debt; balance
-  adjustments cannot be entered). The source
+  adjustments cannot be entered, only edited). The source
   dropdown lists only the balance types allowed for that type, grouped under
   headings (Payment accounts, Credit cards, Other assets, Other liabilities).
   Each option shows the balance's name and current amount, e.g. "Wallet ·

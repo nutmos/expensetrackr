@@ -196,7 +196,7 @@ Balance effects (automatic):
 | asset_purchase | like expense | `other_asset` +amount (same currency required) |
 | return_on_investment | like income (account +amount / card debt −amount) | linked `other_asset`: unchanged (any currency) |
 | repay_debt | `payment_account` −(amount + interest_amount + fee_amount) | `credit_card` / `other_liability` debt −amount (the principal; same currency required) |
-| balance_adjustment | none (server-created record of a manual edit) | – |
+| balance_adjustment | any balance: `increase` raises an asset's balance / a liability's debt by amount, `decrease` lowers it (server-created record of a manual edit; applied only when the adjustment is edited or deleted) | – |
 
 `adjusts_balances` is `false` for rows created before automatic balances
 existed; editing/deleting those doesn't move balances.
@@ -248,11 +248,16 @@ Same body rules as POST, plus the version (SKILL.md "Edit"). Notes:
   otherwise the rate is fetched again. Sending `to_amount` makes it manual.
   Only send back `to_amount` when `rate_source` was `manual`.
 - The old balance effect is reversed and the new one applied atomically.
+- **Balance adjustment:** `type` omitted or `balance_adjustment` (it cannot
+  change), `adjustment_direction` (`increase`/`decrease`) required,
+  `balance_uid` may be any balance; no `category_uid`, `to_balance_uid`,
+  `to_amount`, foreign amount or `import_ref` (422). `adjustment_direction`
+  on any other type is 422.
 
 ### Delete: `DELETE /api/transactions/{uid}` → 204 (optional `If-Match`)
 
-Reverses the balance effect. `balance_adjustment` rows → 409
-`balance_adjustment_readonly`.
+Reverses the balance effect; for a `balance_adjustment` that reverts the
+manual change it recorded.
 
 ### Same-currency transfer with `to_amount`
 

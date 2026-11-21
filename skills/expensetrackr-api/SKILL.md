@@ -19,9 +19,11 @@ authoritative spec is `GET /api/openapi.yaml` (no login needed).
 - **Confirm before destructive or bulk changes**: any DELETE, editing a
   balance amount, or changing more than one record. Say what will change in
   human terms ("delete the 120.50 THB lunch on 6 Oct from Wallet?").
-- **Never create, edit or delete `balance_adjustment` transactions.** The
-  server records them itself when a balance amount is edited (POST/PUT with
-  that type is 422, PUT/DELETE of one is 409).
+- **Never create `balance_adjustment` transactions.** The server records
+  them itself when a balance amount is edited (POST, or a PUT turning another
+  transaction into one, is 422). Edit or delete an existing one only when the
+  user asks: that moves the balance (by the difference, or back by the whole
+  change on delete), so confirm it like any balance change.
 - **Talk in names, not uids.** Use uids in API calls only; show users account
   and category names, amounts and dates unless they ask for ids.
 - **Protect credentials.** Read them from `EXPENSETRACKR_USERNAME` /
@@ -280,8 +282,9 @@ echo "$TX" \
   are not versioned, no `If-Match`).
 
 **Editing a balance amount** (`balance` / `debt`) is a manual override: it
-sets the number and the server records a read-only `balance_adjustment`
-transaction for the difference. Only do it when the user explicitly wants to
+sets the number and the server records a `balance_adjustment`
+transaction for the difference (editable/deletable later; that moves the
+balance again). Only do it when the user explicitly wants to
 correct the balance; to record spending, create a transaction instead.
 
 ## Step 5: delete
@@ -306,7 +309,7 @@ All errors are JSON `{"error": "...", "fields": {...}, "code": "..."}`.
 | 401 | not logged in / session expired (`unauthenticated`), bad login (`invalid_credentials`), no account yet (`setup_required`) | log in once and retry; on bad credentials stop and tell the user |
 | 403 | `csrf` (Origin / Sec-Fetch-Site), `registration_closed`, wrong current password | drop `Origin`/`Sec-Fetch-Site`; don't retry others |
 | 404 | uid not found (or another user's category), unknown path/method | re-list to get the right uid |
-| 409 | `version_conflict` (re-read, re-apply, retry), `balance_adjustment_readonly`, `balance_in_use` (currency change), duplicate category name, category in use | handle per code; tell the user for name/in-use conflicts |
+| 409 | `version_conflict` (re-read, re-apply, retry), `balance_adjustment_readonly` (bulk item tried to create an adjustment), `balance_in_use` (currency change), duplicate category name, category in use | handle per code; tell the user for name/in-use conflicts |
 | 415 | body not `application/json` | add `Content-Type: application/json` |
 | 422 | validation failed; `fields` says which field and why (e.g. currency ≠ balance currency, wrong balance type, category type mismatch, too many decimals) | fix the named fields; ask the user if the fix needs information you don't have |
 | 428 | `version_required` | resend with `If-Match: "<version>"` |

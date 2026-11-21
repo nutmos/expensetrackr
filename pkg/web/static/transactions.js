@@ -117,6 +117,8 @@
     asset_purchase: ["payment_account", "credit_card"],
     return_on_investment: ["payment_account", "credit_card"],
     repay_debt: ["payment_account"],
+    // Only when editing one (they are recorded by manual balance edits).
+    balance_adjustment: ["payment_account", "credit_card", "other_asset", "other_liability"],
   };
   // Which balance types may be the destination (to_balance_uid).
   const DEST_TYPES = {
@@ -139,7 +141,7 @@
   // Types that do not require a category. A transfer never has one; a debt
   // repayment may have an (expense) category for its interest and fees only,
   // so its category field is shown only while those are filled in.
-  const NO_CATEGORY = new Set(["transfer", "repay_debt"]);
+  const NO_CATEGORY = new Set(["transfer", "repay_debt", "balance_adjustment"]);
   // Whether the category field applies to type t in the current form.
   function categoryShown(t) { return !NO_CATEGORY.has(t) || (t === "repay_debt" && hasCharges()); }
   // Interest / fees typed into the form (debt repayments only).
@@ -162,7 +164,7 @@
   // Types that may record a foreign-currency amount (reference only; never
   // moves a balance). Transfers use to_amount instead.
   const FOREIGN_TYPES = new Set(["expense", "income", "asset_purchase", "return_on_investment"]);
-  const SOURCE_LABEL = { expense: "Payment account", income: "Received into", transfer: "From (source)", asset_purchase: "Paid from", return_on_investment: "Received into", repay_debt: "Paid from" };
+  const SOURCE_LABEL = { expense: "Payment account", income: "Received into", transfer: "From (source)", asset_purchase: "Paid from", return_on_investment: "Received into", repay_debt: "Paid from", balance_adjustment: "Adjusted balance" };
   const SOURCE_HINT = {
     expense: "Payment accounts and credit cards.",
     income: "Payment accounts and credit cards (e.g. cash rebates).",
@@ -170,6 +172,7 @@
     asset_purchase: "Payment accounts and credit cards.",
     return_on_investment: "Payment accounts and credit cards.",
     repay_debt: "Payment accounts.",
+    balance_adjustment: "Any balance.",
   };
   // Display names of transaction types (the API uses the lowercase values).
   const TYPE_LABEL = { expense: "Expense", income: "Income", transfer: "Transfer", asset_purchase: "Asset Purchase", return_on_investment: "Return on Investment", repay_debt: "Repay Debt", balance_adjustment: "Balance Adjustment" };
@@ -418,7 +421,19 @@
     else $("#to-field").before($("#category-field"));
     $("#amount-label").textContent = t === "repay_debt" ? "Principal" : "Amount";
     updateChargesTotal();
+    $("#direction-field").hidden = t !== "balance_adjustment";
+    updateDirectionHint();
     updateFx();
+  }
+
+  // Balance adjustments: what the direction does to the selected balance
+  // (its balance for an asset, its debt for a liability).
+  function updateDirectionHint() {
+    if (currentType() !== "balance_adjustment") return;
+    const b = balanceByUID($("#balance_uid").value);
+    const what = b && LIABILITY.has(b.type) ? "debt" : "balance";
+    $("#direction-hint").textContent = $("#adjustment_direction").value === "decrease"
+      ? `Lowers the ${what} by the amount.` : `Raises the ${what} by the amount.`;
   }
 
   // Category dropdown: only categories of the selected type; hidden for
@@ -475,6 +490,8 @@
     setStatus("");
     form.hidden = false;
     $("#submit-btn").disabled = false;
+    $("#type").disabled = false;
+    $("#type-hint").hidden = true;
     $("#type").value = newType && NEW_TYPES.has(newType) ? newType : "expense";
     $("#note").value = "";
     $("#amount").value = "";
@@ -518,18 +535,18 @@
       if (my === gen) setStatus("Network error: " + err.message, "bad");
       return;
     }
-    if (e.type === "balance_adjustment") {
-      // Recorded automatically by a manual balance edit; read-only in the API.
-      $("#form-title").textContent = "Balance Adjustment";
-      setStatus("Balance adjustments are recorded automatically when a balance or debt is edited by hand, and can't be edited or deleted. Edit the balance instead.", "bad");
-      return;
-    }
     editing = e;
     form.hidden = false;
-    $("#form-title").textContent = `Edit transaction: ${e.amount} ${e.currency}, ${shownTime(e.spent_at)}`;
+    const isAdj = e.type === "balance_adjustment";
+    $("#form-title").textContent = `Edit ${isAdj ? "balance adjustment" : "transaction"}: ${e.amount} ${e.currency}, ${shownTime(e.spent_at)}`;
     $("#amount").value = e.amount;
     App.setCurrency($("#currency"), e.currency);
     $("#type").value = e.type || "expense";
+    // A balance adjustment (recorded by a manual balance edit) can be
+    // edited, but it stays a balance adjustment.
+    $("#type").disabled = isAdj;
+    $("#type-hint").hidden = !isAdj;
+    if (isAdj) $("#adjustment_direction").value = e.adjustment_direction === "decrease" ? "decrease" : "increase";
     // Stored conversion: shown as saved; it is kept unless the amount, date
     // or balances change (then the market rate is looked up again) or the
     // received amount is edited (manual).
@@ -576,6 +593,7 @@
       note: $("#note").value.trim(),
     };
     if (DEST_TYPES[type]) payload.to_balance_uid = $("#to_balance_uid").value.trim();
+    if (type === "balance_adjustment") payload.adjustment_direction = $("#adjustment_direction").value;
     if (categoryShown(type) && $("#category_uid").value) payload.category_uid = $("#category_uid").value;
     // Interest and fees of a debt repayment; omitting them on an edit clears
     // them (PUT is a full replace).
@@ -627,7 +645,7 @@
         return;
       }
       if (!isEdit && type === "expense") rememberDefaults(payload.currency, payload.balance_uid);
-      App.setFlash("transactions", `${isEdit ? "Updated" : "Saved"} ${body.amount} ${body.currency} (${body.type}).`, body.uid);
+      App.setFlash("transactions", `${isEdit ? "Updated" : "Saved"} ${body.amount} ${body.currency} (${TYPE_LABEL[body.type] || body.type}).`, body.uid);
       editing = null;
       App.returnToList(LIST);
     } catch (err) {
@@ -764,7 +782,7 @@
     loadTransactions();
   }
 
-  // One list row (Edit/Delete, or "Automatic" for a balance adjustment).
+  // One list row with Edit/Delete (balance adjustments too).
   function transactionRow(e, highlightUID) {
     const tr = document.createElement("tr");
     tr.dataset.uid = String(e.uid);
@@ -841,19 +859,10 @@
     tr.append(timeTd, typeTd, amountTd, cell(fxRow ? `${App.currencyText(e.currency)} → ${App.currencyText(e.to_currency)}` : App.currencyText(e.currency), "cur"), acctTd, cell(categoryName(e.category_uid), "cat"), cell(e.note || "", "note"));
     const actions = document.createElement("td");
     actions.className = "actions-cell";
-    if (isAdj) {
-      // Read-only: recorded automatically, no Edit/Delete.
-      const auto = document.createElement("span");
-      auto.className = "auto-label";
-      auto.textContent = "Automatic";
-      auto.title = "Recorded when the balance was edited by hand; edit the balance to correct it.";
-      actions.append(auto);
-    } else {
-      actions.append(
-        link("Edit", `/transactions/${encodeURIComponent(e.uid)}/edit`, "button edit"),
-        button("Delete", "danger", () => deleteTransaction(e)),
-      );
-    }
+    actions.append(
+      link("Edit", `/transactions/${encodeURIComponent(e.uid)}/edit`, "button edit"),
+      button("Delete", "danger", () => deleteTransaction(e)),
+    );
     tr.append(actions);
     return tr;
   }
@@ -938,7 +947,9 @@
   async function deleteTransaction(e) {
     const acct = accountText(e) || "unknown account";
     const fxText = e.to_amount && e.to_currency ? ` → ${e.to_amount} ${e.to_currency}` : "";
-    if (!confirm(`Delete ${e.amount} ${e.currency}${fxText} (${acct}) at ${shownTime(e.spent_at)}?`)) return;
+    const revert = e.type === "balance_adjustment"
+      ? `\n\nThis balance adjustment ${e.adjustment_direction === "decrease" ? "lowered" : "raised"} ${acct}; deleting it reverts that change.` : "";
+    if (!confirm(`Delete ${e.amount} ${e.currency}${fxText} (${acct}) at ${shownTime(e.spent_at)}?${revert}`)) return;
     const res = await fetch(`/api/transactions/${e.uid}`, { method: "DELETE", headers: App.ifMatch(e.version) });
     if (res.status === 409) {
       alert("This transaction changed after the list was loaded, so it was not deleted. The list has been refreshed; check it and delete again if you still want to.");
@@ -967,7 +978,8 @@
     const b = allBalances.find((x) => x.uid === $("#balance_uid").value);
     if (b) App.setCurrency($("#currency"), b.currency);
   }
-  $("#balance_uid").addEventListener("change", () => { currencyFromBalance(); fxAuto(); });
+  $("#balance_uid").addEventListener("change", () => { currencyFromBalance(); fxAuto(); updateDirectionHint(); });
+  $("#adjustment_direction").addEventListener("change", updateDirectionHint);
   // Changing what the conversion depends on goes back to the market rate
   // (like the API: a PUT without to_amount refetches).
   function fxAuto() { fxManual = false; updateFx(); }

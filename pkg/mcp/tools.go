@@ -425,6 +425,7 @@ func updateTransactionTool(c *Client) Tool {
 	props["foreign_amount"] = decimalSchema(descForeignAmt + ` Send "" (and foreign_currency "") to remove it.`)
 	props["interest_amount"] = decimalSchema(descInterest + ` Send "" to remove it.`)
 	props["fee_amount"] = decimalSchema(descFee + ` Send "" to remove it.`)
+	props["adjustment_direction"] = enum("Balance adjustments only: whether the adjustment raised (increase) or lowered (decrease) the balance (for an asset) or the debt (for a credit card or other liability).", "increase", "decrease")
 	return Tool{
 		Name:  "update_transaction",
 		Title: "Update a transaction",
@@ -432,13 +433,14 @@ func updateTransactionTool(c *Client) Tool {
 			"Balances are corrected automatically (the old effect is reversed, the new one applied). " +
 			"When the type changes, send the fields the new type needs (e.g. category_uid when changing a transfer to an expense, to_balance_uid when changing to a transfer); " +
 			"to_balance_uid is dropped automatically for types without a destination, category_uid for a transfer (and for a repay_debt left without interest or fees), foreign_amount/foreign_currency and interest_amount/fee_amount for types that do not allow them. " +
-			"Balance adjustments cannot be edited. Returns the updated transaction.",
+			"A balance_adjustment can be edited too (amount, adjustment_direction, balance_uid — any balance type —, spent_at, note) but stays a balance adjustment; its balance moves by the difference. Returns the updated transaction.",
 		InputSchema: obj(props, "uid"),
 		Idempotent:  true,
 		Handler: func(ctx context.Context, raw json.RawMessage) (any, error) {
 			var a struct {
-				UID     string `json:"uid"`
-				Version *int64 `json:"version"`
+				UID                 string  `json:"uid"`
+				Version             *int64  `json:"version"`
+				AdjustmentDirection *string `json:"adjustment_direction"`
 				txFields
 			}
 			if err := decodeArgs(raw, &a); err != nil {
@@ -449,6 +451,9 @@ func updateTransactionTool(c *Client) Tool {
 				return nil, err
 			}
 			changes := a.given()
+			if a.AdjustmentDirection != nil {
+				changes["adjustment_direction"] = *a.AdjustmentDirection
+			}
 			if len(changes) == 0 {
 				return nil, errors.New("nothing to change: pass at least one field to update")
 			}
@@ -483,8 +488,9 @@ func updateTransactionTool(c *Client) Tool {
 }
 
 // editable are the stored fields a PUT body carries over from the current
-// record (to_amount, to_currency and import_ref are handled separately).
-var editable = []string{"type", "amount", "currency", "balance_uid", "to_balance_uid", "category_uid", "spent_at", "note", "foreign_amount", "foreign_currency", "interest_amount", "fee_amount"}
+// record (to_amount, to_currency and import_ref are handled separately;
+// adjustment_direction is set only on balance adjustments).
+var editable = []string{"type", "amount", "currency", "balance_uid", "to_balance_uid", "category_uid", "spent_at", "note", "foreign_amount", "foreign_currency", "interest_amount", "fee_amount", "adjustment_direction"}
 
 // mergeUpdate builds the PUT body: the current record's editable fields with
 // changes applied, cleaned up for the resulting type.
@@ -494,9 +500,6 @@ func mergeUpdate(cur map[string]any, changes map[string]string) (map[string]stri
 			return fmt.Sprint(v)
 		}
 		return ""
-	}
-	if curStr("type") == "balance_adjustment" {
-		return nil, errors.New("this is a balance_adjustment, recorded by the server when a balance was corrected; it cannot be edited (correct the balance instead)")
 	}
 	body := map[string]string{}
 	for _, k := range editable {
@@ -508,6 +511,12 @@ func mergeUpdate(cur map[string]any, changes map[string]string) (map[string]stri
 		body[k] = v
 	}
 	typ := strings.ToLower(strings.TrimSpace(body["type"]))
+	if typ != "balance_adjustment" {
+		delete(body, "adjustment_direction") // let the API reject an explicit one
+		if v, ok := changes["adjustment_direction"]; ok {
+			body["adjustment_direction"] = v
+		}
+	}
 	_, explicitTo := changes["to_balance_uid"]
 	_, explicitCat := changes["category_uid"]
 	if typ != "transfer" && typ != "asset_purchase" && typ != "return_on_investment" && typ != "repay_debt" && !explicitTo {
@@ -585,7 +594,7 @@ func deleteTransactionTool(c *Client) Tool {
 		Name:  "delete_transaction",
 		Title: "Delete a transaction",
 		Description: "Permanently delete a transaction; its effect on the balances is reversed. " +
-			"Confirm with the user first (show amount, account, date and note). Balance adjustments cannot be deleted.",
+			"Confirm with the user first (show amount, account, date and note). Deleting a balance_adjustment reverts the balance correction it recorded.",
 		InputSchema: obj(map[string]any{
 			"uid":     str("uid of the transaction to delete."),
 			"version": map[string]any{"type": "integer", "minimum": 1, "description": "Optional: the version you showed the user; if the transaction changed since, nothing is deleted."},

@@ -226,10 +226,22 @@ func TestMergeUpdate(t *testing.T) {
 			want:    map[string]string{"type": "transfer", "amount": "100.00", "currency": "THB", "balance_uid": "a", "to_balance_uid": "l", "spent_at": "2026-10-12T10:00:00+08:00"},
 		},
 		{
-			name:    "balance adjustments are read-only",
-			cur:     map[string]any{"type": "balance_adjustment"},
-			changes: map[string]string{"note": "x"},
-			wantErr: "cannot be edited",
+			name:    "balance adjustment keeps its direction",
+			cur:     map[string]any{"type": "balance_adjustment", "amount": "10.00", "currency": "THB", "balance_uid": "a", "spent_at": "2026-10-12T10:00:00+08:00", "adjustment_direction": "decrease", "note": "Manual edit"},
+			changes: map[string]string{"note": "x", "amount": "12"},
+			want:    map[string]string{"type": "balance_adjustment", "amount": "12", "currency": "THB", "balance_uid": "a", "spent_at": "2026-10-12T10:00:00+08:00", "adjustment_direction": "decrease", "note": "x"},
+		},
+		{
+			name:    "balance adjustment direction and balance change",
+			cur:     map[string]any{"type": "balance_adjustment", "amount": "10.00", "currency": "THB", "balance_uid": "a", "spent_at": "2026-10-12T10:00:00+08:00", "adjustment_direction": "decrease"},
+			changes: map[string]string{"adjustment_direction": "increase", "balance_uid": "b"},
+			want:    map[string]string{"type": "balance_adjustment", "amount": "10.00", "currency": "THB", "balance_uid": "b", "spent_at": "2026-10-12T10:00:00+08:00", "adjustment_direction": "increase"},
+		},
+		{
+			name:    "an explicit direction on another type is passed on (the API rejects it)",
+			cur:     map[string]any{"type": "transfer", "amount": "10.00", "currency": "THB", "balance_uid": "a", "to_balance_uid": "b", "spent_at": "2026-10-12T10:00:00+08:00", "adjustment_direction": nil},
+			changes: map[string]string{"adjustment_direction": "increase"},
+			want:    map[string]string{"type": "transfer", "amount": "10.00", "currency": "THB", "balance_uid": "a", "to_balance_uid": "b", "spent_at": "2026-10-12T10:00:00+08:00", "adjustment_direction": "increase"},
 		},
 	}
 	for _, tc := range cases {

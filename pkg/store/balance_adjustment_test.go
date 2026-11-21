@@ -72,11 +72,11 @@ func TestManualEditRecordsAdjustment(t *testing.T) {
 		a := got[0]
 		if a.Type != transaction.BalanceAdjustment || a.Amount != c.amount || a.AdjustmentDirection == nil || *a.AdjustmentDirection != c.dir ||
 			a.Currency != "THB" || a.Account != c.b.Name || a.Note != c.note || a.SpentAt != "2026-10-08T21:30:00+08:00" ||
-			a.CategoryUID != nil || a.ToBalanceUID != nil || a.AdjustsBalances || a.Version != 1 || !isUUIDv4(string(a.UID)) {
+			a.CategoryUID != nil || a.ToBalanceUID != nil || !a.AdjustsBalances || a.Version != 1 || !isUUIDv4(string(a.UID)) {
 			t.Errorf("%s adjustment: %+v (dir %v)", c.b.Name, a, a.AdjustmentDirection)
 		}
-		if len(a.Effects()) != 0 {
-			t.Errorf("%s: adjustment has effects %v", c.b.Name, a.Effects())
+		if ef := a.Effects(); len(ef) != 1 || !ef[0].ByAmount || ef[0].BalanceUID != c.b.UID {
+			t.Errorf("%s: adjustment effects %v", c.b.Name, ef)
 		}
 	}
 	if n := len(f.adjustments()); n != 4 {
@@ -152,22 +152,73 @@ func TestStaleEditRecordsNothing(t *testing.T) {
 	f.want(f.pay, "999.00", 2)
 }
 
-func TestAdjustmentIsReadOnly(t *testing.T) {
+func TestAdjustmentEditAndDelete(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	if _, err := f.edit(f.pay, WriteOptions{}, func(in *balance.Input) { in.Balance = dec("900") }); err != nil {
 		t.Fatal(err)
 	}
-	adj := f.adjustments()[0]
-	if _, err := f.st.UpdateWith(ctx, f.userUID, adj.ID, WriteOptions{Version: 1}, func(cur transaction.Transaction) (transaction.Transaction, error) {
-		cur.Note = "x"
-		return cur, nil
-	}); !errors.Is(err, ErrReadOnly) {
-		t.Errorf("update adjustment: %v", err)
+	f.want(f.pay, "900.00", 2)
+	adj := f.adjustments()[0] // decrease 100.00
+	update := func(version int64, mut func(*transaction.Transaction)) (transaction.Transaction, error) {
+		t.Helper()
+		return f.st.UpdateWith(ctx, f.userUID, adj.ID, WriteOptions{Version: version}, func(cur transaction.Transaction) (transaction.Transaction, error) {
+			mut(&cur)
+			return cur, nil
+		})
 	}
-	if err := f.st.DeleteWith(ctx, f.userUID, adj.ID, WriteOptions{}); !errors.Is(err, ErrReadOnly) {
-		t.Errorf("delete adjustment: %v", err)
+	// A note-only edit leaves the balance alone.
+	got, err := update(1, func(e *transaction.Transaction) { e.Note = "found a receipt" })
+	if err != nil || got.Version != 2 || got.Note != "found a receipt" || got.Type != transaction.BalanceAdjustment || !got.AdjustsBalances {
+		t.Fatalf("note edit: %+v %v", got, err)
 	}
+	f.want(f.pay, "900.00", 2)
+	// A smaller decrease gives the difference back; flipping the direction
+	// moves it by twice the amount.
+	if _, err := update(2, func(e *transaction.Transaction) { e.AmountMinor, e.Amount = 4000, "40.00" }); err != nil {
+		t.Fatal(err)
+	}
+	f.want(f.pay, "960.00", 3)
+	inc := transaction.Increase
+	if _, err := update(3, func(e *transaction.Transaction) { e.AdjustmentDirection = &inc }); err != nil {
+		t.Fatal(err)
+	}
+	f.want(f.pay, "1040.00", 4)
+	if a, _ := f.st.Get(ctx, f.userUID, adj.ID); a.AdjustmentDirection == nil || *a.AdjustmentDirection != transaction.Increase || a.Amount != "40.00" {
+		t.Errorf("stored adjustment: %+v", a)
+	}
+	// Moving it to a liability: pay loses the increase, the card's debt
+	// goes up by it.
+	if _, err := update(4, func(e *transaction.Transaction) { e.BalanceUID, e.Account = f.card.UID, f.card.Name }); err != nil {
+		t.Fatal(err)
+	}
+	f.want(f.pay, "1000.00", 5)
+	f.want(f.card, "140.00", 2)
+	// A stale version, a missing balance or another currency changes nothing.
+	if _, err := update(4, func(e *transaction.Transaction) { e.Note = "stale" }); !errors.Is(err, ErrVersionConflict) {
+		t.Errorf("stale update: %v", err)
+	}
+	if _, err := update(5, func(e *transaction.Transaction) { e.BalanceUID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }); err == nil {
+		t.Error("update to a missing balance accepted")
+	}
+	if _, err := update(5, func(e *transaction.Transaction) { e.Currency = "USD" }); err == nil {
+		t.Error("currency mismatch accepted")
+	}
+	// It stays a balance adjustment.
+	if _, err := update(5, func(e *transaction.Transaction) { e.Type, e.AdjustmentDirection = transaction.Expense, nil }); !errors.Is(err, ErrReadOnly) {
+		t.Errorf("adjustment to expense: %v", err)
+	}
+	f.want(f.card, "140.00", 2)
+	// Deleting it reverts its change.
+	if err := f.st.DeleteWith(ctx, f.userUID, adj.ID, WriteOptions{Version: 5}); err != nil {
+		t.Fatal(err)
+	}
+	f.want(f.card, "100.00", 3)
+	f.want(f.pay, "1000.00", 5)
+	if n := len(f.adjustments()); n != 0 {
+		t.Errorf("%d adjustments after delete", n)
+	}
+
 	// Neither can one be created, nor an ordinary transaction turned into one.
 	e := f.tx("expense", "5", "THB", f.pay, nil)
 	e.Type = transaction.BalanceAdjustment
@@ -176,22 +227,28 @@ func TestAdjustmentIsReadOnly(t *testing.T) {
 	}
 	exp := f.create(f.tx("expense", "5", "THB", f.pay, nil))
 	if _, err := f.st.UpdateWith(ctx, f.userUID, exp.ID, WriteOptions{}, func(cur transaction.Transaction) (transaction.Transaction, error) {
-		cur.Type = transaction.BalanceAdjustment
+		cur.Type, cur.AdjustmentDirection = transaction.BalanceAdjustment, &inc
 		return cur, nil
 	}); !errors.Is(err, ErrReadOnly) {
 		t.Errorf("update to adjustment: %v", err)
 	}
-	if got, _ := f.st.Get(ctx, f.userUID, adj.ID); got.Version != 1 || got.Note != adj.Note {
-		t.Errorf("adjustment changed: %+v", got)
-	}
-	f.want(f.pay, "895.00", 3)
+	f.want(f.pay, "995.00", 6)
 
-	// The table itself refuses adjustment rows that would move a balance or
-	// carry a destination/category, and a direction on other types.
+	// Deleting an adjustment whose balance is gone just removes the row.
+	if _, err := f.edit(f.gold, WriteOptions{}, func(in *balance.Input) { in.Balance = dec("600") }); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.st.DeleteBalance(ctx, f.userUID, f.gold.ID); err != nil {
+		t.Skipf("balance delete not possible here: %v", err)
+	}
+	if err := f.st.DeleteWith(ctx, f.userUID, f.adjustments()[0].ID, WriteOptions{}); err != nil {
+		t.Errorf("delete adjustment of a deleted balance: %v", err)
+	}
+
+	// The table itself refuses adjustment rows without a direction or with a
+	// destination/category, and a direction on other types.
 	uid := f.userUID
 	for _, q := range []string{
-		`INSERT INTO transactions (uid, user_uid, type, amount_minor, amount_scale, currency, balance_uid, account, spent_at, spent_at_utc, created_at, balance_applied, adjustment_direction)
-		 VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', '` + uid + `', 'balance_adjustment', 1, 2, 'THB', '` + string(f.pay.UID) + `', 'pay', 'x', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', true, 'increase')`,
 		`INSERT INTO transactions (uid, user_uid, type, amount_minor, amount_scale, currency, balance_uid, account, spent_at, spent_at_utc, created_at, adjustment_direction)
 		 VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2', '` + uid + `', 'balance_adjustment', 1, 2, 'THB', '` + string(f.pay.UID) + `', 'pay', 'x', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', NULL)`,
 		`INSERT INTO transactions (uid, user_uid, type, amount_minor, amount_scale, currency, balance_uid, account, spent_at, spent_at_utc, created_at, adjustment_direction)

@@ -113,7 +113,10 @@ The API's `PUT` is a full replace, which is easy for a model to get wrong
 6. `PUT` with `If-Match` from step 1. A concurrent change between 1 and 6 is a
    409 from the API, returned as is.
 
-Balance adjustments are read-only, as in the API.
+Balance adjustments can be edited too, as in the API: they keep their type,
+the tool carries over their `adjustment_direction`, and `adjustment_direction`,
+`amount`, `balance_uid` (any balance), `spent_at` and `note` may be changed.
+`delete_transaction` on one reverts the balance change it recorded.
 
 ### Errors
 
@@ -134,7 +137,7 @@ write tool. The token never appears in results or logs.
 The `initialize` result carries short rules that clients add to the model's
 context: never invent amounts, accounts, categories or dates; resolve names
 with the list tools and talk in names; RFC 3339 with offset; which category
-type each transaction type needs; balance adjustments are server-only;
+type each transaction type needs; balance adjustments are created by the server only (but may be edited or deleted);
 confirm before deleting. They mirror the safety rules of the
 [log-transaction skill](../skills/expensetrackr-log-transaction/SKILL.md).
 
