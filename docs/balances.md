@@ -352,7 +352,9 @@ account or a paid-off loan whose history you want to keep.
 - Nothing else changes: its amount and transactions stay, the reports still
   count it, it can be edited (a PUT keeps it hidden; `hidden` is not a PUT
   field), and transactions may still use it.
-- Web page: **Hide** / **Show** buttons on the list, a **Show hidden** box
+- Web page: hiding is offered from the **Delete** dialog (**Hide instead**;
+  the list has no separate Hide button, issue #177). A hidden balance gets a
+  **Show** button on the list. A **Show hidden** box
   (`/balances?hidden=1`) that lists hidden balances with a *hidden* badge, and
   the transaction form offers a hidden balance only when the transaction being
   edited already uses it (labelled "(hidden)").
