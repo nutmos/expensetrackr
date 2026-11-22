@@ -192,24 +192,24 @@ func (s *Server) loadSession(c *gin.Context) (user.User, store.Session, bool) {
 	if now.Sub(se.LastSeenAt) >= touchEvery {
 		se.LastSeenAt, se.ExpiresAt = now, now.Add(auth.SessionTTL)
 		if s.Store.TouchSession(ctx, se.ID, se.LastSeenAt, se.ExpiresAt) == nil {
-			setSessionCookie(c, ck.Value, se.ExpiresAt, now)
+			s.setSessionCookie(c, ck.Value, se.ExpiresAt, now)
 		}
 	}
 	return u, se, true
 }
 
-func setSessionCookie(c *gin.Context, tok string, exp, now time.Time) {
+func (s *Server) setSessionCookie(c *gin.Context, tok string, exp, now time.Time) {
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name: sessionCookie, Value: tok, Path: "/",
 		Expires: exp, MaxAge: int(exp.Sub(now).Seconds()),
-		HttpOnly: true, Secure: c.Request.TLS != nil, SameSite: http.SameSiteLaxMode,
+		HttpOnly: true, Secure: s.isHTTPS(c), SameSite: http.SameSiteLaxMode,
 	})
 }
 
-func clearSessionCookie(c *gin.Context) {
+func (s *Server) clearSessionCookie(c *gin.Context) {
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name: sessionCookie, Value: "", Path: "/", MaxAge: -1,
-		HttpOnly: true, Secure: c.Request.TLS != nil, SameSite: http.SameSiteLaxMode,
+		HttpOnly: true, Secure: s.isHTTPS(c), SameSite: http.SameSiteLaxMode,
 	})
 }
 
@@ -230,7 +230,7 @@ func (s *Server) startSession(c *gin.Context, u user.User) error {
 	if err := s.Store.CreateSession(ctx, &se); err != nil {
 		return err
 	}
-	setSessionCookie(c, tok, se.ExpiresAt, now)
+	s.setSessionCookie(c, tok, se.ExpiresAt, now)
 	return nil
 }
 
@@ -382,7 +382,7 @@ func (s *Server) logout(c *gin.Context) {
 			return
 		}
 	}
-	clearSessionCookie(c)
+	s.clearSessionCookie(c)
 	c.Status(http.StatusNoContent)
 }
 

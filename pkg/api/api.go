@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -36,6 +37,11 @@ type Server struct {
 	Now func() time.Time
 	// BulkFXTimeout overrides DefaultBulkFXTimeout (tests); 0 = default.
 	BulkFXTimeout time.Duration
+	// TrustedProxies are the reverse proxies (IPs/CIDR ranges) whose
+	// X-Real-IP / X-Forwarded-For and X-Forwarded-Proto headers are believed
+	// (ParseTrustedProxies). Empty: the client is the TCP peer and only a
+	// direct TLS connection counts as HTTPS.
+	TrustedProxies []netip.Prefix
 
 	auth authState
 }
@@ -55,7 +61,7 @@ type errorBody struct {
 func (s *Server) Router() *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery(), securityHeaders)
-	_ = r.SetTrustedProxies(nil)
+	s.configureProxies(r)
 	r.Use(csrfGuard)
 
 	// Every /api route needs a session except the few in publicAPI.
