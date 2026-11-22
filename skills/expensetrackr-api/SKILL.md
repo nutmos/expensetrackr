@@ -1,6 +1,6 @@
 ---
 name: expensetrackr-api
-description: Use the expensetrackr HTTP JSON API to log expenses, income, transfers (including cross-currency), asset purchases, returns on investment (dividends, interest) and debt repayments (credit card bills, loan instalments), check account balances, list or filter transactions, and manage categories in a running expensetrackr server. Use it whenever the user asks to record, look up, correct or delete their money movements or balances in expensetrackr.
+description: Use the expensetrackr HTTP JSON API to log expenses, income, transfers (including cross-currency), asset purchases, returns on investment (dividends, interest), asset sales (with a gain or loss) and debt repayments (credit card bills, loan instalments), check account balances, list or filter transactions, and manage categories in a running expensetrackr server. Use it whenever the user asks to record, look up, correct or delete their money movements or balances in expensetrackr.
 ---
 
 # expensetrackr API
@@ -115,12 +115,14 @@ The balances move automatically in the same DB transaction.
 
 | field | rule |
 |---|---|
-| `type` | `expense` (default), `income`, `transfer`, `asset_purchase`, `return_on_investment`, `repay_debt` |
+| `type` | `expense` (default), `income`, `transfer`, `asset_purchase`, `return_on_investment`, `asset_sale`, `repay_debt` |
 | `amount` | decimal **string**, > 0, at most the currency's decimals (`"120.50"` THB, `"1500"` JPY); never negative |
 | `currency` | ISO 4217; **must equal the (source) balance's currency** (422 otherwise) |
-| `balance_uid` | expense / asset_purchase / return_on_investment: `payment_account` or `credit_card`; income: `payment_account` or `credit_card` (cash rebate); repay_debt: `payment_account`; transfer: any |
-| `to_balance_uid` | transfer (any other balance), asset_purchase (an `other_asset`) and return_on_investment (the `other_asset` it came from; not moved) and repay_debt (the `credit_card` / `other_liability` paid down) only |
-| `category_uid` | **required** except on transfers (forbidden) and repay_debt: expense and asset_purchase need an `expense` category, income and return_on_investment an `income` one. On repay_debt it is optional and only allowed with `interest_amount` / `fee_amount` (an `expense` category for them). If none clearly fits, ask the user |
+| `balance_uid` | expense / asset_purchase / return_on_investment / asset_sale (where the proceeds arrive): `payment_account` or `credit_card`; income: `payment_account` or `credit_card` (cash rebate); repay_debt: `payment_account`; transfer: any |
+| `to_balance_uid` | transfer (any other balance), asset_purchase (an `other_asset`) return_on_investment (the `other_asset` it came from; not moved), asset_sale (the `other_asset` sold; down by `amount`) and repay_debt (the `credit_card` / `other_liability` paid down) only |
+| `category_uid` | **required** except on transfers (forbidden), repay_debt and asset_sale: expense and asset_purchase need an `expense` category, income and return_on_investment an `income` one. On repay_debt it is optional and only allowed with `interest_amount` / `fee_amount` (an `expense` category for them); on asset_sale optional and only with `gain_loss` (`income` category for a gain, `expense` for a loss). If none clearly fits, ask the user |
+| `gain_loss` | asset_sale only, optional: the gain (`"50"`) or loss (`"-20"`) of the sale, in `currency`. `amount` is the principal taken off the asset; the account receives amount + gain_loss (a loss can't exceed amount). Counted as income / expense. Only when the user gives it |
+| `entire_asset_sale` | asset_sale only, optional boolean: the whole asset was sold; saving hides the asset balance |
 | `interest_amount`, `fee_amount` | repay_debt only, optional: interest and other fees paid on top of the principal (`amount`), in `currency`. The account pays amount + interest + fees; the debt goes down by `amount` only. Counted as expenses. Only when the user separates them |
 | `spent_at` | RFC 3339 **with offset**: `2026-10-06T21:06:00+08:00` (no date-only, no naive times) |
 | `note` | optional, ≤ 1000 chars |
@@ -154,6 +156,14 @@ curl -sS -b "$JAR" -c "$JAR" -X POST "$BASE/api/transactions" -H 'Content-Type: 
   -d "$(jq -n --arg b "$WALLET_UID" --arg t "$LOAN_UID" \
         '{type:"repay_debt", amount:"1000", interest_amount:"125.50", fee_amount:"30", currency:"THB", balance_uid:$b, to_balance_uid:$t, spent_at:"2026-10-07T22:00:00+08:00"}')" \
   | jq '{uid, amount, interest_amount, fee_amount}'
+
+# Asset sale: sold Gold (booked at 500) for 465 into Wallet, all of it:
+# Gold -500 (and hidden), Wallet +465; the 35 loss counts as an expense.
+LOSS_UID=$(category_uid "Investment loss" expense)
+curl -sS -b "$JAR" -c "$JAR" -X POST "$BASE/api/transactions" -H 'Content-Type: application/json' \
+  -d "$(jq -n --arg b "$WALLET_UID" --arg t "$GOLD_UID" --arg c "$LOSS_UID" \
+        '{type:"asset_sale", amount:"500", gain_loss:"-35", entire_asset_sale:true, category_uid:$c, currency:"THB", balance_uid:$b, to_balance_uid:$t, spent_at:"2026-10-08T10:00:00+08:00"}')" \
+  | jq '{uid, amount, gain_loss, entire_asset_sale, account, to_account}'
 
 # Asset purchase: laptop bought on the credit card, tracked as an other_asset
 ELECTRONICS_UID=$(category_uid Electronics expense)
@@ -242,7 +252,7 @@ curl -sS -b "$JAR" -c "$JAR" \
   | jq -r '.count, (.transactions[] | [.spent_at, .type, .amount, .currency, .account, .note] | @tsv)'
 ```
 
-Other filters: `category_uid=<uid>`, `type=income|transfer|asset_purchase|return_on_investment|repay_debt|balance_adjustment`.
+Other filters: `category_uid=<uid>`, `type=income|transfer|asset_purchase|return_on_investment|asset_sale|repay_debt|balance_adjustment`.
 `limit` is 1–5000 (default **500**; if `count` equals the limit there may be
 more — narrow the date range). There is no server-side sum: total the
 `amount` strings per currency yourself, count returns on investment as income,

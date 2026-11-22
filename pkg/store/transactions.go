@@ -33,6 +33,9 @@ func (s *Store) Create(ctx context.Context, userUID string, e *transaction.Trans
 	if err := checkCharges(*e); err != nil {
 		return err
 	}
+	if err := checkSaleResult(*e); err != nil {
+		return err
+	}
 	var next transaction.Transaction
 	err := s.inTx(ctx, "insert transaction", func(tx *sql.Tx) error {
 		var err error
@@ -65,17 +68,21 @@ func insertTx(ctx context.Context, tx *sql.Tx, userUID string, e transaction.Tra
 		return tx.QueryRowContext(ctx,
 			`INSERT INTO transactions (uid, user_uid, type, amount_minor, amount_scale, currency, balance_uid, account, to_balance_uid, to_account, category_uid, spent_at, spent_at_utc, note, created_at, version, balance_applied,
 			                           to_amount_minor, to_amount_scale, to_currency, exchange_rate, rate_source, rate_date, import_ref,
-			                           foreign_amount_minor, foreign_amount_scale, foreign_currency, interest_amount_minor, fee_amount_minor)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 1, true, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
+			                           foreign_amount_minor, foreign_amount_scale, foreign_currency, interest_amount_minor, fee_amount_minor,
+			                           gain_loss_minor, entire_asset_sale)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 1, true, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
 			 RETURNING id`,
 			append(append(append(append([]any{next.UID, userUID, string(next.Type), next.AmountMinor, scale, next.Currency, next.BalanceUID, next.Account, next.ToBalanceUID, next.ToAccount, next.CategoryUID, next.SpentAt, spentUTC(next), next.Note, next.CreatedAt},
-				fxArgs(next)...), next.ImportRef), foreignArgs(next)...), next.InterestAmountMinor, next.FeeAmountMinor)...).Scan(&id)
+				fxArgs(next)...), next.ImportRef), foreignArgs(next)...), next.InterestAmountMinor, next.FeeAmountMinor, next.GainLossMinor, next.EntireAssetSale)...).Scan(&id)
 	})
 	if err != nil {
 		return e, err
 	}
 	next.ID = id
 	if err := applyBalanceEffects(ctx, tx, userUID, nil, &next, now); err != nil {
+		return e, err
+	}
+	if err := hideSoldAsset(ctx, tx, userUID, next, now); err != nil {
 		return e, err
 	}
 	return next, nil
@@ -141,7 +148,8 @@ func cursorOf(e transaction.Transaction) ListCursor {
 
 const selectCols = `id, uid, type, amount_minor, amount_scale, currency, balance_uid, account, to_balance_uid, to_account, category_uid, spent_at, note, created_at, updated_at, version, balance_applied, adjustment_direction,
 	to_amount_minor, to_amount_scale, to_currency, exchange_rate, rate_source, rate_date, import_ref,
-	foreign_amount_minor, foreign_amount_scale, foreign_currency, interest_amount_minor, fee_amount_minor`
+	foreign_amount_minor, foreign_amount_scale, foreign_currency, interest_amount_minor, fee_amount_minor,
+	gain_loss_minor, entire_asset_sale`
 
 // List returns rows from transactions owned by userUID, newest first (by spend
 // time, then ID).
@@ -284,6 +292,9 @@ func (s *Store) UpdateWith(ctx context.Context, userUID string, id int64, opts W
 		if err := checkCharges(next); err != nil {
 			return err
 		}
+		if err := checkSaleResult(next); err != nil {
+			return err
+		}
 		scale, ok := money.MinorUnits(next.Currency)
 		if !ok {
 			return fmt.Errorf("unknown currency %q", next.Currency)
@@ -299,10 +310,12 @@ func (s *Store) UpdateWith(ctx context.Context, userUID string, id int64, opts W
 			        spent_at = $10, spent_at_utc = $11, note = $12, updated_at = $13, version = $14,
 			        to_amount_minor = $15, to_amount_scale = $16, to_currency = $17, exchange_rate = $18, rate_source = $19, rate_date = $20, import_ref = $21,
 			        foreign_amount_minor = $22, foreign_amount_scale = $23, foreign_currency = $24,
-			        interest_amount_minor = $25, fee_amount_minor = $26, adjustment_direction = $27
-			 WHERE id = $28 AND version = $29`,
+			        interest_amount_minor = $25, fee_amount_minor = $26, adjustment_direction = $27,
+			        gain_loss_minor = $28, entire_asset_sale = $29
+			 WHERE id = $30 AND version = $31`,
 				append(append(append(append([]any{string(next.Type), next.AmountMinor, scale, next.Currency, next.BalanceUID, next.Account, next.ToBalanceUID, next.ToAccount, next.CategoryUID,
-					next.SpentAt, spentUTC(next), next.Note, now, next.Version}, fxArgs(next)...), next.ImportRef), foreignArgs(next)...), next.InterestAmountMinor, next.FeeAmountMinor, directionArg(next), id, cur.Version)...)
+					next.SpentAt, spentUTC(next), next.Note, now, next.Version}, fxArgs(next)...), next.ImportRef), foreignArgs(next)...), next.InterestAmountMinor, next.FeeAmountMinor, directionArg(next),
+					next.GainLossMinor, next.EntireAssetSale, id, cur.Version)...)
 			if err != nil {
 				return err
 			}
@@ -316,6 +329,9 @@ func (s *Store) UpdateWith(ctx context.Context, userUID string, id int64, opts W
 			return ErrVersionConflict
 		}
 		if err := applyBalanceEffects(ctx, tx, userUID, &cur, &next, now); err != nil {
+			return err
+		}
+		if err := hideSoldAsset(ctx, tx, userUID, next, now); err != nil {
 			return err
 		}
 		saved = next
@@ -433,6 +449,41 @@ func checkCharges(e transaction.Transaction) error {
 	return nil
 }
 
+// checkSaleResult enforces the asset-sale invariants: gain_loss and
+// entire_asset_sale only on an asset_sale, gain_loss non-zero when set and
+// never a loss larger than the principal, and a category on an asset_sale
+// only when it has a gain or loss.
+func checkSaleResult(e transaction.Transaction) error {
+	if !e.Type.AllowsSaleResult() {
+		if e.GainLossMinor != nil || e.EntireAssetSale {
+			return fmt.Errorf("invalid asset sale fields on a %s transaction", e.Type)
+		}
+		return nil
+	}
+	if g := e.GainLossMinor; g != nil && (*g == 0 || e.AmountMinor+*g < 0) {
+		return errors.New("invalid gain_loss on an asset_sale")
+	}
+	if e.CategoryUID != nil && e.GainLossValue() == 0 {
+		return errors.New("asset_sale category without a gain or loss")
+	}
+	return nil
+}
+
+// hideSoldAsset hides the asset sold by e (to_balance_uid) when e is an
+// entire asset sale and the balance is not hidden yet (version +1). The
+// balance is never shown again automatically.
+func hideSoldAsset(ctx context.Context, tx *sql.Tx, userUID string, e transaction.Transaction, now string) error {
+	if e.Type != transaction.AssetSale || !e.EntireAssetSale || e.ToBalanceUID == nil {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE balances SET hidden = true, updated_at = $1, version = version + 1 WHERE user_uid = $2 AND uid = $3 AND NOT hidden`,
+		now, userUID, *e.ToBalanceUID); err != nil {
+		return fmt.Errorf("hide sold asset: %w", err)
+	}
+	return nil
+}
+
 // spentUTC is the spent_at_utc value of e: its spend time at second
 // precision (spent_at is stored at second precision too), in UTC.
 func spentUTC(e transaction.Transaction) time.Time {
@@ -450,10 +501,10 @@ func scan(r scanner) (transaction.Transaction, error) {
 	var toCur, rate, rateSrc, importRef sql.NullString
 	var fMinor, fScale sql.NullInt64
 	var fCur sql.NullString
-	var interest, fee sql.NullInt64
+	var interest, fee, gainLoss sql.NullInt64
 	if err := r.Scan(&e.ID, &e.UID, &typ, &e.AmountMinor, &scale, &e.Currency, &e.BalanceUID, &e.Account, &toUID, &toName, &catUID, &e.SpentAt, &e.Note, &created, &updated,
 		&e.Version, &e.AdjustsBalances, &dir, &toMinor, &toScale, &toCur, &rate, &rateSrc, &rateDate, &importRef,
-		&fMinor, &fScale, &fCur, &interest, &fee); err != nil {
+		&fMinor, &fScale, &fCur, &interest, &fee, &gainLoss, &e.EntireAssetSale); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return e, err
 		}
@@ -506,6 +557,10 @@ func scan(r scanner) (transaction.Transaction, error) {
 	if fee.Valid {
 		m, a := fee.Int64, money.FormatAmount(fee.Int64, scale)
 		e.FeeAmountMinor, e.FeeAmount = &m, &a
+	}
+	if gainLoss.Valid {
+		m, a := gainLoss.Int64, money.FormatAmount(gainLoss.Int64, scale)
+		e.GainLossMinor, e.GainLoss = &m, &a
 	}
 	if t, err := time.Parse(time.RFC3339, e.SpentAt); err == nil {
 		e.SpentTime = t

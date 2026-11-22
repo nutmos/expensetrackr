@@ -67,9 +67,9 @@ info:
       `PUT` is a **full replacement**: send the whole record (all editable fields). There is no `PATCH`
       for transactions, balances or categories (a `PATCH` there is a 404 like any unknown method). To
       clear an optional field (`note`, `to_balance_uid`, `description`), omit it or send `""` in
-      the full `PUT` body. `category_uid` can't be cleared except on a transfer or repay_debt (it is
-      required on every other type). Optional amounts (`interest_amount`, `fee_amount`,
-      `foreign_amount`) are cleared the same way.
+      the full `PUT` body. `category_uid` can't be cleared except on a transfer, repay_debt or
+      asset_sale (it is required on every other type). Optional amounts (`interest_amount`,
+      `fee_amount`, `gain_loss`, `foreign_amount`) are cleared the same way.
 
     ## Transaction types
 
@@ -80,6 +80,7 @@ info:
     | `transfer` | any balance | **required**, any balance ≠ source | source −amount, destination +amount (debt moves the other way) |
     | `asset_purchase` | `payment_account` or `credit_card` | **required**, an `other_asset` ≠ source | source like an expense (balance −amount / card debt +amount), destination asset balance +amount |
     | `return_on_investment` | `payment_account` or `credit_card` | **required**, the `other_asset` it came from ≠ source | like income (balance +amount / card debt −amount, may go negative); the linked asset is **not** changed (dividend / interest) |
+    | `asset_sale` | `payment_account` or `credit_card` (receives the proceeds) | **required**, the `other_asset` sold ≠ source | account balance +(amount + `gain_loss`) / card debt −(amount + `gain_loss`); asset balance −amount (the principal); same currency only. Category only for the gain (income category) or loss (expense category), optional. `entire_asset_sale: true` hides the asset when saved |
     | `repay_debt` | `payment_account` | **required**, a `credit_card` or `other_liability` | account balance −(amount + `interest_amount` + `fee_amount`), destination debt −amount (the principal; may go negative = in credit); same currency only. Category only for the interest/fees (optional, expense category) |
     | `balance_adjustment` | the edited balance (any type) | — | server-created; its change is already in the balance. Editing or deleting it moves the balance: `increase` = balance / debt +amount, `decrease` = −amount |
 
@@ -213,7 +214,7 @@ paths:
               example:
                 error: invalid query parameters
                 fields:
-                  type: 'must be one of: expense, income, transfer, asset_purchase, return_on_investment, repay_debt, balance_adjustment'
+                  type: 'must be one of: expense, income, transfer, asset_purchase, return_on_investment, asset_sale, repay_debt, balance_adjustment'
                   limit: must be an integer between 1 and 5000
                   cursor: is not a cursor from this API (use next_cursor from the previous page)
         '500': { $ref: '#/components/responses/InternalError' }
@@ -968,7 +969,9 @@ paths:
         Sums the logged-in user's transactions spent in `[from, to]` per currency: `expense`
         transactions as expenses; `income` and `return_on_investment` as income. The interest and
         fees of a `repay_debt` (`interest_amount` + `fee_amount`, under its category if any) count as
-        expenses; its principal does not. Transfers, asset purchases and balance adjustments are not
+        expenses; its principal does not. The gain of an `asset_sale` (`gain_loss` > 0) counts as
+        income and its loss (`gain_loss` < 0) as an expense, under its category if any; its
+        principal does not. Transfers, asset purchases and balance adjustments are not
         counted (the same rule as the totals under the web page's transaction list). Each side is also broken down by category,
         largest first; transactions saved before categories were required are grouped under a
         `null` category. Sums are exact (arbitrary precision); no currency conversion.
@@ -1811,16 +1814,18 @@ components:
         `expense`, `income`, `transfer`, `asset_purchase` (payment account / credit card → other asset;
         a value move, not counted as expense or income), `return_on_investment` (income into a payment
         account / credit card, linked to the other asset it came from, whose value does not change),
-        `repay_debt` (payment account → credit card / other liability, debt down by the principal;
-        optional interest and fees paid on top), or the
+        `asset_sale` (other asset → payment account / credit card: the asset goes down by the
+        principal, the account receives principal + gain or − loss), `repay_debt` (payment account →
+        credit card / other liability, debt down by the principal; optional interest and fees paid
+        on top), or the
         server-created `balance_adjustment` (editable and deletable, never created by clients).
-      enum: [expense, income, transfer, asset_purchase, return_on_investment, repay_debt, balance_adjustment]
+      enum: [expense, income, transfer, asset_purchase, return_on_investment, asset_sale, repay_debt, balance_adjustment]
     TransactionWriteType:
       type: string
       description: |
         Types a client may write. Empty or omitted means `expense`. `balance_adjustment` is a 422, except
         when replacing an existing balance adjustment (where omitted means `balance_adjustment`).
-      enum: [expense, income, transfer, asset_purchase, return_on_investment, repay_debt]
+      enum: [expense, income, transfer, asset_purchase, return_on_investment, asset_sale, repay_debt]
       default: expense
     AdjustmentDirection:
       type: string
@@ -1828,7 +1833,7 @@ components:
       description: Whether the adjustment raises or lowers the adjusted amount (balance of an asset, debt of a liability).
     Transaction:
       type: object
-      required: [uid, amount, amount_minor, currency, type, balance_uid, account, to_balance_uid, to_account, category_uid, spent_at, note, created_at, updated_at, version, adjusts_balances, adjustment_direction, to_amount, to_amount_minor, to_currency, exchange_rate, rate_source, rate_date, import_ref, foreign_amount, foreign_amount_minor, foreign_currency, interest_amount, interest_amount_minor, fee_amount, fee_amount_minor, conversion_rates]
+      required: [uid, amount, amount_minor, currency, type, balance_uid, account, to_balance_uid, to_account, category_uid, spent_at, note, created_at, updated_at, version, adjusts_balances, adjustment_direction, to_amount, to_amount_minor, to_currency, exchange_rate, rate_source, rate_date, import_ref, foreign_amount, foreign_amount_minor, foreign_currency, interest_amount, interest_amount_minor, fee_amount, fee_amount_minor, gain_loss, gain_loss_minor, entire_asset_sale, conversion_rates]
       properties:
         uid: { $ref: '#/components/schemas/Uid' }
         amount:
@@ -1991,6 +1996,24 @@ components:
           minimum: 1
           description: '`fee_amount` in minor units of `currency`; `null` when none.'
           example: 300
+        gain_loss:
+          type: string
+          nullable: true
+          description: |
+            `asset_sale` only: the signed result of the sale in `currency`, positive for a gain and
+            negative for a loss. `amount` is the principal (the asset goes down by it); the receiving
+            account gets `amount` + `gain_loss`. A gain counts as income and a loss as an expense in
+            reports. `null` when neither (sold at cost).
+          example: '-12.50'
+        gain_loss_minor:
+          type: integer
+          format: int64
+          nullable: true
+          description: '`gain_loss` in minor units of `currency` (negative = loss); `null` when none.'
+          example: -1250
+        entire_asset_sale:
+          type: boolean
+          description: '`asset_sale` only: the whole asset was sold, so the asset balance was hidden when the transaction was saved. Always `false` for other types.'
         conversion_rates:
           type: array
           nullable: true
@@ -2060,7 +2083,7 @@ components:
           type: string
           format: uuid
           nullable: true
-          description: Required for `transfer` (any balance, any currency — see `to_amount`) `asset_purchase` (must be an `other_asset` in the same currency) and `return_on_investment` (the `other_asset` the return came from; any currency, its value is not changed) and `repay_debt` (a `credit_card` or `other_liability` in the same currency, whose debt goes down); ≠ `balance_uid`. Not allowed otherwise.
+          description: Required for `transfer` (any balance, any currency — see `to_amount`) `asset_purchase` (must be an `other_asset` in the same currency) and `return_on_investment` (the `other_asset` the return came from; any currency, its value is not changed) `asset_sale` (the `other_asset` sold, in the same currency; it goes down by `amount`) and `repay_debt` (a `credit_card` or `other_liability` in the same currency, whose debt goes down); ≠ `balance_uid`. Not allowed otherwise.
         to_amount:
           allOf:
             - $ref: '#/components/schemas/DecimalInput'
@@ -2108,6 +2131,24 @@ components:
           nullable: true
           description: '`repay_debt` only (422 otherwise): other fees paid on top of the principal, in `currency`; same rules as `interest_amount`.'
           example: '3.00'
+        gain_loss:
+          allOf:
+            - $ref: '#/components/schemas/DecimalInput'
+          nullable: true
+          description: |
+            `asset_sale` only (422 otherwise): the gain (positive) or loss (negative, e.g. `"-12.50"`)
+            of the sale, in `currency`; empty or 0 means neither. `amount` is the principal, taken off
+            the asset; the receiving account gets `amount` + `gain_loss`, so a loss may not exceed
+            `amount` (422). PUT is a full replace: omitting it clears it.
+          example: '50.00'
+        entire_asset_sale:
+          type: boolean
+          description: |
+            `asset_sale` only (422 if `true` on another type): the whole asset is sold. Saving the
+            transaction hides the asset balance (`to_balance_uid`), as `POST /api/balances/{uid}/hide`
+            would; it is not shown again automatically when the flag is cleared or the transaction
+            deleted. Omitted means `false`.
+          default: false
         category_uid:
           type: string
           format: uuid
@@ -2117,7 +2158,8 @@ components:
             for an expense", ... when missing, null or ""): an expense category for an expense or
             asset_purchase, an income category for income or return_on_investment. Not allowed for
             transfers. Optional for repay_debt, and only when it has `interest_amount` or `fee_amount`:
-            the expense category those charges are reported under. Transactions saved before this rule may still have `null` until edited.
+            the expense category those charges are reported under. Optional for asset_sale, and only
+            when it has a `gain_loss`: an income category for a gain, an expense category for a loss. Transactions saved before this rule may still have `null` until edited.
         spent_at:
           type: string
           format: date-time

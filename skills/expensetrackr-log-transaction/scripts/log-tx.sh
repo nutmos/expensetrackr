@@ -9,16 +9,23 @@
 #   log-tx.sh return_on_investment ACCOUNT_OR_CARD ASSET AMOUNT CURRENCY [options]
 #     (dividend/interest received into ACCOUNT_OR_CARD, linked to ASSET,
 #      an other_asset whose value is not changed)
+#   log-tx.sh asset_sale ACCOUNT_OR_CARD ASSET AMOUNT CURRENCY [options]
+#     (sells all or part of ASSET, an other_asset that goes down by AMOUNT,
+#      the principal; the proceeds are received into ACCOUNT_OR_CARD, see
+#      --gain-loss / --entire)
 #   log-tx.sh repay_debt PAYMENT_ACCOUNT CARD_OR_LIABILITY AMOUNT CURRENCY [options]
 #     (pays down a credit_card / other_liability from a payment_account;
 #      AMOUNT is the principal, see --interest / --fee)
 #
 # Options:
-#   --category NAME       category name, required except for transfer and repay_debt
-#                         (expense category for expense and asset_purchase;
-#                         income category for income and return_on_investment;
-#                         on repay_debt optional, only with --interest/--fee:
-#                         the expense category of those charges)
+#   --category NAME       category name, required except for transfer, repay_debt
+#                         and asset_sale (expense category for expense and
+#                         asset_purchase; income category for income and
+#                         return_on_investment; on repay_debt optional, only
+#                         with --interest/--fee: the expense category of those
+#                         charges; on asset_sale optional, only with
+#                         --gain-loss: income category for a gain, expense
+#                         category for a loss)
 #   --at RFC3339          spent_at with offset (required)
 #   --note TEXT           optional note
 #   --to-amount AMOUNT    received amount (cross-currency transfer only; optional)
@@ -31,6 +38,9 @@
 #   --fee AMOUNT          repay_debt only: other fees paid on top of the principal
 #                         (the account pays principal + interest + fee; the debt
 #                         goes down by the principal; charges count as expenses)
+#   --gain-loss AMOUNT    asset_sale only: gain (e.g. 50) or loss (e.g. -20) of the
+#                         sale; the account receives principal + gain_loss
+#   --entire              asset_sale only: the whole asset was sold (hides it)
 #
 # Environment:
 #   EXPENSETRACKR_TOKEN   write-scoped personal API token (ext_…) — required
@@ -53,6 +63,7 @@ Usage:
   log-tx.sh transfer SOURCE DEST AMOUNT CURRENCY --at RFC3339 [--to-amount A] [--to-currency C] [--note TEXT]
   log-tx.sh asset_purchase SOURCE ASSET AMOUNT CURRENCY --category NAME --at RFC3339 [--note TEXT]
   log-tx.sh return_on_investment ACCOUNT_OR_CARD ASSET AMOUNT CURRENCY --category NAME --at RFC3339 [--note TEXT]
+  log-tx.sh asset_sale ACCOUNT_OR_CARD ASSET PRINCIPAL CURRENCY --at RFC3339 [--gain-loss A] [--entire] [--category NAME] [--note TEXT]
   log-tx.sh repay_debt PAYMENT_ACCOUNT CARD_OR_LIABILITY PRINCIPAL CURRENCY --at RFC3339 [--interest A] [--fee A] [--category NAME] [--note TEXT]
 EOF
 	exit 2
@@ -65,9 +76,9 @@ command -v curl >/dev/null || die "curl is required"
 TYPE="${1:-}"
 shift || true
 case "$TYPE" in
-expense | income | transfer | asset_purchase | return_on_investment | repay_debt) ;;
+expense | income | transfer | asset_purchase | return_on_investment | asset_sale | repay_debt) ;;
 "" | -h | --help) usage ;;
-*) die "unknown type '$TYPE' (expense|income|transfer|asset_purchase|return_on_investment|repay_debt)" ;;
+*) die "unknown type '$TYPE' (expense|income|transfer|asset_purchase|return_on_investment|asset_sale|repay_debt)" ;;
 esac
 
 SOURCE=""
@@ -80,7 +91,7 @@ expense | income)
 	SOURCE=$1 AMOUNT=$2 CURRENCY=$3
 	shift 3
 	;;
-transfer | asset_purchase | return_on_investment | repay_debt)
+transfer | asset_purchase | return_on_investment | asset_sale | repay_debt)
 	[ $# -ge 4 ] || usage
 	SOURCE=$1 DEST=$2 AMOUNT=$3 CURRENCY=$4
 	shift 4
@@ -96,6 +107,8 @@ FOREIGN_AMOUNT=""
 FOREIGN_CURRENCY=""
 INTEREST=""
 FEE=""
+GAIN_LOSS=""
+ENTIRE=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--category)
@@ -143,6 +156,15 @@ while [ $# -gt 0 ]; do
 		FEE=$2
 		shift 2
 		;;
+	--gain-loss)
+		[ $# -ge 2 ] || die "--gain-loss needs a value"
+		GAIN_LOSS=$2
+		shift 2
+		;;
+	--entire)
+		ENTIRE=1
+		shift
+		;;
 	*) die "unknown option: $1" ;;
 	esac
 done
@@ -155,6 +177,9 @@ transfer)
 repay_debt)
 	[ -z "$CATEGORY" ] || [ -n "$INTEREST$FEE" ] || die "--category on a repay_debt needs --interest or --fee (it is their category)"
 	;;
+asset_sale)
+	[ -z "$CATEGORY" ] || [ -n "$GAIN_LOSS" ] || die "--category on an asset_sale needs --gain-loss (it is the category of the gain or loss)"
+	;;
 *)
 	[ -n "$CATEGORY" ] || die "--category NAME is required for $TYPE (ask the user which category)"
 	;;
@@ -162,11 +187,14 @@ esac
 if [ "$TYPE" != repay_debt ]; then
 	[ -z "$INTEREST$FEE" ] || die "--interest/--fee are only allowed on a repay_debt"
 fi
+if [ "$TYPE" != asset_sale ]; then
+	[ -z "$GAIN_LOSS$ENTIRE" ] || die "--gain-loss/--entire are only allowed on an asset_sale"
+fi
 if [ "$TYPE" != transfer ]; then
 	[ -z "$TO_AMOUNT$TO_CURRENCY" ] || die "--to-amount/--to-currency are only allowed on a transfer"
 fi
 case "$TYPE" in
-transfer | repay_debt)
+transfer | asset_sale | repay_debt)
 	[ -z "$FOREIGN_AMOUNT$FOREIGN_CURRENCY" ] || die "--foreign-amount/--foreign-currency are not allowed on a $TYPE"
 	;;
 esac
@@ -260,6 +288,10 @@ if [ -n "$CATEGORY" ]; then
 	if [ "$TYPE" = income ] || [ "$TYPE" = return_on_investment ]; then
 		want=income
 	fi
+	# asset_sale: income category for a gain, expense category for a loss
+	if [ "$TYPE" = asset_sale ] && [ "${GAIN_LOSS#-}" = "$GAIN_LOSS" ]; then
+		want=income
+	fi
 	CAT_UID=$(resolve_category "$CATEGORY" "$want")
 fi
 
@@ -277,7 +309,9 @@ BODY=$(jq -n \
 	--arg foreign_amount "$FOREIGN_AMOUNT" \
 	--arg foreign_currency "$FOREIGN_CURRENCY" \
 	--arg interest_amount "$INTEREST" \
-	--arg fee_amount "$FEE" '
+	--arg fee_amount "$FEE" \
+	--arg gain_loss "$GAIN_LOSS" \
+	--arg entire "$ENTIRE" '
 	{type: $type, amount: $amount, currency: $currency, balance_uid: $balance_uid, spent_at: $spent_at}
 	| if $to_balance_uid != "" then . + {to_balance_uid: $to_balance_uid} else . end
 	| if $category_uid != "" then . + {category_uid: $category_uid} else . end
@@ -287,6 +321,8 @@ BODY=$(jq -n \
 	| if $foreign_amount != "" then . + {foreign_amount: $foreign_amount, foreign_currency: ($foreign_currency | ascii_upcase)} else . end
 	| if $interest_amount != "" then . + {interest_amount: $interest_amount} else . end
 	| if $fee_amount != "" then . + {fee_amount: $fee_amount} else . end
+	| if $gain_loss != "" then . + {gain_loss: $gain_loss} else . end
+	| if $entire != "" then . + {entire_asset_sale: true} else . end
 ')
 
 api POST /api/transactions "$BODY"
@@ -298,8 +334,9 @@ if [ "$STATUS" != 201 ]; then
 fi
 
 cp "$OUT" "$TXJSON"
-# Refresh balances for the confirmation line (do not clobber the TX response).
-api GET /api/balances
+# Refresh balances for the confirmation line (do not clobber the TX response;
+# hidden ones too, since an entire asset sale hides the asset).
+api GET "/api/balances?include_hidden=true"
 if [ "$STATUS" = 200 ]; then cp "$OUT" "$BALANCES"; fi
 
 jq -r --argjson bal "$(cat "$BALANCES")" '
@@ -310,9 +347,13 @@ jq -r --argjson bal "$(cat "$BALANCES")" '
 	+ (if .foreign_amount != null then " [\(.foreign_amount) \(.foreign_currency)]" else "" end)
 	+ (if .interest_amount != null then " + \(.interest_amount) interest" else "" end)
 	+ (if .fee_amount != null then " + \(.fee_amount) fees" else "" end)
+	+ (if .gain_loss != null then (if (.gain_loss | startswith("-")) then " \(.gain_loss) loss" else " +\(.gain_loss) gain" end) else "" end)
+	+ (if .entire_asset_sale == true then " (entire asset, now hidden)" else "" end)
 	+ (if .note != "" then " (\(.note))" else "" end)
 	+ (if .type == "return_on_investment"
 	   then " into \(.account) (from investment \(.to_account))"
+	   elif .type == "asset_sale"
+	   then " into \(.account) (sold from \(.to_account))"
 	   else " from \(.account)"
 	     + (if .to_account != null then " → \(.to_account)" else "" end)
 	   end)

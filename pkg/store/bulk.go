@@ -164,6 +164,9 @@ func (s *Store) CreateBulk(ctx context.Context, userUID string, items []BulkItem
 			if err == nil {
 				err = checkCharges(e)
 			}
+			if err == nil {
+				err = checkSaleResult(e)
+			}
 			if err != nil {
 				r.Status, r.Err = BulkFailed, err
 				failed++

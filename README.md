@@ -12,10 +12,12 @@ categories are private to them.
 
 ## Features
 
-- **Transactions** of six kinds: expenses, income, transfers, asset purchases,
-  returns on investment and debt repayments (with optional interest and fees
-  kept apart from the principal). Every kind except transfers and debt
-  repayments has a category.
+- **Transactions** of seven kinds: expenses, income, transfers, asset
+  purchases, returns on investment, asset sales (with the gain or loss kept
+  apart from the principal) and debt repayments (with optional interest and
+  fees kept apart from the principal). Every kind except transfers, debt
+  repayments and asset sales has a category; the last two may have one for
+  their charges or their gain or loss.
 - **Balances** (bank accounts, cards, assets, loans) that move automatically
   with every transaction, with manual corrections recorded. Retired balances
   can be hidden (history kept) or deleted together with their transactions.

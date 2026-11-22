@@ -1,6 +1,6 @@
 ---
 name: expensetrackr-log-transaction
-description: Record a single expense, income, transfer, asset purchase, return on investment (dividend, interest) or debt repayment (credit card bill, loan instalment) in expensetrackr with a personal API token. Use when the user asks to log, record, or add an expense, income, transfer, asset purchase, investment return or debt repayment in expensetrackr.
+description: Record a single expense, income, transfer, asset purchase, return on investment (dividend, interest), asset sale (selling shares, gold, at a gain or loss) or debt repayment (credit card bill, loan instalment) in expensetrackr with a personal API token. Use when the user asks to log, record, or add an expense, income, transfer, asset purchase, investment return, asset sale or debt repayment in expensetrackr.
 ---
 
 # Log a transaction (expensetrackr)
@@ -130,6 +130,7 @@ amount). Category names are unique per type.
 | `transfer` | move between own balances (incl. paying a card) | any | any other balance | **not allowed** |
 | `asset_purchase` | buy a tracked asset | `payment_account` or `credit_card` | an `other_asset` | **required**, an `expense` category |
 | `return_on_investment` | dividend / interest from a tracked investment (works like income) | `payment_account` or `credit_card` (received into) | **required**: the `other_asset` it came from (value **not** changed) | **required**, an `income` category |
+| `asset_sale` | sell all or part of a tracked asset (`amount` = principal taken off the asset; optional `gain_loss`, `entire_asset_sale`) | `payment_account` or `credit_card` (received into) | **required**: the `other_asset` sold (same currency) | optional, **only** with `gain_loss`: `income` category for a gain, `expense` for a loss |
 | `repay_debt` | pay down a credit card bill or a loan instalment (`amount` = principal; optional `interest_amount` / `fee_amount` on top) | `payment_account` | **required**: the `credit_card` or `other_liability` repaid (same currency) | optional `expense` category, **only** with interest/fees |
 | `balance_adjustment` | **never** send this | — | — | — |
 
@@ -140,9 +141,11 @@ amount). Category names are unique per type.
 | `amount` | decimal **string**, > 0, at most the currency's minor decimals (`"120.50"` THB, `"1500"` JPY). Never negative. |
 | `currency` | ISO 4217; **must equal the source balance's currency** (422 otherwise). |
 | `balance_uid` | UUID of the source / paying / receiving balance. |
-| `to_balance_uid` | required for `transfer`, `asset_purchase`, `return_on_investment` and `repay_debt`; must differ from `balance_uid`. |
+| `to_balance_uid` | required for `transfer`, `asset_purchase`, `return_on_investment`, `asset_sale` and `repay_debt`; must differ from `balance_uid`. |
 | `interest_amount`, `fee_amount` | **repay_debt only**, optional: interest and other fees paid on top of the principal, in `currency`. The account pays amount + interest + fees; the debt goes down by `amount`; the charges count as expenses. Only when the user separates them (e.g. "paid 1155.50, of which 125.50 interest and 30 fees" → amount 1000). |
-| `category_uid` | **required** UUID except on transfers (forbidden) and repay_debt (optional, only with interest/fees: an expense category); type must match (see table). If the user didn't name a category and none clearly fits, show the user's categories of that type and ask; don't create one unasked. |
+| `gain_loss` | **asset_sale only**, optional: gain (`"50"`) or loss (`"-20"`) of the sale in `currency`. The asset goes down by `amount` (the principal); the account receives amount + gain_loss. Counted as income / expense. E.g. "sold my gold (bought for 500) for 465" → amount 500, gain_loss -35. |
+| `entire_asset_sale` | **asset_sale only**, optional boolean: `true` when the user sold the whole asset; saving hides the asset balance. |
+| `category_uid` | **required** UUID except on transfers (forbidden), repay_debt (optional, only with interest/fees: an expense category) and asset_sale (optional, only with gain_loss: income for a gain, expense for a loss); type must match (see table). If the user didn't name a category and none clearly fits, show the user's categories of that type and ask; don't create one unasked. |
 | `spent_at` | RFC 3339 **with offset**: `2026-10-06T12:30:00+08:00` (no date-only, no naive local time). |
 | `note` | optional, ≤ 1000 characters. |
 | `to_amount` | **transfer only.** Same-currency: omit, or equal `amount`. Cross-currency: omit → server uses Frankfurter (ECB) for the `spent_at` date; or send the amount received in the destination currency (`rate_source: "manual"`). Never invent a received amount. |
@@ -282,6 +285,7 @@ scripts/log-tx.sh repay_debt Wallet "Credit Card" 5000 THB --at 2026-10-07T22:00
 scripts/log-tx.sh repay_debt Wallet "Car Loan" 1000 THB --interest 125.50 --fee 30 --category "Loan interest" --at 2026-10-07T22:00:00+08:00
 scripts/log-tx.sh transfer "USD Account" Wallet 100 USD --to-amount 3361.50 --at 2026-10-12T10:00:00+08:00
 scripts/log-tx.sh return_on_investment Wallet Gold 250 THB --category Dividends --at 2026-10-09T10:00:00+08:00
+scripts/log-tx.sh asset_sale Wallet Gold 500 THB --gain-loss -35 --entire --category "Investment loss" --at 2026-10-10T10:00:00+08:00
 ```
 
 ## More

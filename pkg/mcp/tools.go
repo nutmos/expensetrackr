@@ -143,14 +143,14 @@ func decimalSchema(desc string) map[string]any {
 	return map[string]any{"type": []string{"string", "number"}, "description": desc}
 }
 
-var writableTypes = []string{"expense", "income", "transfer", "asset_purchase", "return_on_investment", "repay_debt"}
+var writableTypes = []string{"expense", "income", "transfer", "asset_purchase", "return_on_investment", "asset_sale", "repay_debt"}
 
 const (
 	descAmount     = `Amount as a decimal string, > 0, with at most the currency's minor digits, e.g. "120.50" (THB), "1500" (JPY). Never negative: the type gives the direction.`
 	descCurrency   = "ISO 4217 code, e.g. THB. Must equal the currency of the source balance (balance_uid)."
-	descBalance    = "uid of the source balance: the paying balance (expense, asset_purchase), receiving balance (income, return_on_investment) or the balance money leaves (transfer; repay_debt: a payment_account). From list_balances."
-	descToBalance  = "uid of the destination balance. Required for transfer (any other balance), asset_purchase (an other_asset) and return_on_investment (the other_asset the return came from; its value is not changed) and repay_debt (the credit_card or other_liability being paid down). Not allowed otherwise."
-	descCategory   = "uid of the category, from list_categories. Required for every type except transfer (not allowed) and repay_debt: an expense category for expense and asset_purchase, an income category for income and return_on_investment. For repay_debt it is optional and only allowed with interest_amount or fee_amount: the expense category of those charges."
+	descBalance    = "uid of the source balance: the paying balance (expense, asset_purchase), receiving balance (income, return_on_investment; asset_sale: where the sale proceeds arrive) or the balance money leaves (transfer; repay_debt: a payment_account). From list_balances."
+	descToBalance  = "uid of the destination balance. Required for transfer (any other balance), asset_purchase (an other_asset) return_on_investment (the other_asset the return came from; its value is not changed), asset_sale (the other_asset sold; it goes down by amount) and repay_debt (the credit_card or other_liability being paid down). Not allowed otherwise."
+	descCategory   = "uid of the category, from list_categories. Required for every type except transfer (not allowed), repay_debt and asset_sale: an expense category for expense and asset_purchase, an income category for income and return_on_investment. For repay_debt it is optional and only allowed with interest_amount or fee_amount: the expense category of those charges. For asset_sale it is optional and only allowed with a gain_loss: an income category for a gain, an expense category for a loss."
 	descSpentAt    = "When it happened: RFC 3339 with a UTC offset, e.g. 2026-10-06T12:30:00+08:00. Use the user's offset; ask if unknown."
 	descNote       = "Optional free text, at most 1000 characters."
 	descToAmount   = "Transfer only: the amount received by the destination, in its currency. Same currency: omit (or equal amount). Cross-currency: the amount the user says was received (manual rate); omit to convert at the ECB rate of the spent_at date. Never invent it."
@@ -159,8 +159,10 @@ const (
 	descForeignCur = "ISO 4217 code of foreign_amount, e.g. USD. Required with foreign_amount; must differ from currency."
 	descInterest   = "Optional, repay_debt only: interest paid together with the repayment, in currency. amount is then the principal only (what the debt goes down by); the payment account pays amount + interest_amount + fee_amount. Counted as an expense in reports. Only when the user separates it."
 	descFee        = "Optional, repay_debt only: other fees paid together with the repayment (late fee, service charge), in currency. Paid from the account like interest_amount; the debt is not reduced by it."
+	descGainLoss   = `Optional, asset_sale only: the gain (positive, e.g. "50") or loss (negative, e.g. "-20") of the sale, in currency. amount is then the principal (what the asset goes down by); the receiving account gets amount + gain_loss, so a loss may not exceed amount. Counted as income (gain) or expense (loss) in reports. Only when the user gives it.`
+	descEntireSale = "Optional, asset_sale only: true when the user sold the whole asset. Saving the transaction then hides the asset balance (it stays in the ledger and can be shown again)."
 	descImportRef  = "Optional idempotency key (at most 200 characters, unique per balance), e.g. a bank statement line id. Usually omit."
-	descType       = "Transaction type. expense (spending), income (money in), transfer (between the user's own balances, incl. paying a credit card), asset_purchase (buying a tracked asset), return_on_investment (dividend/interest from a tracked asset), repay_debt (paying down a credit card or loan from a payment account)."
+	descType       = "Transaction type. expense (spending), income (money in), transfer (between the user's own balances, incl. paying a credit card), asset_purchase (buying a tracked asset), return_on_investment (dividend/interest from a tracked asset), asset_sale (selling all or part of a tracked asset, with an optional gain or loss), repay_debt (paying down a credit card or loan from a payment account)."
 )
 
 // ---- list_balances ----------------------------------------------------------
@@ -337,6 +339,9 @@ type txFields struct {
 	// Optional interest and fees of a debt repayment.
 	InterestAmount *decimal `json:"interest_amount"`
 	FeeAmount      *decimal `json:"fee_amount"`
+	// Optional result of an asset sale.
+	GainLoss        *decimal `json:"gain_loss"`
+	EntireAssetSale *bool    `json:"entire_asset_sale"`
 }
 
 // given returns the fields that were set, keyed by API name.
@@ -367,27 +372,49 @@ func (f txFields) given() map[string]string {
 	put("foreign_currency", f.ForeignCurrency)
 	putD("interest_amount", f.InterestAmount)
 	putD("fee_amount", f.FeeAmount)
+	putD("gain_loss", f.GainLoss)
+	if f.EntireAssetSale != nil {
+		m["entire_asset_sale"] = strconv.FormatBool(*f.EntireAssetSale)
+	}
 	return m
 }
 
 func txProperties() map[string]any {
 	return map[string]any{
-		"type":             enum(descType, writableTypes...),
-		"amount":           decimalSchema(descAmount),
-		"currency":         str(descCurrency),
-		"balance_uid":      str(descBalance),
-		"to_balance_uid":   str(descToBalance),
-		"category_uid":     str(descCategory),
-		"spent_at":         str(descSpentAt),
-		"note":             str(descNote),
-		"to_amount":        decimalSchema(descToAmount),
-		"to_currency":      str(descToCurrency),
-		"import_ref":       str(descImportRef),
-		"foreign_amount":   decimalSchema(descForeignAmt),
-		"foreign_currency": str(descForeignCur),
-		"interest_amount":  decimalSchema(descInterest),
-		"fee_amount":       decimalSchema(descFee),
+		"type":              enum(descType, writableTypes...),
+		"amount":            decimalSchema(descAmount),
+		"currency":          str(descCurrency),
+		"balance_uid":       str(descBalance),
+		"to_balance_uid":    str(descToBalance),
+		"category_uid":      str(descCategory),
+		"spent_at":          str(descSpentAt),
+		"note":              str(descNote),
+		"to_amount":         decimalSchema(descToAmount),
+		"to_currency":       str(descToCurrency),
+		"import_ref":        str(descImportRef),
+		"foreign_amount":    decimalSchema(descForeignAmt),
+		"foreign_currency":  str(descForeignCur),
+		"interest_amount":   decimalSchema(descInterest),
+		"fee_amount":        decimalSchema(descFee),
+		"gain_loss":         decimalSchema(descGainLoss),
+		"entire_asset_sale": map[string]any{"type": "boolean", "description": descEntireSale},
 	}
+}
+
+// apiBody is the JSON body for a transaction write: the string fields as
+// they are, entire_asset_sale as a boolean (omitted unless "true").
+func apiBody(m map[string]string) map[string]any {
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		if k == "entire_asset_sale" {
+			if b, _ := strconv.ParseBool(strings.TrimSpace(v)); b {
+				out[k] = true
+			}
+			continue
+		}
+		out[k] = v
+	}
+	return out
 }
 
 func createTransactionTool(c *Client) Tool {
@@ -410,7 +437,7 @@ func createTransactionTool(c *Client) Tool {
 					body[k] = v
 				}
 			}
-			res, err := c.do(ctx, http.MethodPost, "/api/transactions", nil, body, "")
+			res, err := c.do(ctx, http.MethodPost, "/api/transactions", nil, apiBody(body), "")
 			if err != nil {
 				return nil, err
 			}
@@ -431,6 +458,7 @@ func updateTransactionTool(c *Client) Tool {
 	props["foreign_amount"] = decimalSchema(descForeignAmt + ` Send "" (and foreign_currency "") to remove it.`)
 	props["interest_amount"] = decimalSchema(descInterest + ` Send "" to remove it.`)
 	props["fee_amount"] = decimalSchema(descFee + ` Send "" to remove it.`)
+	props["gain_loss"] = decimalSchema(descGainLoss + ` Send "" to remove it.`)
 	props["adjustment_direction"] = enum("Balance adjustments only: whether the adjustment raised (increase) or lowered (decrease) the balance (for an asset) or the debt (for a credit card or other liability).", "increase", "decrease")
 	return Tool{
 		Name:  "update_transaction",
@@ -438,7 +466,7 @@ func updateTransactionTool(c *Client) Tool {
 		Description: "Change some fields of a transaction; fields you leave out keep their current values. " +
 			"Balances are corrected automatically (the old effect is reversed, the new one applied). " +
 			"When the type changes, send the fields the new type needs (e.g. category_uid when changing a transfer to an expense, to_balance_uid when changing to a transfer); " +
-			"to_balance_uid is dropped automatically for types without a destination, category_uid for a transfer (and for a repay_debt left without interest or fees), foreign_amount/foreign_currency and interest_amount/fee_amount for types that do not allow them. " +
+			"to_balance_uid is dropped automatically for types without a destination, category_uid for a transfer (and for a repay_debt left without interest or fees, or an asset_sale left without gain_loss), foreign_amount/foreign_currency, interest_amount/fee_amount and gain_loss/entire_asset_sale for types that do not allow them. " +
 			"A balance_adjustment can be edited too (amount, adjustment_direction, balance_uid — any balance type —, spent_at, note) but stays a balance adjustment; its balance moves by the difference. Returns the updated transaction.",
 		InputSchema: obj(props, "uid"),
 		Idempotent:  true,
@@ -484,7 +512,7 @@ func updateTransactionTool(c *Client) Tool {
 			if ifMatch == "" {
 				ifMatch = etag(curVersion)
 			}
-			put, err := c.do(ctx, http.MethodPut, "/api/transactions/"+uid, nil, body, ifMatch)
+			put, err := c.do(ctx, http.MethodPut, "/api/transactions/"+uid, nil, apiBody(body), ifMatch)
 			if err != nil {
 				return nil, err
 			}
@@ -496,7 +524,7 @@ func updateTransactionTool(c *Client) Tool {
 // editable are the stored fields a PUT body carries over from the current
 // record (to_amount, to_currency and import_ref are handled separately;
 // adjustment_direction is set only on balance adjustments).
-var editable = []string{"type", "amount", "currency", "balance_uid", "to_balance_uid", "category_uid", "spent_at", "note", "foreign_amount", "foreign_currency", "interest_amount", "fee_amount", "adjustment_direction"}
+var editable = []string{"type", "amount", "currency", "balance_uid", "to_balance_uid", "category_uid", "spent_at", "note", "foreign_amount", "foreign_currency", "interest_amount", "fee_amount", "gain_loss", "entire_asset_sale", "adjustment_direction"}
 
 // mergeUpdate builds the PUT body: the current record's editable fields with
 // changes applied, cleaned up for the resulting type.
@@ -525,7 +553,7 @@ func mergeUpdate(cur map[string]any, changes map[string]string) (map[string]stri
 	}
 	_, explicitTo := changes["to_balance_uid"]
 	_, explicitCat := changes["category_uid"]
-	if typ != "transfer" && typ != "asset_purchase" && typ != "return_on_investment" && typ != "repay_debt" && !explicitTo {
+	if typ != "transfer" && typ != "asset_purchase" && typ != "return_on_investment" && typ != "asset_sale" && typ != "repay_debt" && !explicitTo {
 		delete(body, "to_balance_uid")
 	}
 	if typ != "repay_debt" {
@@ -535,17 +563,28 @@ func mergeUpdate(cur map[string]any, changes map[string]string) (map[string]stri
 			}
 		}
 	}
-	for _, k := range []string{"interest_amount", "fee_amount"} {
+	if typ != "asset_sale" {
+		for _, k := range []string{"gain_loss", "entire_asset_sale"} {
+			if _, explicit := changes[k]; !explicit {
+				delete(body, k)
+			}
+		}
+	}
+	for _, k := range []string{"interest_amount", "fee_amount", "gain_loss"} {
 		if strings.TrimSpace(body[k]) == "" {
 			delete(body, k)
 		}
+	}
+	if v, ok := body["entire_asset_sale"]; ok && strings.TrimSpace(v) == "false" {
+		delete(body, "entire_asset_sale") // omitted means false
 	}
 	// A repay_debt may keep its category only while it has interest or fees.
 	_, hasCharges := body["interest_amount"]
 	if _, ok := body["fee_amount"]; ok {
 		hasCharges = true
 	}
-	if (typ == "transfer" || (typ == "repay_debt" && !hasCharges)) && !explicitCat {
+	_, hasGainLoss := body["gain_loss"]
+	if (typ == "transfer" || (typ == "repay_debt" && !hasCharges) || (typ == "asset_sale" && !hasGainLoss)) && !explicitCat {
 		delete(body, "category_uid")
 	}
 	_, explicitFA := changes["foreign_amount"]

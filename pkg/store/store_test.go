@@ -108,8 +108,8 @@ func TestFreshDatabaseGetsBaseline(t *testing.T) {
 	}
 	st.Close()
 
-	if SchemaVersion != 7 {
-		t.Errorf("SchemaVersion = %d, want 7", SchemaVersion)
+	if SchemaVersion != 8 {
+		t.Errorf("SchemaVersion = %d, want 8", SchemaVersion)
 	}
 	if v := schemaVersion(t, url); v != SchemaVersion {
 		t.Errorf("schema version = %d, want %d", v, SchemaVersion)

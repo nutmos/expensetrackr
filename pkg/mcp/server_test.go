@@ -142,6 +142,7 @@ func TestMergeUpdate(t *testing.T) {
 		"to_amount": "3361.50", "to_currency": "THB", "version": json.Number("2"),
 	}
 	repayCharges := map[string]any{"type": "repay_debt", "amount": "100.00", "currency": "THB", "balance_uid": "a", "to_balance_uid": "l", "category_uid": "c", "spent_at": "2026-10-12T10:00:00+08:00", "note": "", "interest_amount": "12.50", "fee_amount": "3.00"}
+	assetSale := map[string]any{"type": "asset_sale", "amount": "100.00", "currency": "THB", "balance_uid": "a", "to_balance_uid": "g", "category_uid": "c", "spent_at": "2026-10-12T10:00:00+08:00", "note": "", "gain_loss": "-12.50", "gain_loss_minor": json.Number("-1250"), "entire_asset_sale": true}
 	foreignExpense := map[string]any{
 		"type": "expense", "amount": "850.00", "currency": "THB", "balance_uid": "a", "to_balance_uid": nil, "category_uid": "c",
 		"spent_at": "2026-10-12T10:00:00+08:00", "note": "", "foreign_amount": "25.00", "foreign_amount_minor": json.Number("2500"), "foreign_currency": "USD",
@@ -224,6 +225,24 @@ func TestMergeUpdate(t *testing.T) {
 			cur:     repayCharges,
 			changes: map[string]string{"type": "transfer"},
 			want:    map[string]string{"type": "transfer", "amount": "100.00", "currency": "THB", "balance_uid": "a", "to_balance_uid": "l", "spent_at": "2026-10-12T10:00:00+08:00"},
+		},
+		{
+			name:    "asset_sale keeps its result, flag and category on a note change",
+			cur:     assetSale,
+			changes: map[string]string{"note": "sold"},
+			want:    map[string]string{"type": "asset_sale", "amount": "100.00", "currency": "THB", "balance_uid": "a", "to_balance_uid": "g", "category_uid": "c", "spent_at": "2026-10-12T10:00:00+08:00", "note": "sold", "gain_loss": "-12.50", "entire_asset_sale": "true"},
+		},
+		{
+			name:    "clearing the gain_loss drops the asset_sale category",
+			cur:     assetSale,
+			changes: map[string]string{"gain_loss": "", "entire_asset_sale": "false"},
+			want:    map[string]string{"type": "asset_sale", "amount": "100.00", "currency": "THB", "balance_uid": "a", "to_balance_uid": "g", "spent_at": "2026-10-12T10:00:00+08:00"},
+		},
+		{
+			name:    "asset_sale to asset_purchase drops the sale fields",
+			cur:     assetSale,
+			changes: map[string]string{"type": "asset_purchase"},
+			want:    map[string]string{"type": "asset_purchase", "amount": "100.00", "currency": "THB", "balance_uid": "a", "to_balance_uid": "g", "category_uid": "c", "spent_at": "2026-10-12T10:00:00+08:00"},
 		},
 		{
 			name:    "balance adjustment keeps its direction",
