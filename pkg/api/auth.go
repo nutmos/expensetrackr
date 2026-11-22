@@ -251,8 +251,9 @@ type credentials struct {
 }
 
 // register creates a user with a password. Open only while no user has a
-// password (first-run setup; the new user is logged in); afterwards only a
-// logged-in user may register others (403 otherwise).
+// password (first-run setup); afterwards only a logged-in user may register
+// others (403 otherwise). It never starts a session: the new user logs in
+// with POST /api/auth/login using the credentials they chose (#165).
 func (s *Server) register(c *gin.Context) {
 	var in credentials
 	if !decodeBody(c, &in, true) {
@@ -307,13 +308,6 @@ func (s *Server) register(c *gin.Context) {
 	if err != nil {
 		writeUserError(c, err)
 		return
-	}
-	if !loggedIn {
-		if err := s.startSession(c, u); err != nil {
-			internalError(c, err)
-			return
-		}
-		_ = s.Store.RecordLogin(c.Request.Context(), u.UID, s.now())
 	}
 	u, _ = s.Store.GetUserByUID(c.Request.Context(), u.UID)
 	c.JSON(http.StatusCreated, u)

@@ -283,7 +283,8 @@
   // Signed-out visitors always get the Log in page (/login). A separate
   // Create account page (/register) is reachable from it only while
   // registration is open, i.e. on first run when no account exists yet (the
-  // server answers GET /api/auth/me with 401 code setup_required). Deep links
+  // server answers GET /api/auth/me with 401 code setup_required). Creating
+  // the account does not sign in: the user then logs in on /login. Deep links
   // go to /login?next=<original URL> and return there after logging in.
   // Only the display name / username is shown, never uids.
 
@@ -449,6 +450,18 @@
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         $("#login-password").value = "";
+        if (setupMode) {
+          // Creating an account does not log in (#165): go to Log in with the
+          // new username filled in, and let the user sign in themselves.
+          // Registration is closed now that an account exists.
+          registrationOpen = false;
+          history.replaceState(null, "", authURL("/login", nextParam()));
+          showAuth("Account created. Log in with your new username and password.");
+          $("#login-username").value = data.username || body.username;
+          $("#login-display").value = "";
+          $("#login-password").focus();
+          return;
+        }
         showApp(data);
         return;
       }

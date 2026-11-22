@@ -2,6 +2,7 @@ package api
 
 import (
 	"database/sql"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -40,6 +41,15 @@ func newAuthServer(t *testing.T, srv *Server) (*Server, *store.Store) {
 	t.Cleanup(func() { st.Close() })
 	srv.Store = st
 	return srv, st
+}
+
+// login logs c in and fails the test otherwise.
+func (c *authClient) login(username, password string) {
+	c.t.Helper()
+	body := fmt.Sprintf(`{"username":%q,"password":%q}`, username, password)
+	if rec := c.req("POST", "/api/auth/login", body, nil); rec.Code != 200 {
+		c.t.Fatalf("login %s: %d %s", username, rec.Code, rec.Body)
+	}
 }
 
 func (c *authClient) req(method, path, body string, hdr map[string]string) *httptest.ResponseRecorder {
@@ -96,14 +106,26 @@ func TestAuthFirstRunRegisterLoginLogout(t *testing.T) {
 		t.Fatalf("register with email field: %d", rec.Code)
 	}
 
-	// First-run registration logs in.
+	// First-run registration creates the account but does not log in (#165).
 	rec = c.req("POST", "/api/auth/register", `{"username":"Nat","password":"pw-12345","display_name":"Nat E"}`, nil)
-	if rec.Code != 201 || c.cookie == "" {
-		t.Fatalf("register: %d %s", rec.Code, rec.Body)
+	if rec.Code != 201 || c.cookie != "" || rec.Header().Get("Set-Cookie") != "" {
+		t.Fatalf("register: %d cookie=%q %s", rec.Code, c.cookie, rec.Body)
 	}
 	if strings.Contains(rec.Body.String(), "password_hash") || strings.Contains(rec.Body.String(), "$2a$") ||
-		!strings.Contains(rec.Body.String(), `"username":"nat"`) || !strings.Contains(rec.Body.String(), `"has_password":true`) {
+		!strings.Contains(rec.Body.String(), `"username":"nat"`) || !strings.Contains(rec.Body.String(), `"has_password":true`) ||
+		!strings.Contains(rec.Body.String(), `"last_login_at":null`) {
 		t.Fatalf("register body: %s", rec.Body)
+	}
+	if rec := c.req("GET", "/api/auth/me", "", nil); rec.Code != 401 {
+		t.Fatalf("me right after register: %d %s", rec.Code, rec.Body)
+	}
+	// Registration is now closed to anonymous callers; the user logs in.
+	if rec := c.req("POST", "/api/auth/register", `{"username":"eve","password":"eve-pass1"}`, nil); rec.Code != 403 {
+		t.Fatalf("register after first run: %d", rec.Code)
+	}
+	rec = c.req("POST", "/api/auth/login", `{"username":"nat","password":"pw-12345"}`, nil)
+	if rec.Code != 200 || c.cookie == "" {
+		t.Fatalf("login after register: %d %s", rec.Code, rec.Body)
 	}
 	setCookie := rec.Header().Get("Set-Cookie")
 	for _, want := range []string{"HttpOnly", "SameSite=Lax", "Path=/"} {
@@ -161,6 +183,7 @@ func TestAuthDisabledUserCannotLogin(t *testing.T) {
 	srv, _ := newAuthServer(t, &Server{})
 	c := &authClient{t: t, h: srv.Router()}
 	c.req("POST", "/api/auth/register", `{"username":"nat","password":"pw-12345"}`, nil)
+	c.login("nat", "pw-12345")
 	c.req("POST", "/api/auth/logout", "", nil)
 	db, err := sql.Open("pgx", lastAuthDB)
 	if err != nil {
@@ -183,6 +206,7 @@ func TestLoginThrottle(t *testing.T) {
 	h := srv.Router()
 	c := &authClient{t: t, h: h, ip: "10.0.0.1"}
 	c.req("POST", "/api/auth/register", `{"username":"nat","password":"pw-12345"}`, nil)
+	c.login("nat", "pw-12345")
 	c.req("POST", "/api/auth/logout", "", nil)
 	for i := 0; i < 5; i++ {
 		if rec := c.req("POST", "/api/auth/login", `{"username":"nat","password":"nope-nope"}`, nil); rec.Code != 401 {
@@ -208,6 +232,7 @@ func TestSessionExpiry(t *testing.T) {
 	srv, _ := newAuthServer(t, &Server{Now: func() time.Time { return now }})
 	c := &authClient{t: t, h: srv.Router()}
 	c.req("POST", "/api/auth/register", `{"username":"nat","password":"pw-12345"}`, nil)
+	c.login("nat", "pw-12345")
 	// Sliding: use after 29 days keeps it alive another 30.
 	now = now.Add(29 * 24 * time.Hour)
 	if rec := c.req("GET", "/api/auth/me", "", nil); rec.Code != 200 {
@@ -228,6 +253,7 @@ func TestPasswordChangeInvalidatesOtherSessions(t *testing.T) {
 	h := srv.Router()
 	a := &authClient{t: t, h: h}
 	a.req("POST", "/api/auth/register", `{"username":"nat","password":"pw-12345"}`, nil)
+	a.login("nat", "pw-12345")
 	b := &authClient{t: t, h: h}
 	if rec := b.req("POST", "/api/auth/login", `{"username":"nat","password":"pw-12345"}`, nil); rec.Code != 200 {
 		t.Fatal(rec.Code)
@@ -261,6 +287,7 @@ func TestProtectedRoutes401(t *testing.T) {
 	h := srv.Router()
 	c := &authClient{t: t, h: h}
 	c.req("POST", "/api/auth/register", `{"username":"nat","password":"pw-12345"}`, nil)
+	c.login("nat", "pw-12345")
 	anon := &authClient{t: t, h: h, cookie: "not-a-real-token"}
 	for _, rt := range h.Routes() {
 		if !strings.HasPrefix(rt.Path, "/api/") || publicAPI[rt.Method+" "+rt.Path] {
@@ -283,6 +310,7 @@ func TestCSRFGuard(t *testing.T) {
 	h := srv.Router()
 	c := &authClient{t: t, h: h}
 	c.req("POST", "/api/auth/register", `{"username":"nat","password":"pw-12345"}`, nil)
+	c.login("nat", "pw-12345")
 	cat := `{"name":"Food","type":"expense"}`
 	cases := []struct {
 		hdr  map[string]string
@@ -319,6 +347,7 @@ func TestPasswordChangeThrottle(t *testing.T) {
 	h := srv.Router()
 	a := &authClient{t: t, h: h, ip: "10.0.0.1"}
 	a.req("POST", "/api/auth/register", `{"username":"nat","password":"pw-12345"}`, nil)
+	a.login("nat", "pw-12345")
 	for i := 0; i < 5; i++ {
 		if rec := a.req("PUT", "/api/auth/password", `{"current_password":"guess-guess","new_password":"new-pass-1"}`, nil); rec.Code != 403 {
 			t.Fatalf("failure %d: %d", i, rec.Code)
