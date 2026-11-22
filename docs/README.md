@@ -27,6 +27,8 @@ match the Go JSON shapes.
 
 - [Getting started](getting-started.md): requirements, running with Docker
   Compose or from source, flags and the local Postgres.
+- [Deploying](deploy.md): the Lightsail deployment (Caddy, HTTPS) and
+  serving it behind the Cloudflare proxy.
 - [Development](development.md): repository and code layout, tests and make
   targets.
 - [Data model](data-model.md): transactions and their fields, transaction

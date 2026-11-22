@@ -14,6 +14,13 @@ name: Deploy (Lightsail)
 #   LIGHTSAIL_USER          SSH user (ec2-user)
 #   LIGHTSAIL_DOMAIN        optional; domain to serve instead of the bare IP
 #                           (real Let's Encrypt certificate)
+#   LIGHTSAIL_CLOUDFLARE    optional; "true" when LIGHTSAIL_DOMAIN is proxied
+#                           by Cloudflare (orange cloud): real visitor IPs
+#                           from CF-Connecting-IP, and only Cloudflare may
+#                           connect to the instance (docs/deploy.md)
+#   CLOUDFLARE_ORIGIN_CERT  optional secrets; a Cloudflare Origin CA
+#   CLOUDFLARE_ORIGIN_KEY   certificate (PEM) and its private key, served
+#                           instead of Let's Encrypt (SSL/TLS "Full (strict)")
 on:
   workflow_call:
     inputs:
@@ -45,6 +52,7 @@ jobs:
       HOST: ${{ vars.LIGHTSAIL_IP_ADDR || secrets.LIGHTSAIL_IP_ADDR }}
       SSH_USER: ${{ vars.LIGHTSAIL_USER || secrets.LIGHTSAIL_USER || 'ec2-user' }}
       SITE_ADDRESS: ${{ vars.LIGHTSAIL_DOMAIN || secrets.LIGHTSAIL_DOMAIN || vars.LIGHTSAIL_IP_ADDR || secrets.LIGHTSAIL_IP_ADDR }}
+      CLOUDFLARE: ${{ (vars.LIGHTSAIL_CLOUDFLARE || secrets.LIGHTSAIL_CLOUDFLARE) == 'true' }}
       IMAGE: ghcr.io/${{ github.repository }}:${{ inputs.tag }}
       REMOTE_DIR: expensetrackr
     steps:
@@ -92,23 +100,36 @@ jobs:
           # Short-lived job token, used on the instance only to pull the image
           # (works whether the ghcr.io package is public or private).
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CF_ORIGIN_CERT: ${{ secrets.CLOUDFLARE_ORIGIN_CERT }}
+          CF_ORIGIN_KEY: ${{ secrets.CLOUDFLARE_ORIGIN_KEY }}
         run: |
           # Values go over stdin, so the token stays out of the remote
           # process list and shell history.
           {
             printf 'export IMAGE=%q\n' "$IMAGE"
             printf 'export SITE_ADDRESS=%q\n' "$SITE_ADDRESS"
+            printf 'export CLOUDFLARE=%q\n' "$CLOUDFLARE"
+            printf 'export CF_ORIGIN_CERT=%q\n' "$CF_ORIGIN_CERT"
+            printf 'export CF_ORIGIN_KEY=%q\n' "$CF_ORIGIN_KEY"
             printf 'export GHCR_USER=%q\n' "${{ github.actor }}"
             printf 'export GHCR_TOKEN=%q\n' "$GHCR_TOKEN"
             printf 'exec ~/%s/deploy.sh\n' "$REMOTE_DIR"
           } | ssh lightsail bash -s
 
       - name: Summary
+        env:
+          HAS_ORIGIN_CERT: ${{ secrets.CLOUDFLARE_ORIGIN_CERT != '' }}
         run: |
+          origin_tls="Let's Encrypt"
+          [[ $HAS_ORIGIN_CERT == true ]] && origin_tls="Cloudflare Origin CA"
           {
             echo "### Deployed \`${IMAGE}\`"
             echo
             echo "https://${SITE_ADDRESS}"
+            if [[ $CLOUDFLARE == true ]]; then
+              echo
+              echo "Behind the Cloudflare proxy; origin certificate: ${origin_tls}."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Clean up SSH key
