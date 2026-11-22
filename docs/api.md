@@ -59,7 +59,7 @@ only on validation and conflict errors.
 | POST   | `/api/auth/login`      | 200 + user, `Set-Cookie: session=…` | Generic 401 `invalid username or password`; 429 after 5 failures (username + IP) for 5 min |
 | POST   | `/api/auth/logout`     | 204 | Deletes the session, clears the cookie |
 | GET    | `/api/auth/me`         | 200 + user | 401 when signed out (`code: setup_required` before the first account exists) |
-| PUT    | `/api/auth/password`   | 204 | `current_password`, `new_password`; logs out all other sessions |
+| PUT    | `/api/auth/password`   | 204 | `current_password`, `new_password`; logs out all other sessions; 429 after 5 wrong current passwords (per user) for 5 min |
 | GET    | `/api/tokens`          | 200 `{"tokens":[...],"count":n}` | Session only. Your active API tokens (display prefix, never the secret) |
 | POST   | `/api/tokens`          | 201 + token incl. `token` (shown once) | Session only. `name` (≤ 64 chars), `scopes` (`read`, `write`), optional `expires_in_days` (1–3650); 422 invalid |
 | DELETE | `/api/tokens/:uid`     | 204 | Session only. Revokes; 404 not yours / unknown |

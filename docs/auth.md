@@ -15,7 +15,7 @@ in the flow (the `users.email` column stays, optional). SSO (Apple / Google via
 | Cookie | `session`, `HttpOnly`, `SameSite=Lax`, `Path=/`, `Secure` only when the request came over TLS. |
 | Expiry | **30 days, sliding**: every authenticated request (at most once a minute) moves `expires_at` to now + 30 days and re-sends the cookie. An idle session dies after 30 days. Expired rows are deleted when seen and on every new login. |
 | Registration | Open only on **first run** (no user has a password yet). Afterwards only a logged-in user can register more accounts (403 `registration_closed` otherwise). |
-| Brute force | In-memory throttle per *username + client IP*: 5 failures within 15 minutes → 429 with `Retry-After` for 5 minutes. Reset on success and on restart. |
+| Brute force | In-memory throttle per *username + client IP*: 5 failures within 15 minutes → 429 with `Retry-After` for 5 minutes. Reset on success and on restart. The current-password check of `PUT /api/auth/password` uses the same limits, keyed per user, so a stolen session can't brute-force the password. |
 | CSRF | Origin / `Sec-Fetch-Site` check + JSON-only request bodies (see below). |
 | Security headers | Every response: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: same-origin` and a strict `Content-Security-Policy` (see "Security headers"). |
 | API tokens | `Authorization: Bearer ext_...` for scripts and agents; hash-only storage, `read`/`write` scopes, session-only token management (see "API tokens"). |
@@ -28,7 +28,7 @@ in the flow (the `users.email` column stays, optional). SSO (Apple / Google via
 | POST | `/api/auth/login` | none | `{"username","password"}` → 200 user + `Set-Cookie`. Updates `last_login_at`. Unknown user, wrong password and `status != active` all give the same **401 `invalid username or password`**; an unknown user still costs one bcrypt comparison (dummy hash) so timing does not reveal which usernames exist. 429 when throttled. |
 | POST | `/api/auth/logout` | none | Deletes the session (if any), clears the cookie. Always 204. |
 | GET | `/api/auth/me` | session | 200 current user; 401 otherwise, with `code: "setup_required"` while no account exists (the web page then offers the Create account button on its Log in page). |
-| PUT | `/api/auth/password` | session | `{"current_password","new_password"}` → 204. 403 wrong current password, 422 rules. **Every other session of the user is deleted**; the current one stays. |
+| PUT | `/api/auth/password` | session | `{"current_password","new_password"}` → 204. 403 wrong current password, 422 rules, 429 (`Retry-After`) after 5 wrong current passwords in 15 minutes for 5 minutes (throttled per user, across sessions and IPs). **Every other session of the user is deleted**; the current one stays. |
 
 ## What is public
 

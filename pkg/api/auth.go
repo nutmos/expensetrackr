@@ -321,6 +321,18 @@ func (s *Server) register(c *gin.Context) {
 
 const badLogin = "invalid username or password"
 
+// throttled writes 429 with Retry-After and returns true when key is locked
+// by the failed-attempt throttle.
+func (s *Server) throttled(c *gin.Context, key string) bool {
+	d := s.auth.throttle.Locked(key)
+	if d <= 0 {
+		return false
+	}
+	c.Header("Retry-After", strconv.Itoa(int(d.Seconds())+1))
+	c.JSON(http.StatusTooManyRequests, errorBody{Error: "too many failed attempts; try again later", Code: "throttled"})
+	return true
+}
+
 func (s *Server) login(c *gin.Context) {
 	s.authInit()
 	var in credentials
@@ -329,9 +341,7 @@ func (s *Server) login(c *gin.Context) {
 	}
 	username := strings.ToLower(strings.TrimSpace(in.Username))
 	key := username + "|" + c.ClientIP()
-	if d := s.auth.throttle.Locked(key); d > 0 {
-		c.Header("Retry-After", strconv.Itoa(int(d.Seconds())+1))
-		c.JSON(http.StatusTooManyRequests, errorBody{Error: "too many failed attempts; try again later", Code: "throttled"})
+	if s.throttled(c, key) {
 		return
 	}
 	ctx := c.Request.Context()
@@ -389,6 +399,7 @@ type passwordChange struct {
 // changePassword verifies the current password, stores the new hash and
 // deletes every other session of the user (this one stays logged in).
 func (s *Server) changePassword(c *gin.Context) {
+	s.authInit()
 	u, _ := currentUser(c)
 	v, _ := c.Get("session")
 	se := v.(store.Session)
@@ -400,11 +411,18 @@ func (s *Server) changePassword(c *gin.Context) {
 		c.JSON(http.StatusUnprocessableEntity, errorBody{Error: "validation failed", Fields: map[string]string{"new_password": msg}})
 		return
 	}
+	// Throttle current-password guesses per account, so a stolen session
+	// cannot brute-force the password (same limits as login).
+	key := "pwchange|" + u.UID
+	if s.throttled(c, key) {
+		return
+	}
 	hash := ""
 	if u.PasswordHash != nil {
 		hash = *u.PasswordHash
 	}
 	if !auth.CheckPassword(hash, in.CurrentPassword) {
+		s.auth.throttle.Fail(key)
 		c.JSON(http.StatusForbidden, errorBody{Error: "current password is incorrect",
 			Fields: map[string]string{"current_password": "is incorrect"}})
 		return
@@ -418,5 +436,6 @@ func (s *Server) changePassword(c *gin.Context) {
 		writeUserError(c, err)
 		return
 	}
+	s.auth.throttle.Reset(key)
 	c.Status(http.StatusNoContent)
 }
