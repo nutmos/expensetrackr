@@ -64,6 +64,18 @@ and other supranational X… codes → 🌐. Flags are display only: requests an
 responses elsewhere use plain codes. Systems without flag emoji (e.g. Windows)
 show the two letters instead. Details: [docs/currencies.md](currencies.md).
 
+**Phones and narrow screens** (issue #171). Below 640px wide the page
+reflows instead of scrolling sideways: the header shows only the display name
+(shortened) and **Log out**; the section tabs become a 3-column grid of
+buttons so every section, API docs included, stays visible; and the lists
+become one card per row: transactions, balances, categories, the balance
+totals, the balance transactions report and API tokens. Tables that use the
+generic `.stack-table` layout show each cell as a "Label value" line, the
+labels copied from the column headers by `App.labelCells(table)`
+(`router.js`); call it after rendering the rows of any new such table. Form
+fields use 16px text there so iOS Safari does not zoom in on focus. The rules
+apply to the screen only, so printing (Export PDF) keeps the full table.
+
 **Uids are never shown on the page.** They identify records only behind the
 scenes: in row `data-uid` attributes, dropdown option values, edit URLs
 (`/<res>/<uid>/edit`) and API calls. Headings, rows, tooltips, messages and

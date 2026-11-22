@@ -371,7 +371,7 @@
       return;
     }
     const wrap = el("div", "table-wrap");
-    const table = el("table", "statement");
+    const table = el("table", "statement stack-table");
     const thead = el("thead");
     const hr = el("tr");
     for (const [t, cls] of [["Date", ""], ["Type", ""], ["Details", ""], ["In", "num"], ["Out", "num"], [what, "num"]]) {
@@ -402,6 +402,7 @@
     fr.append(el("th", "num", fmtAmount(body.money_in)), el("th", "num", fmtAmount(body.money_out)), el("th", "num", fmtNeg(body.closing_amount)));
     tfoot.append(fr);
     table.append(thead, tbody, tfoot);
+    App.labelCells(table);
     wrap.append(table);
     bodyEl.append(wrap);
     bodyEl.append(el("p", "muted small report-printed", `Generated ${shownDate(new Date())}`));

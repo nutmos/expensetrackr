@@ -346,6 +346,7 @@
         moneyCell(t.credit_limit), moneyCell(t.available_credit));
       totalsBody.append(tr);
     }
+    App.labelCells($("#b-totals"));
   }
 
   async function loadBalances(highlightUID) {

@@ -11,7 +11,7 @@
     <header class="app-header">
       <h1>Expense Log</h1>
       <div id="user-bar" class="user-bar" hidden>
-        <span class="muted">Signed in as</span> <strong id="user-name"></strong>
+        <span class="muted signed-in-label">Signed in as</span> <strong id="user-name"></strong>
         <button type="button" id="logout-btn" class="secondary">Log out</button>
       </div>
     </header>
@@ -275,7 +275,7 @@
       <h3>Totals per currency</h3>
       <p class="muted small">Assets = sum of balances; liabilities = sum of debts; available credit = limits − debts. No currency conversion. Hidden balances are counted only while they are shown.</p>
       <div class="table-wrap">
-        <table id="b-totals">
+        <table id="b-totals" class="stack-table">
           <thead>
             <tr>
               <th>Currency</th>
@@ -436,7 +436,7 @@
         <span id="t-copy-status" class="muted" role="status"></span>
       </div>
       <div class="table-wrap">
-        <table id="token-table">
+        <table id="token-table" class="stack-table">
           <thead><tr><th>Name</th><th>Token</th><th>Scopes</th><th>Created</th><th>Last used</th><th>Expires</th><th></th></tr></thead>
           <tbody></tbody>
         </table>
