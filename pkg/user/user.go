@@ -110,6 +110,15 @@ func NormalizeUsername(s string) (string, string) {
 	return u, ""
 }
 
+// CheckDisplayNameLen reports whether name exceeds MaxDisplayNameLen,
+// counted in characters (runes), not bytes. "" means OK.
+func CheckDisplayNameLen(name string) string {
+	if utf8.RuneCountInString(name) > MaxDisplayNameLen {
+		return fmt.Sprintf("must be at most %d characters", MaxDisplayNameLen)
+	}
+	return ""
+}
+
 // Validate checks the input and returns a normalized User (no IDs/times;
 // Status active). Username/email "" or null are stored as NULL.
 func (in Input) Validate() (User, error) {
@@ -119,8 +128,8 @@ func (in Input) Validate() (User, error) {
 	name := strings.TrimSpace(in.DisplayName)
 	if name == "" {
 		fields["display_name"] = "is required"
-	} else if utf8.RuneCountInString(name) > MaxDisplayNameLen {
-		fields["display_name"] = fmt.Sprintf("must be at most %d characters", MaxDisplayNameLen)
+	} else if msg := CheckDisplayNameLen(name); msg != "" {
+		fields["display_name"] = msg
 	}
 	u.DisplayName = name
 

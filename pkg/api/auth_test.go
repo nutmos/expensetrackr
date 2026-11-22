@@ -179,6 +179,28 @@ func TestAuthFirstRunRegisterLoginLogout(t *testing.T) {
 	}
 }
 
+// Registration counts display_name in characters, like PUT /api/users/:uid
+// (#88): a 34-character Thai name is 102 bytes and must be accepted.
+func TestRegisterDisplayNameCountsCharacters(t *testing.T) {
+	srv, _ := newAuthServer(t, &Server{})
+	c := &authClient{t: t, h: srv.Router()}
+
+	thai := strings.Repeat("ก", 34)
+	body := fmt.Sprintf(`{"username":"nat","password":"pw-12345","display_name":%q}`, thai)
+	if rec := c.req("POST", "/api/auth/register", body, nil); rec.Code != 201 ||
+		!strings.Contains(rec.Body.String(), thai) {
+		t.Fatalf("register thai name: %d %s", rec.Code, rec.Body)
+	}
+
+	c.login("nat", "pw-12345")
+	long := strings.Repeat("ก", 101)
+	body = fmt.Sprintf(`{"username":"guest","password":"guest-pass","display_name":%q}`, long)
+	if rec := c.req("POST", "/api/auth/register", body, nil); rec.Code != 422 ||
+		!strings.Contains(rec.Body.String(), "at most 100 characters") {
+		t.Fatalf("register 101-char name: %d %s", rec.Code, rec.Body)
+	}
+}
+
 func TestAuthDisabledUserCannotLogin(t *testing.T) {
 	srv, _ := newAuthServer(t, &Server{})
 	c := &authClient{t: t, h: srv.Router()}

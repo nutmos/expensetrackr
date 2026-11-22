@@ -113,3 +113,24 @@ func TestIdentityValidate(t *testing.T) {
 		t.Errorf("identity errors: %v", f)
 	}
 }
+
+// Display names are limited in characters, not bytes (#88): a Thai name of
+// 34 characters is 102 bytes and must be accepted.
+func TestCheckDisplayNameLenCountsRunes(t *testing.T) {
+	thai := strings.Repeat("ก", 34) // 34 runes, 102 bytes
+	if n := len([]rune(thai)); n != 34 || len(thai) <= MaxDisplayNameLen {
+		t.Fatalf("fixture: %d runes, %d bytes", n, len(thai))
+	}
+	if msg := CheckDisplayNameLen(thai); msg != "" {
+		t.Fatalf("thai name rejected: %s", msg)
+	}
+	if _, err := (Input{DisplayName: thai}).Validate(); err != nil {
+		t.Fatalf("Validate thai name: %v", err)
+	}
+	if msg := CheckDisplayNameLen(strings.Repeat("ก", MaxDisplayNameLen)); msg != "" {
+		t.Fatalf("exactly max rejected: %s", msg)
+	}
+	if msg := CheckDisplayNameLen(strings.Repeat("ก", MaxDisplayNameLen+1)); msg == "" {
+		t.Fatal("over max accepted")
+	}
+}
