@@ -6,7 +6,10 @@
 
   const { $, cell, button, link } = App;
   const form = $("#transaction-form");
-  const spentAtInput = $("#spent_at");
+  // Date and time are separate fields (issue #163): a date picker and an
+  // hour:minute time; seconds and milliseconds are always saved as 0.
+  const spentDateInput = $("#spent_date");
+  const spentTimeInput = $("#spent_time");
   const statusEl = $("#form-status");
   const tbody = $("#transaction-table tbody");
   const listStatus = $("#list-status");
@@ -41,10 +44,13 @@
 
   const pad = (n, w = 2) => String(Math.abs(n)).padStart(w, "0");
 
-  // "YYYY-MM-DDTHH:MM:SS" in the browser's local time (value for datetime-local).
-  function toLocalInputValue(d) {
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
-      `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  // "YYYY-MM-DD" and "HH:MM" in the browser's local time (values for the
+  // date and time inputs).
+  function toDateValue(d) {
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+  function toTimeValue(d) {
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
   // "+08:00" style offset for the given instant in the browser's time zone
@@ -55,42 +61,65 @@
     return `${sign}${pad(Math.floor(Math.abs(mins) / 60))}:${pad(Math.abs(mins) % 60)}`;
   }
 
-  // Full RFC 3339 timestamp in the browser's zone, e.g. 2026-10-06T21:06:00+08:00.
+  // RFC 3339 timestamp in the browser's zone with seconds zeroed,
+  // e.g. 2026-10-06T21:06:00+08:00.
   function toRFC3339(d) {
-    return toLocalInputValue(d) + offsetString(d);
+    return `${toDateValue(d)}T${toTimeValue(d)}:00${offsetString(d)}`;
   }
 
-  // Parse a datetime-local value ("YYYY-MM-DDTHH:MM[:SS]") as browser-local time.
-  function parseLocalInput(value) {
-    const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/.exec(value);
-    if (!m) return null;
-    return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0));
+  // The entered date ("YYYY-MM-DD") and time ("HH:MM", any seconds ignored)
+  // as a browser-local Date, or null if either is missing or invalid.
+  function parseLocalInput(date, time) {
+    const dm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date || "");
+    const tm = /^(\d{2}):(\d{2})/.exec(time || "");
+    if (!dm || !tm) return null;
+    const d = new Date(+dm[1], +dm[2] - 1, +dm[3], +tm[1], +tm[2], 0, 0);
+    return isNaN(d) ? null : d;
+  }
+
+  // Put an instant into the date and time fields (device-local, minute precision).
+  function setSpentAt(d) {
+    const ok = d && !isNaN(d);
+    spentDateInput.value = ok ? toDateValue(d) : "";
+    spentTimeInput.value = ok ? toTimeValue(d) : "";
+    showPickerText();
+  }
+
+  // Show the date as "DD MMM YYYY" and the time as "HH:mm" over the native
+  // inputs, whose own text follows the browser locale (issue #163).
+  function showPickerText() {
+    const date = spentDateInput.value, time = spentTimeInput.value;
+    const d = parseLocalInput(date, "00:00");
+    const dateText = d ? App.fmtDateTime(d).slice(0, -6) : "";
+    const timeText = /^\d{2}:\d{2}/.test(time) ? time.slice(0, 5) : "";
+    for (const [inp, text] of [[spentDateInput, dateText], [spentTimeInput, timeText]]) {
+      inp.parentElement.querySelector(".picker-text").textContent = text;
+      inp.parentElement.classList.toggle("has-value", !!text);
+    }
   }
 
   // The RFC 3339 value the form would submit: the entered wall-clock time in
   // the device's time zone, with the device's offset for that date (DST-aware).
   function composedSpentAt() {
-    const d = parseLocalInput(spentAtInput.value);
+    const d = parseLocalInput(spentDateInput.value, spentTimeInput.value);
     return d ? toRFC3339(d) : null;
   }
 
   function setNow() {
-    spentAtInput.value = toLocalInputValue(new Date());
+    setSpentAt(new Date());
     updatePreview();
   }
 
   function updatePreview() {
+    showPickerText();
     const v = composedSpentAt();
     let text = v ? "Will be saved as " + shownTime(v) : "Enter a date and time";
-    if (v && editing && v !== editing.spent_at) text += ` (was ${shownTime(editing.spent_at)})`;
+    if (v && editing && shownTime(v) !== shownTime(editing.spent_at)) text += ` (was ${shownTime(editing.spent_at)})`;
     $("#spent-at-preview").textContent = text;
   }
 
-  // "YYYY-MM-DD HH:MM:SS" in the device's time zone (raw value if unparsable).
-  function shownTime(rfc3339) {
-    const d = new Date(rfc3339);
-    return isNaN(d) ? rfc3339 : toLocalInputValue(d).replace("T", " ");
-  }
+  // "DD MMM YYYY HH:mm" in the device's time zone (raw value if unparsable).
+  const shownTime = (rfc3339) => App.fmtDateTime(rfc3339);
 
   const setStatus = (text, kind) => App.setStatus(statusEl, text, kind);
   const conflictBox = $("#conflict");
@@ -416,7 +445,7 @@
     renderConversion(null);
     fxTimer = setTimeout(() => fetchRate(p), immediate ? 0 : 300);
   }
-  function fxDay() { return spentAtInput.value ? spentAtInput.value.slice(0, 10) : ""; }
+  function fxDay() { return spentDateInput.value || ""; }
   // Fill Received amount from a market quote and refresh both rate lines.
   function applyQuote(p, q) {
     const conv = convert($("#amount").value, currencyScale.get(p.from) ?? 2, q.rate, currencyScale.get(p.to) ?? 2);
@@ -625,8 +654,7 @@
     App.setCurrency($("#foreign_currency"), e.foreign_currency || "");
     // Show the saved instant converted to the device's local time; saving
     // re-stamps it with the device's current offset.
-    const d = new Date(e.spent_at);
-    spentAtInput.value = isNaN(d) ? "" : toLocalInputValue(d);
+    setSpentAt(new Date(e.spent_at));
     updatePreview();
     if (e.to_amount && e.to_currency) {
       clearTimeout(fxTimer);
@@ -1062,7 +1090,12 @@
   Combobox.enhance($("#currency")); // issue #25; search matches code and name
   Combobox.enhance($("#foreign_currency"), { clearable: true });
 
-  spentAtInput.addEventListener("input", updatePreview);
+  for (const inp of [spentDateInput, spentTimeInput]) {
+    inp.addEventListener("input", updatePreview);
+    // Clicking anywhere on the field opens the picker (where supported); it
+    // opens on the date currently entered.
+    inp.addEventListener("click", () => { try { inp.showPicker(); } catch (_) {} });
+  }
   $("#type").addEventListener("change", () => applyType());
   // A transaction's currency must match its (source) balance: picking a
   // balance fills in its currency (still selectable; the server reports a
@@ -1089,7 +1122,9 @@
   $("#currency").addEventListener("change", updateChargesTotal);
   $("#currency").addEventListener("change", updateSaleTotal);
   $("#amount").addEventListener("input", () => { if (fxManual) { const p = fxPair(); if (p) showManualRate(p); } else updateFx(); });
-  spentAtInput.addEventListener("change", () => { if (!fxManual) updateFx(); });
+  // The market rate depends on the date only.
+  spentDateInput.addEventListener("change", () => { updatePreview(); if (!fxManual) updateFx(); });
+  spentTimeInput.addEventListener("change", updatePreview);
   $("#to_amount").addEventListener("input", () => { fxManual = true; fxGen++; const p = fxPair(); if (p) showManualRate(p); });
   $("#fx-reset").addEventListener("click", () => { fxAuto(); updateFx(true); });
   // Picking a type replaces the picker in history, so Back (and Cancel /
