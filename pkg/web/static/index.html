@@ -180,6 +180,12 @@
             <small class="muted"><span id="category-hint"></span> <a href="/categories">Manage categories</a></small>
             <small class="err" data-for="category_uid"></small>
           </label>
+          <div class="field" id="entire-field" hidden>
+            <span class="field-label">Entire asset sale</span>
+            <label class="inline-check"><input type="checkbox" id="entire_asset_sale" name="entire_asset_sale"> Sold the whole asset</label>
+            <small class="muted">Fills in the principal with the asset’s current amount (you can still change it). The asset is hidden from your balances after saving; it can be shown again from Balances.</small>
+            <small class="err" data-for="entire_asset_sale"></small>
+          </div>
           <label id="to-field" hidden><span id="to-label">To (destination)</span>
             <select id="to_balance_uid" name="to_balance_uid">
               <option value="">Select a balance…</option>
@@ -209,9 +215,6 @@
             <input id="gain_loss" name="gain_loss" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 50 or -20" aria-label="Gain or loss">
             <small class="muted">Positive for a gain, negative for a loss. The asset goes down by the principal; the account receives the principal plus the gain (or minus the loss). Counted as income or expense in reports. <span id="sale-total"></span></small>
             <small class="err" data-for="gain_loss"></small>
-            <label class="inline-check"><input type="checkbox" id="entire_asset_sale" name="entire_asset_sale"> Entire asset sale</label>
-            <small class="muted">The whole asset was sold: the asset is hidden from your balances after saving (it can be shown again from Balances).</small>
-            <small class="err" data-for="entire_asset_sale"></small>
           </div>
           <div class="field" id="foreign-field" hidden>
             <span class="field-label">Foreign currency amount (optional)</span>

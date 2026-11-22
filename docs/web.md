@@ -126,13 +126,16 @@ confirmations use human labels instead. For example, an edit page is titled
 - For a debt repayment the amount is labelled **Principal**, and an optional
   **Interest and fees** pair of inputs is shown, with the total paid from the
   account underneath. Only the principal lowers the debt.
-- For an asset sale the amount is also labelled **Principal** (what the asset
-  goes down by), followed by an optional **Gain / loss** input (positive for
-  a gain, negative such as `-20` for a loss) with the amount received
-  underneath, and an **Entire asset sale** checkbox. Ticking it with no
-  principal typed yet fills in the asset's current balance; saving hides the
-  asset (see [Balances](balances.md)). The list shows the gain or loss, and
-  "entire asset", under the amount.
+- For an asset sale the money is received into a payment account or credit
+  card only (other assets and liabilities are not offered). **Asset sold**
+  and an **Entire asset sale** switch come right after it, before the amount:
+  switching it on (or picking another asset while it is on) fills in the
+  **Principal** with the asset's current balance, which can still be changed;
+  saving hides the asset (see [Balances](balances.md)). The principal is what
+  the asset goes down by. An optional **Gain / loss** input follows the
+  currency (positive for a gain, negative such as `-20` for a loss), with the
+  amount received underneath. The list shows the gain or loss, and "entire
+  asset", under the amount.
 - **Category** is required (except for transfers, where it is hidden, and
   debt repayments, where it appears as an optional "Category of interest &
   fees" only once interest or fees are filled in, and asset sales, where it

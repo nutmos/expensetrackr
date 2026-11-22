@@ -178,10 +178,11 @@
     if (total < 0n) return; // the server explains: a loss can't exceed the principal
     out.textContent = `Received: ${fmtAmount(formatMinor(total, scale))}${cur ? " " + cur : ""}.`;
   }
-  // Entire asset sale: with no principal typed yet, use the asset's current
-  // balance (what is left to sell).
+  // Entire asset sale: switching it on (or picking another asset while it is
+  // on) fills in the principal with the asset's current balance (what is
+  // left to sell); the user can still change it afterwards.
   function principalFromAsset() {
-    if (currentType() !== "asset_sale" || !$("#entire_asset_sale").checked || $("#amount").value.trim()) return;
+    if (currentType() !== "asset_sale" || !$("#entire_asset_sale").checked) return;
     const b = balanceByUID($("#to_balance_uid").value);
     const v = b ? String(b.balance ?? "").trim() : "";
     if (/^\d+(\.\d+)?$/.test(v) && /[1-9]/.test(v)) {
@@ -463,6 +464,13 @@
     $("#foreign-field").hidden = !FOREIGN_TYPES.has(t);
     $("#charges-field").hidden = t !== "repay_debt";
     $("#sale-field").hidden = t !== "asset_sale";
+    $("#entire-field").hidden = t !== "asset_sale";
+    // An asset sale starts from the asset: "Asset sold" and the "Entire
+    // asset sale" switch come before the principal they fill in. Every other
+    // type keeps the destination after the currency.
+    const amountField = $("#amount").closest("label"), currencyField = $("#currency").closest("label");
+    if (t === "asset_sale") amountField.before($("#to-field"), $("#entire-field"));
+    else currencyField.after($("#to-field"), $("#entire-field"));
     // A repayment's (optional) category belongs to its interest and fees,
     // and a sale's to its gain or loss, so it goes after them; that also
     // keeps the fields above from moving when it appears.

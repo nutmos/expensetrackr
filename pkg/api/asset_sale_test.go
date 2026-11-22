@@ -88,3 +88,18 @@ func TestAssetSaleAPI(t *testing.T) {
 		t.Errorf("after bulk: wallet %v gold %v", bal(wallet, "balance"), bal(gold, "balance"))
 	}
 }
+
+// TestAssetSaleReceiverTypes: the proceeds can be received into a
+// payment_account or credit_card only, never another asset or a liability.
+func TestAssetSaleReceiverTypes(t *testing.T) {
+	h := newTestServer(t)
+	gold := seedBal(t, h, "Gold", "other_asset")
+	for _, typ := range []string{"payment_account", "credit_card", "other_asset", "other_liability"} {
+		recv := seedBal(t, h, "Receiver "+typ, typ)
+		rec, b := do(t, h, http.MethodPost, "/api/transactions", `{"type":"asset_sale","amount":"10","currency":"THB","balance_uid":"`+recv+`","to_balance_uid":"`+gold+`","spent_at":"2026-10-07T10:00:00+08:00"}`)
+		ok := typ == "payment_account" || typ == "credit_card"
+		if f, _ := b["fields"].(map[string]any); ok && rec.Code != http.StatusCreated || !ok && (rec.Code != http.StatusUnprocessableEntity || f["balance_uid"] == nil) {
+			t.Errorf("receiver %s: %d %v", typ, rec.Code, b)
+		}
+	}
+}

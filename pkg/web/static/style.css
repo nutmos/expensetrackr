@@ -43,7 +43,7 @@ td.note { color: var(--muted); min-width: 10em; max-width: 280px; overflow-wrap:
 .foreign-row .combo, .foreign-row select { flex: 1 1 66%; min-width: 0; }
 .charges-row { display: flex; gap: 6px; }
 .charges-row input { flex: 1 1 50%; min-width: 0; }
-.inline-check { display: flex; flex-direction: row; align-items: center; gap: 6px; font-weight: 400; margin-top: 8px; }
+.inline-check { display: flex; flex-direction: row; align-items: center; gap: 6px; font-weight: 400; min-height: 38px; }
 .inline-check input { width: auto; margin: 0; }
 .foreign-amt { display: block; font-size: 0.8rem; font-weight: 400; color: var(--muted); white-space: nowrap; }
 td.actions-cell { white-space: nowrap; }
