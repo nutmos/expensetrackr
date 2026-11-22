@@ -300,8 +300,32 @@
     }
   }
 
+  // setDateRange adds a whole-day date filter (inclusive YYYY-MM-DD bounds,
+  // either may be empty) to params, read in this device's time zone: the
+  // dates go as is with tz=<IANA zone>. If the browser can't name its zone,
+  // the bounds are sent as RFC 3339 instants with the device's offset.
+  function setDateRange(params, from, to) {
+    let tz = "";
+    try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (_) { /* old browser */ }
+    if (tz) {
+      if (from) params.set("from", from);
+      if (to) params.set("to", to);
+      if (from || to) params.set("tz", tz);
+      return;
+    }
+    const p2 = (n) => String(n).padStart(2, "0");
+    const stamp = (s, h, mi, sec) => {
+      const [y, m, d] = s.split("-").map(Number);
+      const t = new Date(y, m - 1, d, h, mi, sec);
+      const off = -t.getTimezoneOffset();
+      return `${s}T${p2(h)}:${p2(mi)}:${p2(sec)}${off >= 0 ? "+" : "-"}${p2(Math.floor(Math.abs(off) / 60))}:${p2(Math.abs(off) % 60)}`;
+    };
+    if (from) params.set("from", stamp(from, 0, 0, 0));
+    if (to) params.set("to", stamp(to, 23, 59, 59));
+  }
+
   window.App = {
-    labelCells, loadCurrencies, currencyText, setCurrency, fillCurrencySelect, fmtAmount, fmtDateTime,
+    setDateRange, labelCells, loadCurrencies, currencyText, setCurrency, fillCurrencySelect, fmtAmount, fmtDateTime,
     $, cell, button, link, clearErrors, showFieldErrors, setStatus,
     setFlash, takeFlash, route, navigate, returnToList, replaceQuery, ifMatch, showConflict, hideConflict,
     isUUID: (s) => UUID_RE.test(s),

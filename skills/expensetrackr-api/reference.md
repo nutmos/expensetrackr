@@ -210,7 +210,8 @@ existed; editing/deleting those doesn't move balances.
 
 | param | meaning |
 |---|---|
-| `from`, `to` | RFC 3339 with offset, inclusive; encode `+` as `%2B` (a raw `+` also works) |
+| `from`, `to` | Inclusive. A date `YYYY-MM-DD` covers the whole day in `tz`; an RFC 3339 date-time with offset is an exact instant (encode `+` as `%2B`; a raw `+` also works) |
+| `tz` | Time zone for date-only `from`/`to`: IANA name (`Asia/Bangkok`) or offset (`+07:00`); default UTC |
 | `type` | `expense`, `income`, `transfer`, `asset_purchase`, `return_on_investment`, `asset_sale`, `repay_debt`, `balance_adjustment`, `beginning_balance` |
 | `category_uid` | one category |
 | `limit` | 1–5000, default 500 |
@@ -223,7 +224,7 @@ cursor: filter by `balance_uid` client-side and narrow `from`/`to` when
 ```bash
 # Spending per currency in October (expenses only)
 curl -sS -b "$JAR" -c "$JAR" \
-  "$BASE/api/transactions?type=expense&from=2026-10-01T00:00:00%2B08:00&to=2026-10-31T23:59:59%2B08:00" \
+  "$BASE/api/transactions?type=expense&from=2026-10-01&to=2026-10-31&tz=Asia/Singapore" \
   | jq 'reduce .transactions[] as $t ({}; .[$t.currency] += $t.amount_minor)'
 # → minor units, e.g. {"THB":12050} = 120.50 THB (divide by 10^scale)
 
@@ -321,7 +322,7 @@ Read-only summaries, per currency (never converted). `GET /api/reports` lists
 them. Use these instead of paging through every transaction to answer "how
 much did I spend / earn" or "what is my net worth".
 
-- `GET /api/reports/income-expense[?from=<RFC 3339>&to=<RFC 3339>]` →
+- `GET /api/reports/income-expense[?from=<date or RFC 3339>&to=<date or RFC 3339>&tz=<zone>]` →
   `{"report","from","to","currencies":[{"currency","income","expense","net",
   "income_count","expense_count","income_by_category":[...],"expense_by_category":[...]}]}`.
   Expenses = `expense`; income = `income` + `return_on_investment`; transfers,
@@ -334,7 +335,7 @@ much did I spend / earn" or "what is my net worth".
 
 ```bash
 curl -sS -b "$JAR" -c "$JAR" -G "$BASE/api/reports/income-expense" \
-  --data-urlencode 'from=2026-11-01T00:00:00+07:00' --data-urlencode 'to=2026-11-30T23:59:59+07:00' | jq -c '.currencies[] | {currency, income, expense, net}'
+  -d from=2026-11-01 -d to=2026-11-30 -d tz=Asia/Bangkok | jq -c '.currencies[] | {currency, income, expense, net}'
 curl -sS -b "$JAR" -c "$JAR" "$BASE/api/reports/assets-liabilities" | jq -c '.currencies[] | {currency, assets, liabilities, net}'
 ```
 

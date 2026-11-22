@@ -48,17 +48,6 @@
   const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   const isYMD = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || "");
 
-  // Local wall-clock time with the device's offset for that date (DST-aware),
-  // e.g. 2026-11-01T00:00:00+07:00, like the transaction list's date filter.
-  function rfc3339(d) {
-    const mins = -d.getTimezoneOffset();
-    const sign = mins >= 0 ? "+" : "-";
-    const off = `${sign}${pad(Math.floor(Math.abs(mins) / 60))}:${pad(Math.abs(mins) % 60)}`;
-    return `${ymd(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}${off}`;
-  }
-  function dayStart(s) { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d, 0, 0, 0); }
-  function dayEnd(s) { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d, 23, 59, 59); }
-
   // Amounts are exact decimal strings from the API; Number() is used only to
   // size the bars.
   const num = (s) => Math.abs(Number(s)) || 0;
@@ -173,8 +162,7 @@
     const myGen = ++gen;
     const from = $("#r-from").value, to = $("#r-to").value;
     const params = new URLSearchParams();
-    if (from) params.set("from", rfc3339(dayStart(from)));
-    if (to) params.set("to", rfc3339(dayEnd(to)));
+    App.setDateRange(params, from, to); // whole days in this device's time zone
     await App.loadCurrencies(); // currency flags
     const body = await fetchReport("/api/reports/income-expense" + (params.toString() ? "?" + params : ""), myGen);
     if (!body) return;
@@ -335,8 +323,7 @@
     }
     const from = $("#rb-from").value, to = $("#rb-to").value;
     const params = new URLSearchParams({ balance_uid: uid });
-    if (from) params.set("from", rfc3339(dayStart(from)));
-    if (to) params.set("to", rfc3339(dayEnd(to)));
+    App.setDateRange(params, from, to); // whole days in this device's time zone
     await App.loadCurrencies();
     const body = await fetchReport("/api/reports/balance-transactions?" + params, myGen);
     if (!body) return;

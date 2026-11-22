@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Tool is one MCP tool.
@@ -250,8 +251,9 @@ func listTransactionsTool(c *Client) Tool {
 			"Category names are not included: map category_uid with list_categories. " +
 			"Paged: while next_cursor is not null, call again with cursor=next_cursor and the same filters to get more.",
 		InputSchema: obj(map[string]any{
-			"from":         str("Only transactions at or after this time, RFC 3339 with offset, e.g. 2026-10-01T00:00:00+08:00."),
-			"to":           str("Only transactions at or before this time, RFC 3339 with offset, e.g. 2026-10-31T23:59:59+08:00."),
+			"from":         str("Only transactions on or after this date (YYYY-MM-DD, from the start of that day), e.g. 2026-10-01. An RFC 3339 date-time with offset (2026-10-01T09:00:00+08:00) is also accepted for an exact time."),
+			"to":           str("Only transactions on or before this date (YYYY-MM-DD, through the end of that day), e.g. 2026-10-31. An RFC 3339 date-time with offset is also accepted for an exact time."),
+			"tz":           str("Time zone of date-only from/to: an IANA name (Asia/Bangkok) or a UTC offset (+07:00). Usually omit it: dates are then read in the time zone of the user's device."),
 			"type":         enum("Only this type.", append(append([]string{}, writableTypes...), "balance_adjustment", "beginning_balance")...),
 			"category_uid": str("Only transactions in this category (uid from list_categories)."),
 			"balance_uid":  str("Only transactions from or to this balance (uid from list_balances)."),
@@ -264,6 +266,7 @@ func listTransactionsTool(c *Client) Tool {
 			var a struct {
 				From        string `json:"from"`
 				To          string `json:"to"`
+				TZ          string `json:"tz"`
 				Type        string `json:"type"`
 				CategoryUID string `json:"category_uid"`
 				BalanceUID  string `json:"balance_uid"`
@@ -281,8 +284,13 @@ func listTransactionsTool(c *Client) Tool {
 				limit = *a.Limit
 			}
 			q := url.Values{"limit": {strconv.Itoa(limit)}}
+			if a.TZ == "" {
+				// Dates are days on the user's device: this process runs there.
+				a.From, a.To = localDayStart(a.From), localDayEnd(a.To)
+			}
 			setIf(q, "from", a.From)
 			setIf(q, "to", a.To)
+			setIf(q, "tz", a.TZ)
 			setIf(q, "type", a.Type)
 			setIf(q, "category_uid", a.CategoryUID)
 			setIf(q, "balance_uid", a.BalanceUID)
@@ -675,4 +683,25 @@ func deleteTransactionTool(c *Client) Tool {
 			return map[string]any{"deleted": true, "uid": uid}, nil
 		},
 	}
+}
+
+// localDayStart turns a date-only filter bound (YYYY-MM-DD) into the first
+// instant of that day in this machine's time zone (RFC 3339). Anything else
+// is returned unchanged for the server to accept or reject.
+func localDayStart(s string) string {
+	d, err := time.ParseInLocation(time.DateOnly, strings.TrimSpace(s), time.Local)
+	if err != nil {
+		return s
+	}
+	return d.Format(time.RFC3339)
+}
+
+// localDayEnd is like localDayStart for the last instant of that day (a day
+// is not always 24 hours).
+func localDayEnd(s string) string {
+	d, err := time.ParseInLocation(time.DateOnly, strings.TrimSpace(s), time.Local)
+	if err != nil {
+		return s
+	}
+	return time.Date(d.Year(), d.Month(), d.Day()+1, 0, 0, 0, 0, time.Local).Add(-time.Nanosecond).Format(time.RFC3339Nano)
 }

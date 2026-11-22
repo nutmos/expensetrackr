@@ -252,9 +252,10 @@ guide: [docs/bulk-import.md](../../docs/bulk-import.md).
 ## Step 3: list and filter
 
 ```bash
-# Newest first; from/to are inclusive RFC 3339 instants (encode + as %2B)
+# Newest first; from/to are inclusive dates (whole days in tz, default UTC).
+# Exact RFC 3339 date-times with offset also work (encode + as %2B).
 curl -sS -b "$JAR" -c "$JAR" \
-  "$BASE/api/transactions?from=2026-10-01T00:00:00%2B08:00&to=2026-10-31T23:59:59%2B08:00&type=expense&limit=100" \
+  "$BASE/api/transactions?from=2026-10-01&to=2026-10-31&tz=Asia/Singapore&type=expense&limit=100" \
   | jq -r '.count, (.transactions[] | [.spent_at, .type, .amount, .currency, .account, .note] | @tsv)'
 ```
 
