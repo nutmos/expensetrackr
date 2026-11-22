@@ -36,6 +36,15 @@ type Server struct {
 	FX *fx.Client
 	// Throttle overrides the failed-login throttle (tests); nil = default.
 	Throttle *auth.Throttle
+	// LoginRateLimit overrides the per-client-IP limit on login and
+	// register (tests); nil = auth.NewLoginRateLimiter.
+	LoginRateLimit *auth.RateLimiter
+	// BcryptGate overrides the cap on concurrent bcrypt work (tests); nil =
+	// half the CPUs, at least one.
+	BcryptGate *auth.Gate
+	// BcryptWait overrides how long a password request waits for a bcrypt
+	// slot before 503 (tests); 0 = 5 seconds.
+	BcryptWait time.Duration
 	// Now overrides the clock for session expiry (tests); nil = time.Now.
 	Now func() time.Time
 	// BulkFXTimeout overrides DefaultBulkFXTimeout (tests); 0 = default.

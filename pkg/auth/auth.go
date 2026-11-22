@@ -86,15 +86,19 @@ func HashToken(tok string) string {
 
 // Throttle counts failed logins per key (username + client IP). After
 // MaxFailures failures within Window the key is locked for Lockout. State is
-// in memory only (reset on restart) and bounded by pruning old entries.
+// in memory only (reset on restart) and holds at most MaxKeys keys: past
+// that the least recently failed key is forgotten, so random usernames
+// cannot grow memory (issue #155; the per-IP RateLimiter keeps one client
+// from cycling keys fast enough to push out a lock).
 type Throttle struct {
 	MaxFailures int
 	Window      time.Duration
 	Lockout     time.Duration
+	MaxKeys     int // 0 = DefaultMaxKeys
 	Now         func() time.Time
 
 	mu sync.Mutex
-	m  map[string]*throttleEntry
+	m  *lru[*throttleEntry]
 }
 
 type throttleEntry struct {
@@ -113,8 +117,11 @@ func NewThrottle() *Throttle {
 func (t *Throttle) Locked(key string) time.Duration {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	e := t.m[key]
-	if e == nil {
+	if t.m == nil {
+		return 0
+	}
+	e, ok := t.m.peek(key)
+	if !ok {
 		return 0
 	}
 	if d := e.lockedUntil.Sub(t.Now()); d > 0 {
@@ -129,15 +136,12 @@ func (t *Throttle) Fail(key string) {
 	defer t.mu.Unlock()
 	now := t.Now()
 	if t.m == nil {
-		t.m = map[string]*throttleEntry{}
+		t.m = newLRU[*throttleEntry](t.MaxKeys)
 	}
-	if len(t.m) > 10000 {
-		t.pruneLocked(now)
-	}
-	e := t.m[key]
-	if e == nil || now.Sub(e.first) > t.Window {
-		e = &throttleEntry{first: now}
-		t.m[key] = e
+	e, ok := t.m.get(key)
+	if !ok || now.Sub(e.first) > t.Window {
+		e = &throttleEntry{first: now, lockedUntil: lockedUntil(e)}
+		t.m.put(key, e)
 	}
 	e.failures++
 	if e.failures >= t.MaxFailures {
@@ -147,18 +151,20 @@ func (t *Throttle) Fail(key string) {
 	}
 }
 
+// lockedUntil keeps a running lock when a key's failure window restarts.
+func lockedUntil(e *throttleEntry) time.Time {
+	if e == nil {
+		return time.Time{}
+	}
+	return e.lockedUntil
+}
+
 // Reset forgets key (after a successful login).
 func (t *Throttle) Reset(key string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	delete(t.m, key)
-}
-
-func (t *Throttle) pruneLocked(now time.Time) {
-	for k, e := range t.m {
-		if now.Sub(e.first) > t.Window && now.After(e.lockedUntil) {
-			delete(t.m, k)
-		}
+	if t.m != nil {
+		t.m.remove(key)
 	}
 }
 

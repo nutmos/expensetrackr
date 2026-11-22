@@ -71,7 +71,7 @@ func TestThrottle(t *testing.T) {
 	}
 	th.Fail("j")
 	th.Reset("j")
-	if th.m["j"] != nil {
+	if _, ok := th.m.peek("j"); ok {
 		t.Error("reset kept entry")
 	}
 }

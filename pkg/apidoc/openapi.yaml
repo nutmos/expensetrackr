@@ -1228,6 +1228,23 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
         '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429':
+          description: |
+            Too many login and register requests from this client IP (code `rate_limited`, shared
+            with login); see `Retry-After` (seconds).
+          headers:
+            Retry-After: { schema: { type: integer } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503':
+          description: Every password-hashing slot stayed busy for 5 seconds (code `busy`); retry after `Retry-After` (seconds).
+          headers:
+            Retry-After: { schema: { type: integer } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: server busy; try again shortly, code: busy }
 
   /api/auth/login:
     post:
@@ -1239,7 +1256,10 @@ paths:
         HttpOnly, SameSite=Lax, Secure on TLS, 30 days sliding). Any failure — unknown user, wrong
         password, disabled user — is the same 401 `invalid username or password`.
         After 5 failures for the same username + client IP within 15 minutes, further attempts
-        get 429 for 5 minutes (in memory; reset on restart).
+        get 429 for 5 minutes (in memory; reset on restart). Separately, each client IP may make
+        10 login or register requests at once, then one every 6 seconds, whatever the usernames
+        (429 `rate_limited`). Password checks run with limited concurrency: 503 `busy` when the
+        server stays saturated.
       security: []
       requestBody:
         required: true
@@ -1269,12 +1289,22 @@ paths:
               example: { error: invalid username or password, code: invalid_credentials }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429':
-          description: Too many failed attempts; see `Retry-After` (seconds).
+          description: |
+            Too many failed attempts for this username + IP (code `throttled`), or too many
+            requests from this IP (code `rate_limited`); see `Retry-After` (seconds).
           headers:
             Retry-After: { schema: { type: integer } }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '503':
+          description: Every password-hashing slot stayed busy for 5 seconds (code `busy`); retry after `Retry-After` (seconds).
+          headers:
+            Retry-After: { schema: { type: integer } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: server busy; try again shortly, code: busy }
 
   /api/auth/logout:
     post:
@@ -1331,6 +1361,13 @@ paths:
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429':
           description: Too many wrong current passwords; see `Retry-After` (seconds).
+          headers:
+            Retry-After: { schema: { type: integer } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503':
+          description: Every password-hashing slot stayed busy for 5 seconds (code `busy`); retry after `Retry-After` (seconds).
           headers:
             Retry-After: { schema: { type: integer } }
           content:

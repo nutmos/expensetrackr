@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"net/http"
@@ -40,6 +41,10 @@ func newAuthServer(t *testing.T, srv *Server) (*Server, *store.Store) {
 	}
 	t.Cleanup(func() { st.Close() })
 	srv.Store = st
+	if srv.LoginRateLimit == nil {
+		// Tests that are not about the per-IP limit log in freely.
+		srv.LoginRateLimit = &auth.RateLimiter{Burst: 1000, Every: time.Millisecond, Now: time.Now}
+	}
 	return srv, st
 }
 
@@ -225,6 +230,52 @@ func TestLoginThrottle(t *testing.T) {
 	if rec := c.req("POST", "/api/auth/login", `{"username":"nat","password":"pw-12345"}`, nil); rec.Code != 200 {
 		t.Fatalf("after lockout: %d", rec.Code)
 	}
+}
+
+// A client IP gets a shared budget of login and register requests, whatever
+// usernames it tries, so it cannot keep the CPU busy with bcrypt (#155).
+func TestLoginRateLimit(t *testing.T) {
+	now := time.Now()
+	rl := &auth.RateLimiter{Burst: 4, Every: 10 * time.Second, Now: func() time.Time { return now }}
+	srv, _ := newAuthServer(t, &Server{LoginRateLimit: rl})
+	h := srv.Router()
+	c := &authClient{t: t, h: h, ip: "10.0.0.1"}
+	c.req("POST", "/api/auth/register", `{"username":"nat","password":"pw-12345"}`, nil) // 1
+	for i := 0; i < 3; i++ {                                                             // 2-4: random usernames
+		body := fmt.Sprintf(`{"username":"random%d","password":"guess-guess"}`, i)
+		if rec := c.req("POST", "/api/auth/login", body, nil); rec.Code != 401 {
+			t.Fatalf("attempt %d: %d", i, rec.Code)
+		}
+	}
+	for _, path := range []string{"/api/auth/login", "/api/auth/register"} {
+		rec := c.req("POST", path, `{"username":"nat","password":"pw-12345"}`, nil)
+		if rec.Code != 429 || rec.Header().Get("Retry-After") != "10" || !strings.Contains(rec.Body.String(), `"rate_limited"`) {
+			t.Fatalf("%s over the limit: %d %v %s", path, rec.Code, rec.Header(), rec.Body)
+		}
+	}
+	other := &authClient{t: t, h: h, ip: "10.0.0.2"}
+	other.login("nat", "pw-12345")
+	now = now.Add(10 * time.Second)
+	c.login("nat", "pw-12345")
+}
+
+// When every bcrypt slot is taken, password requests get 503 instead of
+// queueing for CPU (#155).
+func TestLoginBcryptBusy(t *testing.T) {
+	gate := auth.NewGate(1)
+	srv, _ := newAuthServer(t, &Server{BcryptGate: gate, BcryptWait: 20 * time.Millisecond})
+	h := srv.Router()
+	c := &authClient{t: t, h: h, ip: "10.0.0.1"}
+	c.req("POST", "/api/auth/register", `{"username":"nat","password":"pw-12345"}`, nil)
+	if err := gate.Acquire(context.Background(), 0); err != nil {
+		t.Fatal(err)
+	}
+	rec := c.req("POST", "/api/auth/login", `{"username":"nat","password":"pw-12345"}`, nil)
+	if rec.Code != 503 || rec.Header().Get("Retry-After") != "1" || !strings.Contains(rec.Body.String(), `"busy"`) {
+		t.Fatalf("busy: %d %v %s", rec.Code, rec.Header(), rec.Body)
+	}
+	gate.Release()
+	c.login("nat", "pw-12345")
 }
 
 func TestSessionExpiry(t *testing.T) {

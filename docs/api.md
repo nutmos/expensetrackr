@@ -56,8 +56,8 @@ only on validation and conflict errors.
 | GET    | `/api/categories/:uid` | 200 + category | 400 if not UUID-shaped, 404 if missing or another user's |
 | PUT    | `/api/categories/:uid` | 200 + updated category | Full replace (omitted description clears it). 409 duplicate name, or type change while referenced by transactions |
 | DELETE | `/api/categories/:uid` | 204 | 409 if any transaction references it; 404 if missing |
-| POST   | `/api/auth/register`   | 201 + user | `username`, `password`, optional `display_name`. Anyone on first run (does not log in; use `/api/auth/login`); afterwards only when logged in (403 `registration_closed`) |
-| POST   | `/api/auth/login`      | 200 + user, `Set-Cookie: session=…` | Generic 401 `invalid username or password`; 429 after 5 failures (username + IP) for 5 min |
+| POST   | `/api/auth/register`   | 201 + user | `username`, `password`, optional `display_name`. Anyone on first run (does not log in; use `/api/auth/login`); afterwards only when logged in (403 `registration_closed`). Shares login's per-IP rate limit (429 `rate_limited`) |
+| POST   | `/api/auth/login`      | 200 + user, `Set-Cookie: session=…` | Generic 401 `invalid username or password`; 429 `throttled` after 5 failures (username + IP) for 5 min; 429 `rate_limited` past 10 login/register requests per IP (then 1 per 6 s); 503 `busy` if password hashing stays saturated |
 | POST   | `/api/auth/logout`     | 204 | Deletes the session, clears the cookie |
 | GET    | `/api/auth/me`         | 200 + user | 401 when signed out (`code: setup_required` before the first account exists) |
 | PUT    | `/api/auth/password`   | 204 | `current_password`, `new_password`; logs out all other sessions; 429 after 5 wrong current passwords (per user) for 5 min |

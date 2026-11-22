@@ -3,8 +3,10 @@ package api
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,15 +40,28 @@ var publicAPI = map[string]bool{
 type authState struct {
 	once     sync.Once
 	throttle *auth.Throttle
+	rate     *auth.RateLimiter
+	bcrypt   *auth.Gate
 	regMu    sync.Mutex
 }
 
+// defaultBcryptWait is how long a password request waits for a free bcrypt
+// slot before it is answered 503 (Server.BcryptWait overrides it).
+const defaultBcryptWait = 5 * time.Second
+
 func (s *Server) authInit() {
 	s.auth.once.Do(func() {
-		if s.Throttle != nil {
-			s.auth.throttle = s.Throttle
-		} else {
+		s.auth.throttle = s.Throttle
+		if s.auth.throttle == nil {
 			s.auth.throttle = auth.NewThrottle()
+		}
+		s.auth.rate = s.LoginRateLimit
+		if s.auth.rate == nil {
+			s.auth.rate = auth.NewLoginRateLimiter()
+		}
+		s.auth.bcrypt = s.BcryptGate
+		if s.auth.bcrypt == nil {
+			s.auth.bcrypt = auth.NewGate(runtime.GOMAXPROCS(0) / 2)
 		}
 	})
 }
@@ -255,6 +270,10 @@ type credentials struct {
 // others (403 otherwise). It never starts a session: the new user logs in
 // with POST /api/auth/login using the credentials they chose (#165).
 func (s *Server) register(c *gin.Context) {
+	s.authInit()
+	if s.rateLimited(c) {
+		return
+	}
 	var in credentials
 	if !decodeBody(c, &in, true) {
 		return
@@ -294,7 +313,11 @@ func (s *Server) register(c *gin.Context) {
 		c.JSON(http.StatusUnprocessableEntity, errorBody{Error: "validation failed", Fields: fields})
 		return
 	}
+	if !s.acquireBcrypt(c) {
+		return
+	}
 	hash, err := auth.HashPassword(in.Password)
+	s.auth.bcrypt.Release()
 	if err != nil {
 		internalError(c, err)
 		return
@@ -315,6 +338,36 @@ func (s *Server) register(c *gin.Context) {
 
 const badLogin = "invalid username or password"
 
+// rateLimited writes 429 with Retry-After and returns true when the client
+// IP has used up its password-request budget (login and register share it).
+// This caps the bcrypt work one client can cause, whatever usernames it
+// tries (issue #155).
+func (s *Server) rateLimited(c *gin.Context) bool {
+	ok, wait := s.auth.rate.Allow(c.ClientIP())
+	if ok {
+		return false
+	}
+	c.Header("Retry-After", strconv.Itoa(int(math.Ceil(wait.Seconds()))))
+	c.JSON(http.StatusTooManyRequests, errorBody{Error: "too many requests; try again later", Code: "rate_limited"})
+	return true
+}
+
+// acquireBcrypt takes a slot for bcrypt work, which is CPU-heavy by design.
+// When every slot stays busy for defaultBcryptWait it writes 503 with Retry-After
+// and returns false. On true the caller must s.auth.bcrypt.Release().
+func (s *Server) acquireBcrypt(c *gin.Context) bool {
+	wait := s.BcryptWait
+	if wait <= 0 {
+		wait = defaultBcryptWait
+	}
+	if s.auth.bcrypt.Acquire(c.Request.Context(), wait) == nil {
+		return true
+	}
+	c.Header("Retry-After", "1")
+	c.JSON(http.StatusServiceUnavailable, errorBody{Error: "server busy; try again shortly", Code: "busy"})
+	return false
+}
+
 // throttled writes 429 with Retry-After and returns true when key is locked
 // by the failed-attempt throttle.
 func (s *Server) throttled(c *gin.Context, key string) bool {
@@ -329,6 +382,9 @@ func (s *Server) throttled(c *gin.Context, key string) bool {
 
 func (s *Server) login(c *gin.Context) {
 	s.authInit()
+	if s.rateLimited(c) {
+		return
+	}
 	var in credentials
 	if !decodeBody(c, &in, true) {
 		return
@@ -349,7 +405,11 @@ func (s *Server) login(c *gin.Context) {
 		hash = *u.PasswordHash
 	}
 	// Always runs one bcrypt comparison (dummy hash for unknown users).
+	if !s.acquireBcrypt(c) {
+		return
+	}
 	ok := auth.CheckPassword(hash, in.Password) && len(in.Password) <= auth.MaxPasswordLen
+	s.auth.bcrypt.Release()
 	if !ok || u.Status != user.StatusActive {
 		s.auth.throttle.Fail(key)
 		c.JSON(http.StatusUnauthorized, errorBody{Error: badLogin, Code: "invalid_credentials"})
@@ -415,13 +475,18 @@ func (s *Server) changePassword(c *gin.Context) {
 	if u.PasswordHash != nil {
 		hash = *u.PasswordHash
 	}
+	if !s.acquireBcrypt(c) {
+		return
+	}
 	if !auth.CheckPassword(hash, in.CurrentPassword) {
+		s.auth.bcrypt.Release()
 		s.auth.throttle.Fail(key)
 		c.JSON(http.StatusForbidden, errorBody{Error: "current password is incorrect",
 			Fields: map[string]string{"current_password": "is incorrect"}})
 		return
 	}
 	newHash, err := auth.HashPassword(in.NewPassword)
+	s.auth.bcrypt.Release()
 	if err != nil {
 		internalError(c, err)
 		return
