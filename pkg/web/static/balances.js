@@ -316,7 +316,9 @@
         actions.className = "actions-cell";
         actions.append(
           link("Edit", `/balances/${encodeURIComponent(b.uid)}/edit`, "button edit"),
-          b.hidden ? button("Show", "edit", () => setHidden(b, false)) : button("Hide", "edit", () => setHidden(b, true)),
+          // Hiding is offered from the Delete dialog; only a hidden balance
+          // (listed with "Show hidden") gets a button of its own, to show it.
+          ...(b.hidden ? [button("Show", "edit", () => setHidden(b, false))] : []),
           button("Delete", "danger", () => remove(b)),
         );
         tr.append(actions);
