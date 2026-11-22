@@ -1244,7 +1244,7 @@ paths:
       tags: [auth]
       operationId: changePassword
       summary: Change your password
-      description: Verifies `current_password`, sets `new_password` (8–72 bytes) and logs out every **other** session of the user.
+      description: Verifies `current_password`, sets `new_password` (8–72 bytes) and logs out every **other** session of the user. Wrong current passwords are throttled per user (5 failures in 15 minutes → 429 for 5 minutes, in memory).
       requestBody:
         required: true
         content:
@@ -1267,6 +1267,13 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
         '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429':
+          description: Too many wrong current passwords; see `Retry-After` (seconds).
+          headers:
+            Retry-After: { schema: { type: integer } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /api/tokens:
     get:

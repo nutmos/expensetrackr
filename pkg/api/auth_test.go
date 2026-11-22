@@ -310,3 +310,34 @@ func TestCSRFGuard(t *testing.T) {
 		t.Errorf("cross-site GET: %d", rec.Code)
 	}
 }
+
+func TestPasswordChangeThrottle(t *testing.T) {
+	now := time.Now()
+	th := auth.NewThrottle()
+	th.Now = func() time.Time { return now }
+	srv, _ := newAuthServer(t, &Server{Throttle: th})
+	h := srv.Router()
+	a := &authClient{t: t, h: h, ip: "10.0.0.1"}
+	a.req("POST", "/api/auth/register", `{"username":"nat","password":"pw-12345"}`, nil)
+	for i := 0; i < 5; i++ {
+		if rec := a.req("PUT", "/api/auth/password", `{"current_password":"guess-guess","new_password":"new-pass-1"}`, nil); rec.Code != 403 {
+			t.Fatalf("failure %d: %d", i, rec.Code)
+		}
+	}
+	// Locked even with the right password, and from another IP/session.
+	rec := a.req("PUT", "/api/auth/password", `{"current_password":"pw-12345","new_password":"new-pass-1"}`, nil)
+	if rec.Code != 429 || rec.Header().Get("Retry-After") == "" {
+		t.Fatalf("locked change: %d %v", rec.Code, rec.Header())
+	}
+	b := &authClient{t: t, h: h, ip: "10.0.0.2"}
+	if rec := b.req("POST", "/api/auth/login", `{"username":"nat","password":"pw-12345"}`, nil); rec.Code != 200 {
+		t.Fatalf("login: %d", rec.Code)
+	}
+	if rec := b.req("PUT", "/api/auth/password", `{"current_password":"pw-12345","new_password":"new-pass-1"}`, nil); rec.Code != 429 {
+		t.Fatalf("locked change, other session: %d", rec.Code)
+	}
+	now = now.Add(6 * time.Minute)
+	if rec := a.req("PUT", "/api/auth/password", `{"current_password":"pw-12345","new_password":"new-pass-1"}`, nil); rec.Code != 204 {
+		t.Fatalf("after lockout: %d %s", rec.Code, rec.Body)
+	}
+}
