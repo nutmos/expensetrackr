@@ -252,6 +252,9 @@ td.acct, td.cat { min-width: 7em; }
 .report-summary dt { font-size: 0.8rem; }
 .report-summary dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
 table.statement td.details { min-width: 12em; }
+/* A balance's transactions page (/balances/<uid>, issue #175). */
+#bd-meta { margin: 0 0 12px; }
+#view-balance-detail .card > .small { margin-top: 12px; }
 table.statement td.details span { display: block; }
 table.statement td.type { white-space: nowrap; }
 table.statement .note-line { font-size: 0.9em; overflow-wrap: anywhere; }

@@ -17,6 +17,8 @@ import (
 //	/<res>/:uid/edit    edit form (uid must look like a UUID, else 404)
 //
 // "/" is the transactions list; /login and /register are the signed-out pages.
+// Balances also have a detail page, /balances/:uid, listing the balance's
+// transactions (issue #175).
 var pageResources = []string{"transactions", "balances", "categories"}
 
 func (s *Server) registerPageRoutes(r *gin.Engine) {
@@ -41,9 +43,11 @@ func (s *Server) registerPageRoutes(r *gin.Engine) {
 		r.GET("/"+res+"/new", s.index)
 		r.GET("/"+res+"/:uid/edit", s.editPage)
 	}
+	r.GET("/balances/:uid", s.editPage)
 }
 
-// editPage serves index.html for /<res>/:uid/edit when :uid has UUID shape
+// editPage serves index.html for /<res>/:uid/edit (and /balances/:uid) when
+// :uid has UUID shape
 // (any case; the client lowercases it). Whether the record exists is checked
 // by the page itself through the API, so a deleted uid shows a message there.
 func (s *Server) editPage(c *gin.Context) {

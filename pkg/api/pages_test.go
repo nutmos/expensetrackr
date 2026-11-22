@@ -19,6 +19,8 @@ func TestPageRoutes(t *testing.T) {
 			"/"+res+"/"+strings.ToUpper(uid)+"/edit",
 		)
 	}
+	// A balance's transactions page (issue #175).
+	ok = append(ok, "/balances/"+uid, "/balances/"+uid+"?from=2026-10-01&to=2026-10-31", "/balances/"+strings.ToUpper(uid))
 	for _, p := range ok {
 		rec, _ := do(t, h, "GET", p, "")
 		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Expense Log") ||
@@ -28,7 +30,9 @@ func TestPageRoutes(t *testing.T) {
 	}
 	for _, p := range []string{
 		"/transactions/abc/edit",         // malformed uid
-		"/balances/" + uid,               // no bare detail page
+		"/transactions/" + uid,           // no transaction detail page
+		"/categories/" + uid,             // no category detail page
+		"/balances/abc",                  // malformed uid
 		"/categories/" + uid + "/delete", // unknown action
 		"/transactions/new/edit",         // "new" is not a uid
 		"/budgets",                       // unknown resource

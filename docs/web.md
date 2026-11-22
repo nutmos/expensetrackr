@@ -20,6 +20,7 @@ path, and `router.js` shows the view for `location.pathname`:
 | `/transactions/new?type=<type>` | Add a transaction, step 2: the form with that type selected (it can still be changed there). An unknown `type` shows the picker |
 | `/transactions/<uid>/edit`   | Edit a transaction (same form) |
 | `/balances`, `/balances/new`, `/balances/<uid>/edit` | Balances list / add / edit. `/balances?hidden=1` also lists hidden balances (the **Show hidden** box) |
+| `/balances/<uid>`, `/balances/<uid>?from=…&to=…` | One balance's transactions (opened by clicking its name in the list); the only filter is a date range |
 | `/categories`, `/categories/new`, `/categories/<uid>/edit` | Categories list / add / edit |
 | `/reports`, `/reports/income-expense?from=…&to=…`, `/reports/assets-liabilities`, `/reports/balance-transactions?balance=…&from=…&to=…` | Reports with bar charts (see [docs/reports.md](reports.md)); `/reports` opens Income & expenses |
 | `/swagger/`                  | API documentation (Swagger UI; opens in a new tab from the header) |
@@ -184,6 +185,15 @@ confirmations use human labels instead. For example, an edit page is titled
   Liabilities show debt, limit and available. A red "over limit" badge marks
   debt above the limit, and negative amounts are red. There is also a
   per-currency totals table.
+- Clicking a balance's name opens its transactions page (`/balances/<uid>`,
+  issue #175): every transaction that moved the balance (as source or
+  destination), newest first, with **In** / **Out** in the balance's currency
+  and the balance (or debt) after each one, above a summary of the opening
+  and closing amounts and the money in / out. The only filter is a **From** /
+  **To** date range (whole days in the device's time zone, kept in the URL);
+  with none, all transactions are shown. Each row has **Edit**, and saving or
+  cancelling the transaction (or **Edit balance**) returns to this page. It
+  uses `GET /api/reports/balance-transactions` (see [docs/reports.md](reports.md)).
 - The form's amount fields follow the type: **Balance** for assets,
   **Debt** + **Limit** for liabilities. Hidden fields are not sent.
 - On the edit page the **Type** selector is disabled, because types can't

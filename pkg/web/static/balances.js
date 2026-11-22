@@ -1,5 +1,6 @@
-// Balances: list page (/balances) and add/edit page (/balances/new,
-// /balances/<uid>/edit). Plain vanilla JS, no build step.
+// Balances: list page (/balances), a balance's transactions (/balances/<uid>,
+// issue #175) and add/edit page (/balances/new, /balances/<uid>/edit).
+// Plain vanilla JS, no build step.
 // All user data is rendered with textContent / input .value (never innerHTML).
 (function () {
   "use strict";
@@ -165,7 +166,7 @@
       }
       App.setFlash("balances", `${isEdit ? "Updated" : "Saved"} “${body.name}”.`, body.uid);
       editing = null;
-      App.returnToList(LIST);
+      App.returnToList(LIST, App.BALANCE_PAGE_RE);
     } catch (err) {
       setStatus("Network error: " + err.message, "bad");
     } finally {
@@ -173,7 +174,7 @@
     }
   }
 
-  function cancelForm() { App.returnToList(LIST); }
+  function cancelForm() { App.returnToList(LIST, App.BALANCE_PAGE_RE); }
 
   // ---- List page: /balances ---------------------------------------------------
 
@@ -290,7 +291,9 @@
         tr.dataset.uid = String(b.uid);
         if (highlightUID && b.uid === highlightUID) tr.classList.add("just-saved");
         if (b.hidden) tr.classList.add("is-hidden");
-        const nameTd = cell(b.name);
+        // The name opens the balance's transactions (issue #175).
+        const nameTd = document.createElement("td");
+        nameTd.append(link(b.name, `/balances/${encodeURIComponent(b.uid)}`, "balance-link"));
         if (b.hidden) {
           const badge = document.createElement("span");
           badge.className = "badge hidden-badge";
@@ -375,6 +378,184 @@
     }
   }
 
+  // ---- Transactions page: /balances/<uid> (issue #175) ------------------------
+  // Every transaction that moved the balance (GET /api/reports/balance-
+  // transactions), newest first, with money in / out and the amount after
+  // each one. The only filter is a date range, kept in the URL
+  // (?from=YYYY-MM-DD&to=YYYY-MM-DD); none = all transactions.
+
+  const bdBody = $("#bd-body");
+  const bdStatus = $("#bd-status");
+  const TYPE_NAME = { payment_account: "Payment account", credit_card: "Credit card", other_asset: "Other asset", other_liability: "Other liability" };
+  const TX_TYPE_LABEL = {
+    expense: "Expense", income: "Income", transfer: "Transfer", asset_purchase: "Asset Purchase",
+    return_on_investment: "Return on Investment", asset_sale: "Asset Sale", repay_debt: "Repay Debt",
+    balance_adjustment: "Balance Adjustment", beginning_balance: "Beginning Balance",
+  };
+  const isYMD = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v || "");
+  const pad2 = (n) => String(n).padStart(2, "0");
+  // A local date ("YYYY-MM-DD") at h:m:s as RFC 3339 with the device's offset
+  // for that date, so the range covers whole days in the viewer's time zone.
+  function localRFC3339(ymd, h, m, sec) {
+    const [y, mo, d] = ymd.split("-").map(Number);
+    const t = new Date(y, mo - 1, d, h, m, sec);
+    const off = -t.getTimezoneOffset();
+    const sign = off >= 0 ? "+" : "-";
+    return `${t.getFullYear()}-${pad2(t.getMonth() + 1)}-${pad2(t.getDate())}T${pad2(h)}:${pad2(m)}:${pad2(sec)}` +
+      `${sign}${pad2(Math.floor(Math.abs(off) / 60))}:${pad2(Math.abs(off) % 60)}`;
+  }
+  const negText = (v) => (String(v).startsWith("-") ? "−" + App.fmtAmount(String(v).slice(1)) : App.fmtAmount(v));
+  function rangeText(from, to) {
+    // "06 Oct 2026": the date part of the app's DD MMM YYYY HH:mm format.
+    const day = (v) => { const [y, m, d] = v.split("-").map(Number); return App.fmtDateTime(new Date(y, m - 1, d)).slice(0, 11); };
+    if (from && to) return `${day(from)} – ${day(to)}`;
+    if (from) return `from ${day(from)}`;
+    if (to) return `until ${day(to)}`;
+    return "all time";
+  }
+
+  let detailUID = null;
+
+  async function enterDetail(params, query) {
+    detailUID = params.uid;
+    $("#bd-from").value = isYMD(query.get("from")) ? query.get("from") : "";
+    $("#bd-to").value = isYMD(query.get("to")) ? query.get("to") : "";
+    $("#bd-title").textContent = "Balance";
+    $("#bd-meta").textContent = "";
+    $("#bd-edit").hidden = true;
+    // Back from editing one of its transactions (or the balance itself).
+    const highlight = App.takeFlash(["transactions", "balances"], "balance-detail");
+    return loadDetail(highlight);
+  }
+
+  async function loadDetail(highlightUID) {
+    const my = ++gen;
+    const uid = detailUID;
+    const from = $("#bd-from").value, to = $("#bd-to").value;
+    bdBody.replaceChildren();
+    if (from && to && from > to) {
+      bdStatus.textContent = "“To” must not be earlier than “From”.";
+      return;
+    }
+    bdStatus.textContent = "Loading…";
+    const q = new URLSearchParams({ balance_uid: uid });
+    if (from) q.set("from", localRFC3339(from, 0, 0, 0));
+    if (to) q.set("to", localRFC3339(to, 23, 59, 59));
+    let res, body;
+    try {
+      [res] = await Promise.all([fetch("/api/reports/balance-transactions?" + q), App.loadCurrencies()]);
+      body = await res.json().catch(() => ({}));
+    } catch (err) {
+      if (my === gen) bdStatus.textContent = "Network error: " + err.message;
+      return;
+    }
+    if (my !== gen) return;
+    if (!res.ok) {
+      bdStatus.textContent = res.status === 404 ? "This balance does not exist (it may have been deleted)."
+        : (body.fields && Object.values(body.fields).join("; ")) || body.error || `Could not load transactions (${res.status})`;
+      return;
+    }
+    renderDetail(body, from, to, highlightUID);
+  }
+
+  function renderDetail(body, from, to, highlightUID) {
+    const b = body.balance;
+    const liability = b.kind === "liability";
+    const what = liability ? "Debt" : "Balance";
+    document.title = `${b.name} · Expense Log`;
+    $("#bd-title").textContent = b.name;
+    $("#bd-meta").textContent = `${TYPE_NAME[b.type] || b.type}${b.hidden ? " (hidden)" : ""} · ${App.currencyText(b.currency)} · ` +
+      `${what} now ${negText(b.amount)}`;
+    const edit = $("#bd-edit");
+    edit.href = `/balances/${encodeURIComponent(b.uid)}/edit`;
+    edit.hidden = false;
+
+    const summary = document.createElement("dl");
+    summary.className = "report-summary";
+    const item = (label, value, cls) => {
+      const d = document.createElement("div");
+      const dt = document.createElement("dt");
+      dt.className = "muted";
+      dt.textContent = label;
+      const dd = document.createElement("dd");
+      if (cls) dd.className = cls;
+      dd.textContent = value;
+      d.append(dt, dd);
+      summary.append(d);
+    };
+    item("Period", rangeText(from, to));
+    item(`Opening ${what.toLowerCase()}`, negText(body.opening_amount));
+    item(liability ? "In (payments)" : "Money in", App.fmtAmount(body.money_in), "pos-text");
+    item(liability ? "Out (charges)" : "Money out", App.fmtAmount(body.money_out), "neg-text");
+    item(`Closing ${what.toLowerCase()}`, negText(body.closing_amount));
+    bdBody.append(summary);
+
+    const list = (body.transactions || []).slice().reverse(); // newest first
+    bdStatus.textContent = list.length === 0
+      ? (from || to ? "No transactions in this period." : "No transactions use this balance yet.")
+      : `${list.length} transaction${list.length === 1 ? "" : "s"}, newest first.`;
+    if (!list.length) return;
+
+    const table = document.createElement("table");
+    table.className = "statement stack-table";
+    table.id = "bd-table";
+    const thead = document.createElement("thead");
+    const hr = document.createElement("tr");
+    for (const [t, cls] of [["Date", ""], ["Type", ""], ["Details", ""], ["In", "num"], ["Out", "num"], [what, "num"], ["", "col-actions"]]) {
+      const th = document.createElement("th");
+      th.textContent = t;
+      if (cls) th.className = cls;
+      if (!t) th.setAttribute("aria-label", "Actions");
+      hr.append(th);
+    }
+    thead.append(hr);
+    const tbody = document.createElement("tbody");
+    for (const e of list) {
+      const tr = document.createElement("tr");
+      tr.dataset.uid = String(e.uid);
+      if (highlightUID && e.uid === highlightUID) tr.classList.add("just-saved");
+      tr.append(cell(App.fmtDateTime(e.spent_at), "time"), cell(TX_TYPE_LABEL[e.type] || e.type, "type"));
+      const det = document.createElement("td");
+      det.className = "details";
+      const span = (text, cls) => {
+        const el = document.createElement("span");
+        if (cls) el.className = cls;
+        el.textContent = text;
+        det.append(el);
+      };
+      const parts = [];
+      if (e.category_name || e.category_uid) parts.push(e.category_name || "(unknown category)");
+      if (e.counterparty) parts.push((e.money_in ? "from " : "to ") + e.counterparty);
+      if (parts.length) span(parts.join(" · "));
+      if (e.currency !== b.currency) span(`${App.fmtAmount(e.amount)} ${e.currency}`, "muted foreign-amt");
+      if (e.note) span(e.note, "muted note-line");
+      tr.append(det);
+      tr.append(cell(e.money_in ? App.fmtAmount(e.money_in) : "", "num pos-text"));
+      tr.append(cell(e.money_out ? App.fmtAmount(e.money_out) : "", "num neg-text"));
+      tr.append(cell(negText(e.amount_after), "num"));
+      const actions = document.createElement("td");
+      actions.className = "actions-cell";
+      actions.append(link("Edit", `/transactions/${encodeURIComponent(e.uid)}/edit`, "button edit"));
+      tr.append(actions);
+      tbody.append(tr);
+    }
+    table.append(thead, tbody);
+    App.labelCells(table);
+    const wrap = document.createElement("div");
+    wrap.className = "table-wrap";
+    wrap.append(table);
+    bdBody.append(wrap);
+  }
+
+  function applyDetailFilter() {
+    const q = new URLSearchParams();
+    if ($("#bd-from").value) q.set("from", $("#bd-from").value);
+    if ($("#bd-to").value) q.set("to", $("#bd-to").value);
+    App.replaceQuery(q.toString());
+    $("#flash-balance-detail").hidden = true;
+    loadDetail();
+  }
+
   // ---- Init ----------------------------------------------------------------
 
   typeSel.addEventListener("change", syncTypeFields);
@@ -396,7 +577,18 @@
       return loadBalances(App.takeFlash("balances"));
     },
   });
+  $("#bd-filter-form").addEventListener("submit", (ev) => { ev.preventDefault(); applyDetailFilter(); });
+  $("#bd-clear").addEventListener("click", () => {
+    $("#bd-from").value = "";
+    $("#bd-to").value = "";
+    applyDetailFilter();
+  });
+  // Registered after /balances/new so "new" is never taken for a uid.
   const formRoute = { view: "#view-balance-form", section: "balances", enter: enterForm, onEscape: cancelForm };
   App.route("/balances/new", { ...formRoute, title: "Add balance" });
   App.route("/balances/:uid/edit", { ...formRoute, title: "Edit balance" });
+  App.route("/balances/:uid", {
+    view: "#view-balance-detail", section: "balances", title: "Balance", enter: enterDetail,
+    onEscape: () => App.returnToList(LIST),
+  });
 })();
