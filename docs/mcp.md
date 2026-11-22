@@ -32,6 +32,14 @@ claude mcp add expensetrackr \
   -- /path/to/expensetrackr/bin/expense-mcp
 ```
 
+This repository also ships a project [`.mcp.json`](../.mcp.json) (enabled in
+[`.claude/settings.json`](../.claude/settings.json)) that starts
+`bin/expense-mcp` when Claude Code opens the repo. Build the binary first
+(`make build-mcp`). `EXPENSETRACKR_URL` defaults to the hosted instance and
+`EXPENSETRACKR_TOKEN` to a placeholder, which is what Claude Code cloud
+sessions want: their network proxy injects the real token as a network
+secret. Locally, export both variables before starting `claude`.
+
 Claude Desktop (`claude_desktop_config.json`), Cursor (`.cursor/mcp.json`)
 and most other clients use the same shape:
 

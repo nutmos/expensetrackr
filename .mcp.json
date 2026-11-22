@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "expensetrackr": {
+      "command": "bin/expense-mcp",
+      "env": {
+        "EXPENSETRACKR_URL": "${EXPENSETRACKR_URL:-https://expensetrackr.nutmos.com}",
+        "EXPENSETRACKR_TOKEN": "${EXPENSETRACKR_TOKEN:-proxy-injected}"
+      }
+    }
+  }
+}
