@@ -198,6 +198,7 @@ Balance effects (automatic):
 | transfer | asset −amount / liability debt +amount | asset +to_amount / liability debt −to_amount (card payment, loan repayment) |
 | asset_purchase | like expense | `other_asset` +amount (same currency required) |
 | return_on_investment | like income (account +amount / card debt −amount) | linked `other_asset`: unchanged (any currency) |
+| asset_sale | like income, by the proceeds: account +(amount + gain_loss) / card debt −(amount + gain_loss) | sold `other_asset` −amount (the principal; same currency required); hidden when `entire_asset_sale` |
 | repay_debt | `payment_account` −(amount + interest_amount + fee_amount) | `credit_card` / `other_liability` debt −amount (the principal; same currency required) |
 | balance_adjustment | any balance: `increase` raises an asset's balance / a liability's debt by amount, `decrease` lowers it (server-created record of a manual edit; applied only when the adjustment is edited or deleted) | – |
 
@@ -209,7 +210,7 @@ existed; editing/deleting those doesn't move balances.
 | param | meaning |
 |---|---|
 | `from`, `to` | RFC 3339 with offset, inclusive; encode `+` as `%2B` (a raw `+` also works) |
-| `type` | `expense`, `income`, `transfer`, `asset_purchase`, `return_on_investment`, `repay_debt`, `balance_adjustment` |
+| `type` | `expense`, `income`, `transfer`, `asset_purchase`, `return_on_investment`, `asset_sale`, `repay_debt`, `balance_adjustment` |
 | `category_uid` | one category |
 | `limit` | 1–5000, default 500 |
 
@@ -240,10 +241,12 @@ curl -sS -b "$JAR" -c "$JAR" "$BASE/api/transactions?type=expense" \
 Same body rules as POST, plus the version (SKILL.md "Edit"). Notes:
 
 - Omitted optional fields are cleared: `note`, `to_balance_uid`,
-  `interest_amount`, `fee_amount`. Always send `category_uid` (required except
-  on transfers and repay_debt; on repay_debt only with interest/fees). Omitted `type` means
+  `interest_amount`, `fee_amount`, `gain_loss`; `entire_asset_sale` becomes
+  false (an asset it hid stays hidden). Always send `category_uid` (required
+  except on transfers, repay_debt and asset_sale; on repay_debt only with
+  interest/fees, on asset_sale only with a gain_loss). Omitted `type` means
   `expense`, so always send `type`.
-- Changing `type` away from transfer/asset_purchase/return_on_investment/repay_debt: drop `to_balance_uid`;
+- Changing `type` away from transfer/asset_purchase/return_on_investment/asset_sale/repay_debt: drop `to_balance_uid`;
   to expense/income: replace `category_uid` with one of the new type; to a
   transfer or repay_debt: drop it.
 - Cross-currency transfer: omitting `to_amount` keeps the stored conversion if
@@ -351,7 +354,7 @@ Real responses (from a test server):
 ```text
 400 {"error":"unknown field \"amount_minor\""}
 400 {"error":"uid must be a UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)"}
-400 {"error":"invalid query parameters","fields":{"type":"must be one of: expense, income, transfer, asset_purchase, return_on_investment, repay_debt, balance_adjustment"}}
+400 {"error":"invalid query parameters","fields":{"type":"must be one of: expense, income, transfer, asset_purchase, return_on_investment, asset_sale, repay_debt, balance_adjustment"}}
 401 {"error":"authentication required","code":"unauthenticated"}
 403 {"error":"cross-origin request rejected","code":"csrf"}
 404 {"error":"transaction not found"}

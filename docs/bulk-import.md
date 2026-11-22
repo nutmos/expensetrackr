@@ -166,6 +166,12 @@ index on `(balance_uid, import_ref) WHERE import_ref IS NOT NULL`.
      own accounts: `type: "transfer"`. On a card statement, the "PAYMENT – THANK YOU" line is the
      destination side of a repayment that may already have been imported from
      the bank statement. Import it once only, from one side.
+   - **selling an investment** (shares, gold, a fund) into a bank account:
+     `type: "asset_sale"` from the `other_asset` (`to_balance_uid`) into the
+     account (`balance_uid`). `amount` is the principal taken off the asset;
+     the difference to the amount received is `gain_loss` (negative for a
+     loss), and `entire_asset_sale: true` when the whole asset was sold
+     (hides it).
    - buying something tracked as an `other_asset`: `type: "asset_purchase"`
    - a dividend or interest from an investment tracked as an `other_asset`:
      `type: "return_on_investment"`, received into a `payment_account` or

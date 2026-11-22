@@ -21,6 +21,7 @@ import (
 //	v5  optional interest and fees on repay_debt (migrate_v5.go)
 //	v6  balance adjustments editable and deletable (migrate_v6.go)
 //	v7  balances can be hidden (migrate_v7.go)
+//	v8  transaction type asset_sale with gain/loss (migrate_v8.go)
 //
 // All pending steps run in one SQL transaction (Postgres DDL is
 // transactional), so a failed upgrade leaves the database as it was. The
@@ -62,6 +63,8 @@ var migrations = []migration{
 	allowAdjustmentEdits,
 	// 6 -> 7: balances.hidden.
 	addBalanceHidden,
+	// 7 -> 8: asset_sale type, gain_loss_minor / entire_asset_sale.
+	addAssetSale,
 }
 
 // SchemaVersion is the version a fully migrated database has.

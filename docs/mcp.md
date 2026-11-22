@@ -95,14 +95,15 @@ The API's `PUT` is a full replace, which is easy for a model to get wrong
    agent) is not overwritten unnoticed.
 3. Copy the editable fields (`type`, `amount`, `currency`, `balance_uid`,
    `to_balance_uid`, `category_uid`, `spent_at`, `note`, `foreign_amount`,
-   `foreign_currency`, `interest_amount`, `fee_amount`) and apply the given
-   changes. `""` clears `note` / `import_ref` / `interest_amount` /
-   `fee_amount`, and `""` for either foreign field clears both; an omitted
+   `foreign_currency`, `interest_amount`, `fee_amount`, `gain_loss`,
+   `entire_asset_sale`) and apply the given changes. `""` clears `note` /
+   `import_ref` / `interest_amount` / `fee_amount` / `gain_loss`, and `""` for either foreign field clears both; an omitted
    `import_ref` is kept.
 4. Clean up for the resulting type: `to_balance_uid` is dropped for types
    without a destination, `category_uid` for a transfer (and for a repay_debt
-   left without interest or fees), and `foreign_amount` / `foreign_currency`
-   and `interest_amount` / `fee_amount` for types that don't allow them, unless sent
+   left without interest or fees, or an asset_sale left without `gain_loss`),
+   and `foreign_amount` / `foreign_currency`, `interest_amount` / `fee_amount`
+   and `gain_loss` / `entire_asset_sale` for types that don't allow them, unless sent
    explicitly. A type change still needs the new type's own fields
    (e.g. `category_uid` when a transfer becomes an expense: 422 otherwise).
 5. **Manual-rate transfers:** a cross-currency transfer whose rate came from

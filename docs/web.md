@@ -16,7 +16,7 @@ path, and `router.js` shows the view for `location.pathname`:
 | URL                          | Page |
 |------------------------------|------|
 | `/`, `/transactions`         | Transactions list (browse only). Date filters live in the query: `/transactions?from=2026-10-01&to=2026-10-31` |
-| `/transactions/new`          | Add a transaction, step 1: pick the type (Expense, Income, Transfer, Asset Purchase, Return on Investment, Repay Debt) |
+| `/transactions/new`          | Add a transaction, step 1: pick the type (Expense, Income, Transfer, Asset Purchase, Return on Investment, Asset Sale, Repay Debt) |
 | `/transactions/new?type=<type>` | Add a transaction, step 2: the form with that type selected (it can still be changed there). An unknown `type` shows the picker |
 | `/transactions/<uid>/edit`   | Edit a transaction (same form) |
 | `/balances`, `/balances/new`, `/balances/<uid>/edit` | Balances list / add / edit. `/balances?hidden=1` also lists hidden balances (the **Show hidden** box) |
@@ -107,10 +107,10 @@ confirmations use human labels instead. For example, an edit page is titled
   that says so) reverts the change.
 - Columns: time (shown in the device's time zone, with the stored value on
   hover, and an "edited" marker), Type, Amount,
-  Currency, Account ("from → to" for transfers, asset purchases and debt repayments, "investment → account" for returns on investment), Category, Note.
+  Currency, Account ("from → to" for transfers, asset purchases and debt repayments, "investment → account" for returns on investment, "asset → account" for asset sales), Category, Note.
 - The category name is looked up client-side from `/api/categories` by
   `category_uid`.
-- The form has a **Type** selector (Expense / Income / Transfer / Asset Purchase / Return on Investment / Repay Debt; balance
+- The form has a **Type** selector (Expense / Income / Transfer / Asset Purchase / Return on Investment / Asset Sale / Repay Debt; balance
   adjustments cannot be entered, only edited). The source
   dropdown lists only the balance types allowed for that type, grouped under
   headings (Payment accounts, Credit cards, Other assets, Other liabilities).
@@ -119,15 +119,26 @@ confirmations use human labels instead. For example, an edit page is titled
   changes to "Payment account", "Received into", "From (source)" or "Paid from". A **To
   (destination)** dropdown appears only for transfers (any balance) and asset
   purchases (other assets only); for a return on investment it is labelled
-  **Investment** (other assets only), and for a debt repayment **Debt
-  repaid** (credit cards and other liabilities only; paid from a payment
-  account).
+  **Investment** (other assets only), for an asset sale **Asset sold** (other
+  assets only; the money is received into a payment account or credit card),
+  and for a debt repayment **Debt repaid** (credit cards and other
+  liabilities only; paid from a payment account).
 - For a debt repayment the amount is labelled **Principal**, and an optional
   **Interest and fees** pair of inputs is shown, with the total paid from the
   account underneath. Only the principal lowers the debt.
+- For an asset sale the amount is also labelled **Principal** (what the asset
+  goes down by), followed by an optional **Gain / loss** input (positive for
+  a gain, negative such as `-20` for a loss) with the amount received
+  underneath, and an **Entire asset sale** checkbox. Ticking it with no
+  principal typed yet fills in the asset's current balance; saving hides the
+  asset (see [Balances](balances.md)). The list shows the gain or loss, and
+  "entire asset", under the amount.
 - **Category** is required (except for transfers, where it is hidden, and
   debt repayments, where it appears as an optional "Category of interest &
-  fees" only once interest or fees are filled in) and
+  fees" only once interest or fees are filled in, and asset sales, where it
+  appears as an optional "Category of the gain" (income categories) or
+  "Category of the loss" (expense categories) once a gain or loss is filled
+  in) and
   lists only categories of the selected type (expense categories for asset
   purchases, income categories for returns on investment). With no category
   of that type yet, a hint says to add one first. Editing an older

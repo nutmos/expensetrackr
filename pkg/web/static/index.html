@@ -83,6 +83,7 @@
               <option value="transfer">Transfer</option>
               <option value="asset_purchase">Asset Purchase</option>
               <option value="return_on_investment">Return on Investment</option>
+              <option value="asset_sale">Asset Sale</option>
               <option value="repay_debt">Repay Debt</option>
               <option value="balance_adjustment">Balance Adjustment</option>
             </select>
@@ -128,6 +129,7 @@
           <a class="type-choice" href="/transactions/new?type=transfer"><strong>Transfer</strong><span class="muted">Move money between your balances, or pay off a card</span></a>
           <a class="type-choice" href="/transactions/new?type=asset_purchase"><strong>Asset Purchase</strong><span class="muted">Buy something you keep as an asset, like a laptop</span></a>
           <a class="type-choice" href="/transactions/new?type=return_on_investment"><strong>Return on Investment</strong><span class="muted">Dividends, interest or other investment returns</span></a>
+          <a class="type-choice" href="/transactions/new?type=asset_sale"><strong>Asset Sale</strong><span class="muted">Sell all or part of an asset, at a gain or a loss</span></a>
           <a class="type-choice" href="/transactions/new?type=repay_debt"><strong>Repay Debt</strong><span class="muted">Pay down a credit card or loan from an account</span></a>
         </div>
       </div>
@@ -141,6 +143,7 @@
               <option value="transfer">Transfer</option>
               <option value="asset_purchase">Asset Purchase</option>
               <option value="return_on_investment">Return on Investment</option>
+              <option value="asset_sale">Asset Sale</option>
               <option value="repay_debt">Repay Debt</option>
               <option value="balance_adjustment" hidden disabled>Balance Adjustment</option>
             </select>
@@ -201,6 +204,15 @@
             <small class="err" data-for="interest_amount"></small>
             <small class="err" data-for="fee_amount"></small>
           </div>
+          <div class="field" id="sale-field" hidden>
+            <span class="field-label">Gain / loss (optional)</span>
+            <input id="gain_loss" name="gain_loss" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 50 or -20" aria-label="Gain or loss">
+            <small class="muted">Positive for a gain, negative for a loss. The asset goes down by the principal; the account receives the principal plus the gain (or minus the loss). Counted as income or expense in reports. <span id="sale-total"></span></small>
+            <small class="err" data-for="gain_loss"></small>
+            <label class="inline-check"><input type="checkbox" id="entire_asset_sale" name="entire_asset_sale"> Entire asset sale</label>
+            <small class="muted">The whole asset was sold: the asset is hidden from your balances after saving (it can be shown again from Balances).</small>
+            <small class="err" data-for="entire_asset_sale"></small>
+          </div>
           <div class="field" id="foreign-field" hidden>
             <span class="field-label">Foreign currency amount (optional)</span>
             <div class="foreign-row">
@@ -224,7 +236,7 @@
           <input id="note" name="note" type="text" maxlength="1000" placeholder="Lunch with team">
           <small class="err" data-for="note"></small>
         </label>
-        <p class="muted small" id="auto-adjust-note">Saving updates the selected balance(s) automatically: an expense lowers an account’s balance or raises a card’s debt, income raises a balance, a transfer moves the amount from source to destination, an asset purchase pays like an expense and raises the asset’s value, a debt repayment lowers the account’s balance by the principal plus any interest and fees, and the card’s or loan’s debt by the principal. The currency must match the (source) balance’s currency; a transfer between balances in different currencies credits the received amount, converted at the ECB reference rate from <a href="https://frankfurter.dev" target="_blank" rel="noopener">Frankfurter</a> unless you type it yourself. Editing a balance adjustment moves its balance by the difference.</p>
+        <p class="muted small" id="auto-adjust-note">Saving updates the selected balance(s) automatically: an expense lowers an account’s balance or raises a card’s debt, income raises a balance, a transfer moves the amount from source to destination, an asset purchase pays like an expense and raises the asset’s value, an asset sale lowers the asset’s value by the principal and credits the account with the principal plus the gain (or minus the loss), a debt repayment lowers the account’s balance by the principal plus any interest and fees, and the card’s or loan’s debt by the principal. The currency must match the (source) balance’s currency; a transfer between balances in different currencies credits the received amount, converted at the ECB reference rate from <a href="https://frankfurter.dev" target="_blank" rel="noopener">Frankfurter</a> unless you type it yourself. Editing a balance adjustment moves its balance by the difference.</p>
         <div class="conflict" id="conflict" role="alert" hidden>
           <p class="conflict-msg"></p>
           <button type="button" class="conflict-reload">Reload latest transaction</button>
@@ -472,7 +484,7 @@
             <button type="button" class="secondary" data-preset="all">All time</button>
           </span>
         </form>
-        <p class="muted small">Expenses (including the interest and fees of debt repayments), and income including returns on investment. Transfers, asset purchases, debt principal and balance adjustments are not counted. Each currency is shown separately (no conversion).</p>
+        <p class="muted small">Expenses (including the interest and fees of debt repayments and losses on asset sales), and income including returns on investment and gains on asset sales. Transfers, asset purchases, the principal of debt repayments and asset sales, and balance adjustments are not counted. Each currency is shown separately (no conversion).</p>
       </div>
 
       <div id="report-assets-liabilities" class="report" hidden>

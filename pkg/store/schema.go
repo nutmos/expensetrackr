@@ -67,6 +67,10 @@ package store
 //   - interest_amount_minor / fee_amount_minor (added in v5,
 //     migrate_v5.go): optional interest and fees of a repay_debt, in the
 //     transaction currency at amount_scale; amount_minor is the principal.
+//   - gain_loss_minor / entire_asset_sale (added in v8, migrate_v8.go):
+//     signed gain or loss of an asset_sale, in the transaction currency at
+//     amount_scale (amount_minor is the principal), and whether the whole
+//     asset was sold.
 //   - import_ref: optional client reference for bulk-import idempotency,
 //     unique per balance (docs/bulk-import.md).
 //

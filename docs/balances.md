@@ -31,6 +31,8 @@ is always > 0.
 | `asset_purchase` (destination) | `to_balance_uid` (other_asset only) | `balance += amount` | n/a (not allowed) | the asset bought gains its value |
 | `return_on_investment` (receiver) | `balance_uid` (payment_account / credit_card) | `balance += amount` | `debt −= amount` (may go negative = in credit) | a dividend or interest paid into an account or onto a card |
 | `return_on_investment` (linked asset) | `to_balance_uid` (other_asset only) | none (link only) | n/a (not allowed) | the investment the return came from keeps its value |
+| `asset_sale` (receiver) | `balance_uid` (payment_account / credit_card) | `balance += amount + gain_loss` | `debt −= amount + gain_loss` (may go negative = in credit) | the proceeds of selling gold or shares paid into an account |
+| `asset_sale` (sold asset) | `to_balance_uid` (other_asset only) | `balance −= amount` (the principal only); hidden when `entire_asset_sale` | n/a (not allowed) | the asset sold loses the principal's value |
 | `repay_debt` (source) | `balance_uid` (payment_account only) | `balance −= amount + interest_amount + fee_amount` | n/a (not allowed) | paying a card bill or a loan instalment from a bank account |
 | `repay_debt` (destination) | `to_balance_uid` (credit_card / other_liability) | n/a (not allowed) | `debt −= amount` (the principal only; may go negative = in credit) | the card or loan repaid |
 | `balance_adjustment` | `balance_uid` (any type) | `increase`: `balance += amount`; `decrease`: `balance −= amount` | `increase`: `debt += amount`; `decrease`: `debt −= amount` | recorded by a manual balance edit, which already set the value; applied only when the adjustment is later edited or deleted (§2) |
@@ -42,7 +44,7 @@ The code is `transaction.Effects` (signs) and
 
 - **Update:** the old effect is reversed and the new one applied, in one
   database transaction. This covers changes of amount, type (expense ↔ income
-  ↔ transfer ↔ asset_purchase ↔ return_on_investment ↔ repay_debt), source account and transfer destination.
+  ↔ transfer ↔ asset_purchase ↔ return_on_investment ↔ asset_sale ↔ repay_debt), source account and transfer destination.
   - Changes are summed per balance. A balance whose net change is zero (for
     example a note-only edit) is not written, and its version does not change.
 - **Delete:** the effect is reversed.
@@ -64,7 +66,7 @@ refetched for a reversal.
 ### Currency must match (except cross-currency transfers)
 
 A transaction's `currency` must equal the currency of every balance it moves
-(`balance_uid`, and `to_balance_uid` for asset purchases and debt repayments; the asset linked by a
+(`balance_uid`, and `to_balance_uid` for asset purchases, asset sales and debt repayments; the asset linked by a
 return on investment is not moved, so its currency may differ). A **transfer** is
 the exception for its destination: if `to_balance_uid` is in another
 currency, the destination moves by `to_amount` in its own currency (see

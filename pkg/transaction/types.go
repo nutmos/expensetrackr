@@ -20,10 +20,10 @@ type Transaction struct {
 	Amount       string  `json:"amount"`         // decimal string, e.g. "120.50"
 	AmountMinor  int64   `json:"amount_minor"`   // integer minor units, e.g. 12050
 	Currency     string  `json:"currency"`       // ISO 4217, e.g. "THB"
-	Type         Type    `json:"type"`           // expense | income | transfer | asset_purchase | return_on_investment | repay_debt | balance_adjustment
-	BalanceUID   UID     `json:"balance_uid"`    // paying (expense, asset_purchase), receiving (income, return_on_investment) or source (transfer) balance
+	Type         Type    `json:"type"`           // expense | income | transfer | asset_purchase | return_on_investment | asset_sale | repay_debt | balance_adjustment
+	BalanceUID   UID     `json:"balance_uid"`    // paying (expense, asset_purchase), receiving (income, return_on_investment, asset_sale) or source (transfer) balance
 	Account      string  `json:"account"`        // denormalized balance name at write time
-	ToBalanceUID *UID    `json:"to_balance_uid"` // transfer / asset_purchase destination, return_on_investment linked asset; null otherwise
+	ToBalanceUID *UID    `json:"to_balance_uid"` // transfer / asset_purchase destination, return_on_investment linked asset, asset_sale sold asset; null otherwise
 	ToAccount    *string `json:"to_account"`     // denormalized destination name; null otherwise
 	CategoryUID  *UID    `json:"category_uid"`   // optional link to categories.uid; null for none / transfers
 	SpentAt      string  `json:"spent_at"`       // RFC 3339 with the offset as entered
@@ -73,6 +73,17 @@ type Transaction struct {
 	InterestAmountMinor *int64  `json:"interest_amount_minor"` // interest_amount in minor units
 	FeeAmount           *string `json:"fee_amount"`            // decimal string in currency
 	FeeAmountMinor      *int64  `json:"fee_amount_minor"`      // fee_amount in minor units
+	// Asset sale result (asset_sale only, null / false otherwise). amount is
+	// the principal: what the sold asset's value goes down by. gain_loss is
+	// the signed result of the sale in the transaction currency (positive =
+	// gain, negative = loss); the receiving account gets amount + gain_loss.
+	// A gain is counted as income and a loss as expense in reports (under
+	// category_uid, if set). EntireAssetSale records that the whole asset was
+	// sold: saving such a transaction hides the asset balance. See
+	// docs/data-model.md.
+	GainLoss        *string `json:"gain_loss"`         // signed decimal string in currency
+	GainLossMinor   *int64  `json:"gain_loss_minor"`   // gain_loss in minor units (negative = loss)
+	EntireAssetSale bool    `json:"entire_asset_sale"` // asset_sale only: the whole asset was sold (it is hidden)
 	// ConversionRates is response-only and never stored: for a cross-currency
 	// transfer, both directions of the effective rate (to_amount / amount and
 	// amount / to_amount), computed by MarshalJSON on every encode; null
@@ -118,6 +129,17 @@ type CreateInput struct {
 	// replace).
 	InterestAmount DecimalInput `json:"interest_amount"`
 	FeeAmount      DecimalInput `json:"fee_amount"`
+	// GainLoss (asset_sale only) is the signed gain (positive) or loss
+	// (negative) of the sale, in the transaction currency; amount is the
+	// principal. Empty or 0 means neither. The receiving account gets
+	// amount + gain_loss, which may not be negative. On PUT, omitted means
+	// none (full replace).
+	GainLoss DecimalInput `json:"gain_loss"`
+	// EntireAssetSale (asset_sale only) marks the sale of the whole asset:
+	// saving the transaction hides the asset balance (to_balance_uid). On
+	// PUT, omitted means false; un-setting it does not show the balance
+	// again (POST /api/balances/:uid/unhide does).
+	EntireAssetSale bool `json:"entire_asset_sale"`
 	// AdjustmentDirection ("increase" | "decrease") is required when editing
 	// a balance_adjustment (PUT only; see ValidateAdjustment) and must be
 	// empty or null otherwise.
@@ -175,6 +197,14 @@ const (
 	// amount, in the same currency. Like a transfer it has no category and is
 	// not counted as an expense or income.
 	RepayDebt Type = "repay_debt"
+	// AssetSale ("Asset Sale") sells all or part of an other_asset
+	// (to_balance_uid): its value goes down by amount (the principal). The
+	// proceeds, amount + gain_loss, are received by a payment account or
+	// credit card (balance_uid), like income. Only the gain or loss is
+	// counted as income or expense, under an optional income (gain) or
+	// expense (loss) category. With entire_asset_sale the asset balance is
+	// hidden when the transaction is saved.
+	AssetSale Type = "asset_sale"
 	// BalanceAdjustment ("Balance Adjustment") is recorded automatically when
 	// a balance's amount is edited by hand (PUT /api/balances/:uid); the edit
 	// itself sets the new value. It cannot be created through the
@@ -187,9 +217,9 @@ const (
 )
 
 // HasDestination reports whether the type uses to_balance_uid (transfer,
-// asset_purchase, return_on_investment and repay_debt).
+// asset_purchase, return_on_investment, asset_sale and repay_debt).
 func (t Type) HasDestination() bool {
-	return t == Transfer || t == AssetPurchase || t == ReturnOnInvestment || t == RepayDebt
+	return t == Transfer || t == AssetPurchase || t == ReturnOnInvestment || t == AssetSale || t == RepayDebt
 }
 
 // AllowsForeignAmount reports whether a transaction of this type may record
@@ -204,6 +234,19 @@ func (t Type) AllowsForeignAmount() bool {
 // AllowsCharges reports whether a transaction of this type may record debt
 // charges (interest_amount / fee_amount): repay_debt only.
 func (t Type) AllowsCharges() bool { return t == RepayDebt }
+
+// AllowsSaleResult reports whether a transaction of this type may record a
+// gain/loss and entire_asset_sale: asset_sale only.
+func (t Type) AllowsSaleResult() bool { return t == AssetSale }
+
+// GainLossValue is the signed gain (> 0) or loss (< 0) of an asset sale in
+// minor units of the transaction currency (0 when there is none).
+func (e Transaction) GainLossValue() int64 {
+	if e.GainLossMinor == nil {
+		return 0
+	}
+	return *e.GainLossMinor
+}
 
 // ChargesMinor is the interest plus fees of a debt repayment in minor units
 // of the transaction currency (0 when there are none).
@@ -259,6 +302,8 @@ type ConversionRate struct {
 //	                           (payment_account balance down by everything paid)
 //	          to_balance_uid   value += amount  (credit_card / other_liability debt down by
 //	                           the principal only; overpaying leaves it in credit)
+//	asset_sale balance_uid     value += amount + gain_loss (proceeds received, like income)
+//	          to_balance_uid   value -= amount  (sold other_asset down by the principal)
 //	balance_adjustment balance_uid amount ±= amount (ByAmount: increase raises an asset's
 //	                           balance or a liability's debt; decrease lowers it)
 type Effect struct {

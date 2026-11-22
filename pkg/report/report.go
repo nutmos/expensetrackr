@@ -78,7 +78,8 @@ type FlowRow struct {
 // Transfers, asset purchases, debt repayments and balance adjustments move
 // value between balances (or correct them) and are left out, like the
 // totals under the transaction list; only the interest and fees of a debt
-// repayment are counted, as expense (the store reports them as Expense rows).
+// repayment are counted, as expense, and the gain (income) or loss (expense)
+// of an asset sale (the store reports them as Income / Expense rows).
 var FlowTypes = []transaction.Type{transaction.Expense, transaction.Income, transaction.ReturnOnInvestment}
 
 // CategoryAmount is the total of one category within one currency.

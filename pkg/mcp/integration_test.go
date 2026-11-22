@@ -74,24 +74,28 @@ func mustCall(t *testing.T, s *Server, name string, args any) map[string]any {
 }
 
 // setupRecords creates two balances and an expense category over HTTP.
+// postRecord creates a record through the API and returns its uid.
+func postRecord(t *testing.T, base, tok, path, body string) string {
+	t.Helper()
+	req, _ := http.NewRequest("POST", base+path, strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var m map[string]any
+	_ = json.NewDecoder(res.Body).Decode(&m)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("POST %s: %d %v", path, res.StatusCode, m)
+	}
+	return m["uid"].(string)
+}
+
 func setupRecords(t *testing.T, base, tok string) (wallet, card, food string) {
 	t.Helper()
-	post := func(path, body string) string {
-		req, _ := http.NewRequest("POST", base+path, strings.NewReader(body))
-		req.Header.Set("Authorization", "Bearer "+tok)
-		req.Header.Set("Content-Type", "application/json")
-		res, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer res.Body.Close()
-		var m map[string]any
-		_ = json.NewDecoder(res.Body).Decode(&m)
-		if res.StatusCode != http.StatusCreated {
-			t.Fatalf("POST %s: %d %v", path, res.StatusCode, m)
-		}
-		return m["uid"].(string)
-	}
+	post := func(path, body string) string { return postRecord(t, base, tok, path, body) }
 	wallet = post("/api/balances", `{"name":"Wallet","type":"payment_account","currency":"THB","balance":"1000"}`)
 	card = post("/api/balances", `{"name":"Card","type":"credit_card","currency":"THB","debt":"0","limit":"50000"}`)
 	food = post("/api/categories", `{"name":"Food","type":"expense"}`)
@@ -187,5 +191,34 @@ func TestEndToEnd(t *testing.T) {
 	bad := &Server{Tools: Tools(&Client{BaseURL: base, Token: "ext_nope"}, false)}
 	if text, isErr := callTool(t, bad, "list_transactions", map[string]any{}); !isErr || !strings.Contains(text, "HTTP 401") {
 		t.Fatalf("bad token: %s", text)
+	}
+}
+
+// TestEndToEndAssetSale: the sale fields (incl. the boolean
+// entire_asset_sale) go through create and update, and the merge keeps them.
+func TestEndToEndAssetSale(t *testing.T) {
+	base, writeTok, _ := liveAPI(t)
+	wallet, _, _ := setupRecords(t, base, writeTok)
+	gold := postRecord(t, base, writeTok, "/api/balances", `{"name":"Gold","type":"other_asset","currency":"THB","balance":"500"}`)
+	loss := postRecord(t, base, writeTok, "/api/categories", `{"name":"Investment loss","type":"expense"}`)
+	s := &Server{Tools: Tools(&Client{BaseURL: base, Token: writeTok}, false)}
+
+	tx := mustCall(t, s, "create_transaction", map[string]any{
+		"type": "asset_sale", "amount": "200", "currency": "THB", "balance_uid": wallet, "to_balance_uid": gold,
+		"gain_loss": "-20", "category_uid": loss, "spent_at": "2026-10-06T12:30:00+08:00",
+	})
+	if tx["gain_loss"] != "-20.00" || tx["entire_asset_sale"] != false || balanceOf(t, s, wallet) != "1180.00" {
+		t.Fatalf("created: %v", tx)
+	}
+	// A note-only change keeps the loss and its category; then sell it all.
+	upd := mustCall(t, s, "update_transaction", map[string]any{"uid": tx["uid"], "note": "sold", "amount": "500", "entire_asset_sale": true})
+	if upd["gain_loss"] != "-20.00" || upd["category_uid"] != loss || upd["entire_asset_sale"] != true || upd["note"] != "sold" {
+		t.Fatalf("update: %v", upd)
+	}
+	all := mustCall(t, s, "list_balances", map[string]any{"include_hidden": true})
+	for _, b := range all["balances"].([]any) {
+		if m := b.(map[string]any); m["uid"] == gold && (m["hidden"] != true || m["balance"] != "0.00") {
+			t.Errorf("gold after entire sale: %v", m)
+		}
 	}
 }

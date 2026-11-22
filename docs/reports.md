@@ -27,6 +27,7 @@ same rule as the totals under the transaction list:
 | `expense` | expense |
 | `income`, `return_on_investment` | income |
 | `repay_debt` | its `interest_amount` + `fee_amount` count as **expense**, under its category (or no category); the principal is not counted |
+| `asset_sale` | its `gain_loss` counts as **income** when positive (a gain) and as **expense** when negative (a loss), under its category (or no category); the principal is not counted |
 | `transfer`, `asset_purchase`, `balance_adjustment` | not counted (they move value between your balances or correct them) |
 
 `from` and `to` are optional, inclusive bounds on `spent_at` (RFC 3339 with
