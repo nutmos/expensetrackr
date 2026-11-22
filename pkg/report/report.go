@@ -22,8 +22,9 @@ import (
 
 // Report ids, used in /api/reports/<id> and the web page's /reports/<id>.
 const (
-	IncomeExpenseID     = "income-expense"
-	AssetsLiabilitiesID = "assets-liabilities"
+	IncomeExpenseID       = "income-expense"
+	AssetsLiabilitiesID   = "assets-liabilities"
+	BalanceTransactionsID = "balance-transactions"
 )
 
 // Info describes one available report (GET /api/reports).
@@ -47,6 +48,12 @@ var Catalog = []Info{
 		Name:        "Assets & liabilities",
 		Description: "Current assets and liabilities, per currency, by balance type and by account.",
 		Path:        "/api/reports/" + AssetsLiabilitiesID,
+	},
+	{
+		ID:          BalanceTransactionsID,
+		Name:        "Balance transactions",
+		Description: "Every transaction of one balance in a time range, with money in and out and the running amount (a statement).",
+		Path:        "/api/reports/" + BalanceTransactionsID,
 	},
 }
 

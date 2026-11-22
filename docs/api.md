@@ -75,13 +75,14 @@ only on validation and conflict errors.
 | GET    | `/api/reports`         | 200 `{"reports":[{"id","name","description","path"}],"count":n}` | The available report types ([docs/reports.md](reports.md)) |
 | GET    | `/api/reports/income-expense` | 200 `{"report","from","to","currencies":[...]}` | Income (incl. returns on investment) and expenses per currency and by category. Optional `from`, `to` (RFC 3339 with offset, inclusive); 400 if invalid or `to` < `from` |
 | GET    | `/api/reports/assets-liabilities` | 200 `{"report","as_of","currencies":[...]}` | Current assets, liabilities and net per currency, by balance type and by account |
+| GET    | `/api/reports/balance-transactions` | 200 `{"report","balance","from","to","opening_amount","closing_amount","money_in","money_out","net","count","transactions":[...]}` | One balance's transactions, oldest first, with money in / out and the amount after each. Required `balance_uid`; optional `from`, `to`. 400 if a parameter is missing or invalid, 404 unknown balance |
 | GET    | `/api/currencies`    | 200 `{"currencies":[{"code":"THB","name":"Baht","scale":2,"flag":"🇹🇭"},...],"count":n}` | Supported ISO 4217 codes (from `pkg/money`), sorted by code, with a display-only flag emoji (see below); the web page's currency dropdowns use it |
 | GET    | `/api/exchange-rates?from=USD&to=THB&date=YYYY-MM-DD` | 200 `{"from":"USD","to":"THB","rate":"33.615","date":"2026-10-12","source":"frankfurter"}` | Rate preview (cached Frankfurter / ECB rate; `date` optional = latest). 400 bad query, 422 unsupported pair, 503/502 Frankfurter down. See [docs/exchange-rates.md](exchange-rates.md) |
 | GET    | `/api/healthz`       | 200 `{"status":"ok"}` | |
 | GET    | `/api/openapi.yaml`  | 200 the OpenAPI 3.0 document | Hand-written spec, embedded in the binary |
 | GET    | `/api/openapi.json`  | 200 the same document as JSON | |
 | GET    | `/swagger/`, `/swagger` | Swagger UI (HTML) | `/swagger` redirects to `/swagger/`. Assets are vendored and embedded (offline; no CDN). Own, looser CSP (inline styles, `data:` images) |
-| GET    | `/reports`, `/reports/:report` | HTML page (reports) | `:report` must be a report id (`income-expense`, `assets-liabilities`), else 404 |
+| GET    | `/reports`, `/reports/:report` | HTML page (reports) | `:report` must be a report id (`income-expense`, `assets-liabilities`, `balance-transactions`), else 404 |
 | GET    | `/`, `/transactions`, `/balances`, `/categories`, `/settings` | HTML page (list) | Same `index.html` for every page path; the client-side router picks the view. Static assets under `/static/` |
 | GET    | `/favicon.ico` | 204 | No icon; answered so browsers do not log a 404 |
 | GET    | `/<res>/new`, `/<res>/:uid/edit` | HTML page (add / edit form) | `<res>` = `transactions`, `balances` or `categories`. `:uid` must be UUID-shaped (any case), else 404; an unknown uid is reported by the page itself. Other paths → 404 JSON |

@@ -102,7 +102,7 @@ tags:
   - name: categories
     description: Expense and income categories. Categories belong to the logged-in user (each user has their own set; another user's category uid is a 404). Expense transactions may only use expense categories, income transactions income categories.
   - name: reports
-    description: Read-only summaries (income & expenses in a time range; assets & liabilities by account). Amounts are exact decimal strings, per currency, never converted between currencies. `GET /api/reports` lists the available report types.
+    description: Read-only summaries (income & expenses in a time range; assets & liabilities by account; one balance's transactions). Amounts are exact decimal strings, per currency, never converted between currencies. `GET /api/reports` lists the available report types.
   - name: auth
     description: Login, logout, first-run registration, current user and password change.
   - name: tokens
@@ -957,7 +957,7 @@ paths:
                   reports:
                     type: array
                     items: { $ref: '#/components/schemas/ReportInfo' }
-                  count: { type: integer, example: 2 }
+                  count: { type: integer, example: 3 }
 
   /api/reports/income-expense:
     get:
@@ -1016,6 +1016,52 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AssetsLiabilitiesReport' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/reports/balance-transactions:
+    get:
+      tags: [reports]
+      operationId: balanceTransactionsReport
+      summary: Transactions of one balance (statement)
+      description: |
+        Every transaction that moved one of the logged-in user's balances (hidden ones included)
+        with `spent_at` in `[from, to]`, oldest first: transactions paid from or received into it
+        (`balance_uid`) and those whose destination it is (`to_balance_uid`). For each one,
+        `money_in` / `money_out` is what it did to the balance's value in the balance's currency
+        (for a liability, `money_in` lowers the debt and `money_out` raises it) and `amount_after`
+        the balance (asset) or debt (liability) right after it. `opening_amount` and
+        `closing_amount` are worked back from the current amount, so they are right even when
+        transactions after the range exist. The web page can print this report to PDF.
+      parameters:
+        - name: balance_uid
+          in: query
+          required: true
+          description: The balance to report on.
+          schema: { $ref: '#/components/schemas/Uid' }
+        - name: from
+          in: query
+          description: Inclusive lower bound on `spent_at`, RFC 3339 with offset. Omit for no lower bound.
+          schema: { type: string, format: date-time, example: '2026-11-01T00:00:00+07:00' }
+        - name: to
+          in: query
+          description: Inclusive upper bound on `spent_at`, RFC 3339 with offset. Omit for no upper bound.
+          schema: { type: string, format: date-time, example: '2026-11-30T23:59:59+07:00' }
+      responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '200':
+          description: The report.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BalanceTransactionsReport' }
+        '400':
+          description: Missing or invalid `balance_uid`, invalid `from` / `to`, or `to` earlier than `from`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error: invalid query parameters
+                fields: { balance_uid: is required }
+        '404': { $ref: '#/components/responses/BalanceNotFound' }
         '500': { $ref: '#/components/responses/InternalError' }
 
   /api/currencies:
@@ -2422,6 +2468,52 @@ components:
           type: array
           description: One entry per currency with at least one balance, alphabetical.
           items: { $ref: '#/components/schemas/ReportCurrencyPosition' }
+
+    BalanceTransactionsReport:
+      type: object
+      required: [report, balance, from, to, opening_amount, closing_amount, money_in, money_out, net, count, transactions]
+      properties:
+        report: { type: string, enum: [balance-transactions] }
+        balance: { $ref: '#/components/schemas/ReportBalanceRef' }
+        from: { type: string, nullable: true, description: The from filter as sent; null when not set., example: '2026-11-01T00:00:00+07:00' }
+        to: { type: string, nullable: true, description: The to filter as sent; null when not set., example: '2026-11-30T23:59:59+07:00' }
+        opening_amount: { type: string, description: Balance (asset) or debt (liability) before the first transaction in the range., example: '12000.00' }
+        closing_amount: { type: string, description: Balance (asset) or debt (liability) at the end of the range., example: '10350.75' }
+        money_in: { type: string, description: Sum of `money_in`., example: '5000.00' }
+        money_out: { type: string, description: Sum of `money_out`., example: '6649.25' }
+        net: { type: string, description: money_in − money_out (change in value; may be negative)., example: '-1649.25' }
+        count: { type: integer, example: 12 }
+        transactions:
+          type: array
+          description: Oldest first.
+          items: { $ref: '#/components/schemas/ReportBalanceEntry' }
+    ReportBalanceRef:
+      type: object
+      required: [uid, name, type, kind, currency, hidden, amount]
+      properties:
+        uid: { $ref: '#/components/schemas/Uid' }
+        name: { type: string, example: Wallet }
+        type: { $ref: '#/components/schemas/BalanceType' }
+        kind: { type: string, enum: [asset, liability] }
+        currency: { type: string, example: THB }
+        hidden: { type: boolean }
+        amount: { type: string, description: Current balance (asset) or debt (liability)., example: '10350.75' }
+    ReportBalanceEntry:
+      type: object
+      required: [uid, type, spent_at, category_uid, category_name, counterparty, note, amount, currency, money_in, money_out, amount_after]
+      properties:
+        uid: { $ref: '#/components/schemas/Uid' }
+        type: { $ref: '#/components/schemas/TransactionType' }
+        spent_at: { type: string, format: date-time, example: '2026-11-03T12:30:00+07:00' }
+        category_uid: { type: string, format: uuid, nullable: true }
+        category_name: { type: string, nullable: true, example: Food }
+        counterparty: { type: string, nullable: true, description: The other balance of a transfer, asset purchase, return on investment or debt repayment., example: Visa }
+        note: { type: string }
+        amount: { type: string, description: The transaction amount as recorded., example: '250.00' }
+        currency: { type: string, description: The transaction currency (a cross-currency transfer into this balance is in the source currency)., example: THB }
+        money_in: { type: string, nullable: true, description: Value added to this balance (deposit; repayment of a liability)., example: null }
+        money_out: { type: string, nullable: true, description: Value taken from this balance (spending; a charge on a liability)., example: '250.00' }
+        amount_after: { type: string, description: Balance (asset) or debt (liability) right after this transaction., example: '11750.00' }
 
     CategoryType:
       type: string

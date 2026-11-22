@@ -14,7 +14,17 @@
   const REPORTS = [
     { id: "income-expense", title: "Income & expenses", enter: enterIncomeExpense },
     { id: "assets-liabilities", title: "Assets & liabilities", enter: enterAssetsLiabilities },
+    { id: "balance-transactions", title: "Balance transactions", enter: enterBalanceTransactions },
   ];
+
+  const TX_TYPE_LABEL = {
+    expense: "Expense", income: "Income", transfer: "Transfer", asset_purchase: "Asset purchase",
+    return_on_investment: "Return on investment", repay_debt: "Repay debt", balance_adjustment: "Balance adjustment",
+  };
+  const TYPE_GROUP = {
+    payment_account: "Payment accounts", credit_card: "Credit cards",
+    other_asset: "Other assets", other_liability: "Other liabilities",
+  };
 
   const TYPE_LABEL = {
     payment_account: "Payment account", credit_card: "Credit card",
@@ -132,8 +142,8 @@
     }
   }
 
-  function setRangeQuery(from, to) {
-    const q = new URLSearchParams();
+  function setRangeQuery(from, to, extra) {
+    const q = new URLSearchParams(extra || {});
     if (from) q.set("from", from);
     if (to) q.set("to", to);
     if (!from && !to) q.set("all", "1");
@@ -260,6 +270,194 @@
       bodyEl.append(sec);
     }
   }
+
+  // ---- Balance transactions (issue #160) ---------------------------------------
+
+  // ?balance=<uid>&from=YYYY-MM-DD&to=YYYY-MM-DD (or &all=1), like income &
+  // expenses; no range = this month. Export PDF prints the statement (the
+  // print stylesheet keeps only the report) so the browser saves it as PDF.
+
+  const rbSel = $("#rb-balance");
+  const rbExport = $("#rb-export");
+  let rbReport = null; // last loaded report, for the PDF file name
+
+  async function fillBalanceSelect(keep) {
+    let list = [];
+    try {
+      const res = await fetch("/api/balances?include_hidden=true");
+      const body = await res.json();
+      if (res.ok) list = body.balances || [];
+    } catch (_) { /* empty list */ }
+    rbSel.replaceChildren();
+    if (!list.length) {
+      rbSel.append(Object.assign(document.createElement("option"), { value: "", textContent: "No balances yet" }));
+      return;
+    }
+    for (const [type, heading] of Object.entries(TYPE_GROUP)) {
+      const items = list.filter((b) => b.type === type);
+      if (!items.length) continue;
+      const g = document.createElement("optgroup");
+      g.label = heading;
+      for (const b of items) {
+        g.append(Object.assign(document.createElement("option"), {
+          value: b.uid, textContent: `${b.name} (${b.currency})${b.hidden ? " · hidden" : ""}`,
+        }));
+      }
+      rbSel.append(g);
+    }
+    rbSel.value = list.some((b) => b.uid === keep) ? keep : list[0].uid;
+  }
+
+  async function enterBalanceTransactions(query) {
+    let from = isYMD(query.get("from")) ? query.get("from") : "";
+    let to = isYMD(query.get("to")) ? query.get("to") : "";
+    if (!from && !to && query.get("all") !== "1") ({ from, to } = presetRange("this-month"));
+    $("#rb-from").value = from;
+    $("#rb-to").value = to;
+    await fillBalanceSelect(query.get("balance") || "");
+    rbQuery();
+    await loadBalanceTransactions();
+  }
+
+  function rbQuery() {
+    setRangeQuery($("#rb-from").value, $("#rb-to").value, rbSel.value ? { balance: rbSel.value } : null);
+  }
+
+  async function loadBalanceTransactions() {
+    const myGen = ++gen;
+    rbReport = null;
+    rbExport.disabled = true;
+    const uid = rbSel.value;
+    if (!uid) {
+      bodyEl.replaceChildren();
+      statusEl.textContent = "Add a balance first.";
+      return;
+    }
+    const from = $("#rb-from").value, to = $("#rb-to").value;
+    const params = new URLSearchParams({ balance_uid: uid });
+    if (from) params.set("from", rfc3339(dayStart(from)));
+    if (to) params.set("to", rfc3339(dayEnd(to)));
+    await App.loadCurrencies();
+    const body = await fetchReport("/api/reports/balance-transactions?" + params, myGen);
+    if (!body) return;
+    rbReport = { body, from, to };
+    rbExport.disabled = false;
+
+    const b = body.balance;
+    const liability = b.kind === "liability";
+    const what = liability ? "Debt" : "Balance";
+    const head = el("div", "report-statement-head");
+    head.append(el("h3", "report-cur", `${b.name} · ${App.currencyText(b.currency)}`));
+    head.append(el("p", "report-range muted",
+      `${TYPE_LABEL[b.type] || b.type}${b.hidden ? " (hidden)" : ""} · Period: ${rangeText(from, to)}`));
+    bodyEl.append(head);
+
+    const summary = el("dl", "report-summary");
+    const item = (label, value, cls) => {
+      const d = el("div", "");
+      d.append(el("dt", "muted", label), el("dd", cls || "", value));
+      summary.append(d);
+    };
+    item(`Opening ${what.toLowerCase()}`, fmtNeg(body.opening_amount));
+    item(liability ? "In (payments)" : "Money in", fmtAmount(body.money_in), "pos-text");
+    item(liability ? "Out (charges)" : "Money out", fmtAmount(body.money_out), "neg-text");
+    item(`Closing ${what.toLowerCase()}`, fmtNeg(body.closing_amount));
+    item("Transactions", String(body.count));
+    bodyEl.append(summary);
+
+    const list = body.transactions || [];
+    if (!list.length) {
+      bodyEl.append(el("p", "group-empty", "No transactions in this period."));
+      return;
+    }
+    const wrap = el("div", "table-wrap");
+    const table = el("table", "statement");
+    const thead = el("thead");
+    const hr = el("tr");
+    for (const [t, cls] of [["Date", ""], ["Type", ""], ["Details", ""], ["In", "num"], ["Out", "num"], [what, "num"]]) {
+      hr.append(el("th", cls, t));
+    }
+    thead.append(hr);
+    const tbody = el("tbody");
+    for (const e of list) {
+      const tr = el("tr");
+      tr.append(el("td", "time", shownDate(e.spent_at)));
+      tr.append(el("td", "type", TX_TYPE_LABEL[e.type] || e.type));
+      const det = el("td", "details");
+      const parts = [];
+      if (e.category_name || e.category_uid) parts.push(e.category_name || "(unknown category)");
+      if (e.counterparty) parts.push((e.money_in ? "from " : "to ") + e.counterparty);
+      if (parts.length) det.append(el("span", "", parts.join(" · ")));
+      if (e.currency !== b.currency) det.append(el("span", "muted foreign-amt", `${fmtAmount(e.amount)} ${e.currency}`));
+      if (e.note) det.append(el("span", "muted note-line", e.note));
+      tr.append(det);
+      tr.append(el("td", "num pos-text", e.money_in ? fmtAmount(e.money_in) : ""));
+      tr.append(el("td", "num neg-text", e.money_out ? fmtAmount(e.money_out) : ""));
+      tr.append(el("td", "num", fmtNeg(e.amount_after)));
+      tbody.append(tr);
+    }
+    const tfoot = el("tfoot");
+    const fr = el("tr");
+    fr.append(el("th", "", "Total"), el("th", ""), el("th", ""));
+    fr.append(el("th", "num", fmtAmount(body.money_in)), el("th", "num", fmtAmount(body.money_out)), el("th", "num", fmtNeg(body.closing_amount)));
+    tfoot.append(fr);
+    table.append(thead, tbody, tfoot);
+    wrap.append(table);
+    bodyEl.append(wrap);
+    bodyEl.append(el("p", "muted small report-printed", `Generated ${shownDate(new Date().toISOString(), true)}`));
+  }
+
+  // "−1,234.50" for a negative decimal string, else fmtAmount.
+  function fmtNeg(s) { return isNeg(s) ? "−" + fmtAmount(String(s).slice(1)) : fmtAmount(s); }
+
+  // "YYYY-MM-DD HH:MM" in the device's time zone (the raw value if unparsable).
+  function shownDate(v, seconds) {
+    const d = new Date(v);
+    if (isNaN(d)) return v;
+    const t = `${pad(d.getHours())}:${pad(d.getMinutes())}` + (seconds ? `:${pad(d.getSeconds())}` : "");
+    return `${ymd(d)} ${t}`;
+  }
+
+  $("#rb-filter-form").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const from = $("#rb-from").value, to = $("#rb-to").value;
+    if (from && to && from > to) {
+      statusEl.textContent = "“To” must not be earlier than “From”.";
+      return;
+    }
+    rbQuery();
+    loadBalanceTransactions();
+  });
+  rbSel.addEventListener("change", () => { rbQuery(); loadBalanceTransactions(); });
+
+  document.querySelectorAll("#rb-filter-form [data-preset]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const { from, to } = presetRange(btn.dataset.preset);
+      $("#rb-from").value = from;
+      $("#rb-to").value = to;
+      rbQuery();
+      loadBalanceTransactions();
+    });
+  });
+
+  // Export PDF: the browser's print dialog ("Save as PDF"); style.css's
+  // print rules keep only the report. The document title is the suggested
+  // file name while printing. A real PDF is made by the browser, so names and
+  // notes in any script (e.g. Thai) come out right with no server-side fonts.
+  rbExport.addEventListener("click", () => {
+    if (!rbReport) return;
+    const { body, from, to } = rbReport;
+    const name = `${body.balance.name} transactions ${from || "start"} to ${to || ymd(new Date())}`
+      .replace(/[\\/:*?"<>|]+/g, "-");
+    const saved = document.title;
+    document.title = name;
+    const restore = () => {
+      document.title = saved;
+      window.removeEventListener("afterprint", restore);
+    };
+    window.addEventListener("afterprint", restore);
+    window.print();
+  });
 
   // ---- Routes ----------------------------------------------------------------
 
