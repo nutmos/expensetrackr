@@ -47,6 +47,9 @@ func (t Tool) descriptor() map[string]any {
 func Tools(c *Client, readOnly bool) []Tool {
 	all := []Tool{
 		listBalancesTool(c),
+		getBalanceTool(c),
+		createBalanceTool(c),
+		updateBalanceTool(c),
 		listCategoriesTool(c),
 		listTransactionsTool(c),
 		getTransactionTool(c),
@@ -112,7 +115,7 @@ func pathUID(name, uid string) (string, error) {
 		return "", fmt.Errorf("%s is required", name)
 	}
 	if !uuidRe.MatchString(uid) {
-		return "", fmt.Errorf("%s must be a UUID (the uid from list_transactions), got %q", name, uid)
+		return "", fmt.Errorf("%s must be a UUID (a uid from a list or get tool), got %q", name, uid)
 	}
 	return strings.ToLower(uid), nil
 }

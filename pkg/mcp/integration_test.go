@@ -222,3 +222,59 @@ func TestEndToEndAssetSale(t *testing.T) {
 		}
 	}
 }
+
+// TestEndToEndBalances: create a balance, edit it partially (a manual
+// amount records a balance adjustment), hide it and show it again.
+func TestEndToEndBalances(t *testing.T) {
+	base, writeTok, readTok := liveAPI(t)
+	s := &Server{Tools: Tools(&Client{BaseURL: base, Token: writeTok}, false)}
+
+	card := mustCall(t, s, "create_balance", map[string]any{"name": "Visa", "type": "credit_card", "currency": "THB", "debt": "0", "limit": 30000})
+	uid := card["uid"].(string)
+	if card["limit"] != "30000.00" || card["version"].(float64) != 1 {
+		t.Fatalf("created: %v", card)
+	}
+	if text, isErr := callTool(t, s, "create_balance", map[string]any{"name": "Cash", "type": "payment_account", "currency": "THB"}); !isErr || !strings.Contains(text, "balance") {
+		t.Fatalf("missing balance: %v %s", isErr, text)
+	}
+
+	// limit and description only: no adjustment
+	upd := mustCall(t, s, "update_balance", map[string]any{"uid": uid, "limit": "40000", "description": "main card"})
+	if upd["limit"] != "40000.00" || upd["debt"] != "0.00" || upd["name"] != "Visa" || upd["description"] != "main card" || upd["version"].(float64) != 2 {
+		t.Fatalf("update limit: %v", upd)
+	}
+	// debt override with the current version: a balance_adjustment is recorded
+	upd = mustCall(t, s, "update_balance", map[string]any{"uid": uid, "version": 2, "debt": "1200.50"})
+	if upd["debt"] != "1200.50" || upd["limit"] != "40000.00" || upd["description"] != "main card" {
+		t.Fatalf("update debt: %v", upd)
+	}
+	adj := mustCall(t, s, "list_transactions", map[string]any{"type": "balance_adjustment", "balance_uid": uid})
+	if adj["count"].(float64) != 1 {
+		t.Fatalf("adjustments: %v", adj)
+	}
+	// stale version
+	if text, isErr := callTool(t, s, "update_balance", map[string]any{"uid": uid, "version": 2, "name": "x"}); !isErr || !strings.Contains(text, "version_conflict") {
+		t.Fatalf("stale: %v %s", isErr, text)
+	}
+
+	// hide with a rename, then show again
+	upd = mustCall(t, s, "update_balance", map[string]any{"uid": uid, "name": "Old Visa", "hidden": true})
+	if upd["hidden"] != true || upd["name"] != "Old Visa" {
+		t.Fatalf("hide: %v", upd)
+	}
+	if list := mustCall(t, s, "list_balances", map[string]any{}); list["count"].(float64) != 0 {
+		t.Fatalf("hidden still listed: %v", list)
+	}
+	if got := mustCall(t, s, "get_balance", map[string]any{"uid": uid}); got["hidden"] != true {
+		t.Fatalf("get: %v", got)
+	}
+	if upd = mustCall(t, s, "update_balance", map[string]any{"uid": uid, "hidden": false}); upd["hidden"] != false {
+		t.Fatalf("unhide: %v", upd)
+	}
+
+	// read-only token cannot write
+	ro := &Server{Tools: Tools(&Client{BaseURL: base, Token: readTok}, false)}
+	if text, isErr := callTool(t, ro, "create_balance", map[string]any{"name": "X", "type": "payment_account", "currency": "THB", "balance": "1"}); !isErr || !strings.Contains(text, "insufficient_scope") {
+		t.Fatalf("read token create: %v %s", isErr, text)
+	}
+}

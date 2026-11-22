@@ -4,7 +4,7 @@
 
 `expense-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io)
 server that lets an LLM client (Claude Desktop, Claude Code, Cursor, ...)
-**read and update transactions**. It runs over **stdio**: the client starts
+**read and update transactions and balances**. It runs over **stdio**: the client starts
 it as a subprocess and talks JSON-RPC on its stdin/stdout.
 
 It is a thin client of the HTTP API: each tool call becomes one or two
@@ -61,7 +61,7 @@ From the container image instead of a local build:
 |---|---|---|
 | `EXPENSETRACKR_TOKEN` (env only) | — | **Required.** Personal API token (`ext_...`). Never a flag, so it stays out of process lists. |
 | `-url` / `EXPENSETRACKR_URL` | `http://127.0.0.1:8080` | Server root (no `/api`). Use `https://` for anything but localhost: the token is sent with every request. |
-| `-read-only` / `EXPENSETRACKR_MCP_READ_ONLY=1` | off | Only offer the four read tools. |
+| `-read-only` / `EXPENSETRACKR_MCP_READ_ONLY=1` | off | Only offer the five read tools. |
 | `-version` | | Print the version and exit. |
 
 Logs and startup errors go to stderr; stdout carries only the protocol.
@@ -71,6 +71,9 @@ Logs and startup errors go to stderr; stdout carries only the protocol.
 | Tool | Reads / writes | Does |
 |---|---|---|
 | `list_balances` | read | Balances with uid, name, type, currency, amount and per-currency totals (`type`, `payable` filters; hidden balances only with `include_hidden`). Used to turn an account name into a `balance_uid`. |
+| `get_balance` | read | One balance by `uid` (hidden ones too), with its `version`. |
+| `create_balance` | write | `POST /api/balances`: `name`, `type`, `currency`, `description`; `balance` for `payment_account` / `other_asset`, `debt` and `limit` for `credit_card` / `other_liability`. |
+| `update_balance` | write | **Partial** update: `uid`, optional `version`, and only the fields to change (`name`, `currency`, `description`, `balance`, `debt`, `limit`, `hidden`). The type cannot change. Setting `balance` / `debt` overrides the amount and the server records a `balance_adjustment` transaction ([balances.md §2](balances.md#2-manual-adjustment-put-on-a-balance)); `hidden` calls `/hide` or `/unhide`. |
 | `list_categories` | read | Categories with uid, name and type (`type` filter). Used to turn a category name into a `category_uid`. |
 | `list_transactions` | read | `GET /api/transactions`, newest first: `from`, `to`, `type`, `category_uid`, `balance_uid`, `limit` (default 50, max 500), `cursor` (the previous page's `next_cursor`). |
 | `get_transaction` | read | One transaction by `uid`, with its `version`. |
@@ -119,6 +122,27 @@ the tool carries over their `adjustment_direction`, and `adjustment_direction`,
 `amount`, `balance_uid` (any balance), `spent_at` and `note` may be changed.
 `delete_transaction` on one reverts the balance change it recorded.
 
+### How `update_balance` works
+
+The same read-modify-write as `update_transaction`, against
+`/api/balances/:uid`:
+
+1. `GET /api/balances/:uid` (the current record and its `ETag`); a given
+   `version` that differs stops with `version_conflict`, writing nothing.
+   Balances move with every transaction, so pass the version you showed the
+   user before overriding an amount.
+2. Copy `name`, `type`, `currency`, `description` and the amounts that apply
+   to the type (`balance`, or `debt` and `limit`), apply the changes (`""`
+   clears `description`) and `PUT` with `If-Match`. `type` is not accepted:
+   it is fixed at creation. Changing `balance` / `debt` records a
+   `balance_adjustment` transaction for the difference; a limit, name or
+   description change records nothing.
+3. If `hidden` was given and differs, `POST /api/balances/:uid/hide` (or
+   `/unhide`) with the new version. `hidden` alone skips the `PUT`.
+
+There is no tool to delete a balance: deleting one also deletes every
+transaction that uses it. Hide it instead, or delete it in the web page.
+
 ### Errors
 
 Tool errors come back as results with `isError: true` (so the model sees them
@@ -139,6 +163,8 @@ The `initialize` result carries short rules that clients add to the model's
 context: never invent amounts, accounts, categories or dates; resolve names
 with the list tools and talk in names; RFC 3339 with offset; which category
 type each transaction type needs; balance adjustments are created by the server only (but may be edited or deleted);
+check for an existing balance before creating one, and prefer recording the
+missing transaction over overriding a balance's amount (confirm an override);
 confirm before deleting. They mirror the safety rules of the
 [log-transaction skill](../skills/expensetrackr-log-transaction/SKILL.md).
 

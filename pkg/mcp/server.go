@@ -1,6 +1,6 @@
 // Package mcp is a Model Context Protocol (MCP) server that lets an LLM
 // client (Claude Desktop, Claude Code, Cursor, ...) read and update
-// transactions in expensetrackr.
+// transactions and balances in expensetrackr.
 //
 // It speaks MCP over stdio (newline-delimited JSON-RPC 2.0) and is a thin
 // client of the HTTP API: every tool call becomes one or two requests to
@@ -52,6 +52,8 @@ Rules:
 - spent_at and the from/to filters are RFC 3339 with a UTC offset (e.g. 2026-10-06T12:30:00+08:00); ask for the user's offset if unknown.
 - category_uid is required for every type except transfer (not allowed), repay_debt (only with interest/fees) and asset_sale (only with a gain_loss: income category for a gain, expense category for a loss); expense/asset_purchase take an expense category, income/return_on_investment an income category.
 - balance_adjustment rows are written by the server when a balance is corrected; they cannot be created here, but can be edited (amount, adjustment_direction, balance, date, note) or deleted, which moves the balance by the difference or reverts the correction.
+- create_balance / update_balance add and edit balances (accounts, cards, assets, loans). Check list_balances (include_hidden) before creating one, to avoid duplicates.
+- Setting a balance's balance or debt overrides what transactions did and records a balance_adjustment; prefer recording the missing transaction, and confirm an override with the user.
 - Confirm with the user before deleting a transaction.`
 
 // Server is an MCP server exposing Tools. Serve handles one client.
