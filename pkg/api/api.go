@@ -28,6 +28,9 @@ type Server struct {
 	Store *store.Store
 	// Static is the web assets filesystem; it must contain index.html.
 	Static fs.FS
+	// indexHTML is index.html with versioned /static/ URLs, built once by
+	// Router (versionedIndex); nil if index.html could not be read.
+	indexHTML []byte
 	// FX looks up exchange rates for cross-currency transfers and
 	// GET /api/exchange-rates; nil means no rate service (503, use to_amount).
 	FX *fx.Client
@@ -85,6 +88,7 @@ func (s *Server) Router() *gin.Engine {
 	apidoc.RegisterUI(r)
 
 	if s.Static != nil {
+		s.indexHTML, _ = versionedIndex(s.Static)
 		s.registerPageRoutes(r)
 		r.StaticFS("/static", http.FS(s.Static))
 	}
@@ -99,12 +103,13 @@ func (s *Server) Router() *gin.Engine {
 
 // index serves the single-page web app (index.html) for every page URL.
 func (s *Server) index(c *gin.Context) {
-	b, err := fs.ReadFile(s.Static, "index.html")
-	if err != nil {
+	if s.indexHTML == nil {
 		c.String(http.StatusInternalServerError, "index.html missing")
 		return
 	}
-	c.Data(http.StatusOK, "text/html; charset=utf-8", b)
+	// Always revalidate the page itself: it names the current asset versions.
+	c.Header("Cache-Control", "no-cache")
+	c.Data(http.StatusOK, "text/html; charset=utf-8", s.indexHTML)
 }
 
 // decodeBody decodes a single JSON value from the request body into dst,
