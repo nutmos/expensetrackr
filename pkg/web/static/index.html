@@ -227,9 +227,16 @@
             <small class="err" data-for="foreign_currency"></small>
           </div>
           <div class="field">
-            <span class="field-label">Time</span>
+            <span class="field-label">Date and time</span>
             <div class="datetime-row">
-              <input id="spent_at" name="spent_at" type="datetime-local" step="1" required aria-label="Time">
+              <span class="picker-field" id="spent-date-field">
+                <input id="spent_date" name="spent_date" type="date" required aria-label="Date">
+                <span class="picker-text" aria-hidden="true"></span>
+              </span>
+              <span class="picker-field" id="spent-time-field">
+                <input id="spent_time" name="spent_time" type="time" step="60" required aria-label="Time (hour and minute)">
+                <span class="picker-text" aria-hidden="true"></span>
+              </span>
             </div>
             <small class="muted" id="spent-at-preview"></small>
             <small class="err" data-for="spent_at"></small>

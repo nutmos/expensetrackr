@@ -404,19 +404,14 @@
     table.append(thead, tbody, tfoot);
     wrap.append(table);
     bodyEl.append(wrap);
-    bodyEl.append(el("p", "muted small report-printed", `Generated ${shownDate(new Date().toISOString(), true)}`));
+    bodyEl.append(el("p", "muted small report-printed", `Generated ${shownDate(new Date())}`));
   }
 
   // "−1,234.50" for a negative decimal string, else fmtAmount.
   function fmtNeg(s) { return isNeg(s) ? "−" + fmtAmount(String(s).slice(1)) : fmtAmount(s); }
 
-  // "YYYY-MM-DD HH:MM" in the device's time zone (the raw value if unparsable).
-  function shownDate(v, seconds) {
-    const d = new Date(v);
-    if (isNaN(d)) return v;
-    const t = `${pad(d.getHours())}:${pad(d.getMinutes())}` + (seconds ? `:${pad(d.getSeconds())}` : "");
-    return `${ymd(d)} ${t}`;
-  }
+  // "DD MMM YYYY HH:mm" in the device's time zone (the raw value if unparsable).
+  const shownDate = (v) => App.fmtDateTime(v);
 
   $("#rb-filter-form").addEventListener("submit", (ev) => {
     ev.preventDefault();

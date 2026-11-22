@@ -37,7 +37,17 @@ td.note { color: var(--muted); min-width: 10em; max-width: 280px; overflow-wrap:
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field-label { font-weight: 600; font-size: 0.9rem; }
 .datetime-row { display: flex; gap: 6px; }
-.datetime-row #spent_at { flex: 1; min-width: 0; }
+#spent-date-field { flex: 1 1 auto; }
+#spent-time-field { flex: 0 0 86px; }
+/* Date / time inputs shown as "DD MMM YYYY" and "HH:mm" whatever the browser
+   locale (issue #163): the native input keeps its picker and keyboard entry,
+   but its own locale-formatted text is hidden under a formatted label. */
+.picker-field { position: relative; display: block; min-width: 0; }
+.picker-field input { width: 100%; cursor: pointer; }
+.picker-field.has-value input { color: transparent; }
+.picker-field.has-value input::-webkit-datetime-edit { color: transparent; }
+.picker-field .picker-text { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); pointer-events: none; white-space: nowrap; overflow: hidden; right: 30px; }
+.picker-field input:focus + .picker-text { opacity: .85; }
 .foreign-row { display: flex; gap: 6px; }
 .foreign-row #foreign_amount { flex: 0 1 34%; min-width: 0; }
 .foreign-row .combo, .foreign-row select { flex: 1 1 66%; min-width: 0; }
