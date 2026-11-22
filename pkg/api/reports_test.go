@@ -116,7 +116,29 @@ func TestIncomeExpenseReport(t *testing.T) {
 		t.Errorf("unencoded plus: %d %v", rec.Code, body)
 	}
 
-	for _, bad := range []string{"from=yesterday", "to=2026-11-01", "from=2026-11-02T00:00:00Z&to=2026-11-01T00:00:00Z"} {
+	// Date-only bounds are whole days in tz: in Bangkok, November excludes
+	// the 999 on Oct 31 23:59:59 and the result matches the RFC 3339 range.
+	rec, body = do(t, h, "GET", "/api/reports/income-expense?from=2026-11-01&to=2026-11-30&tz=Asia/Bangkok", "")
+	if rec.Code != 200 || body["from"] != "2026-11-01" || body["to"] != "2026-11-30" {
+		t.Fatalf("date range: %d %v", rec.Code, body)
+	}
+	if thb := body["currencies"].([]any)[0].(map[string]any); thb["expense"] != "450.25" || thb["income"] != "1020.00" {
+		t.Errorf("date range in Bangkok: %v", thb)
+	}
+	// Without tz the dates are UTC days. Oct 31 23:59:59+07:00 is Oct 31
+	// 16:59:59Z (still outside) and Nov 1 09:00+07:00 is Nov 1 02:00Z
+	// (inside), so the totals are the same.
+	_, body = do(t, h, "GET", "/api/reports/income-expense?from=2026-11-01&to=2026-11-30", "")
+	if thb := body["currencies"].([]any)[0].(map[string]any); thb["expense"] != "450.25" || thb["income"] != "1020.00" {
+		t.Errorf("date range in UTC: %v", thb)
+	}
+	// A single day: Oct 31 in Bangkok holds only the 999 expense.
+	_, body = do(t, h, "GET", "/api/reports/income-expense?from=2026-10-31&to=2026-10-31&tz=%2B07:00", "")
+	if cs := body["currencies"].([]any); len(cs) != 1 || cs[0].(map[string]any)["expense"] != "999.00" {
+		t.Errorf("one day: %v", body)
+	}
+
+	for _, bad := range []string{"from=yesterday", "to=2026-13-01", "from=2026-11-01&tz=Mars/Olympus", "from=2026-11-02T00:00:00Z&to=2026-11-01T00:00:00Z", "from=2026-11-02&to=2026-11-01"} {
 		if rec, b := do(t, h, "GET", "/api/reports/income-expense?"+bad, ""); rec.Code != 400 || fieldsOf(b) == nil {
 			t.Errorf("%s: %d %v", bad, rec.Code, b)
 		}
