@@ -29,7 +29,7 @@ categories are private to them.
   one balance's transactions that can be exported as PDF.
 - **Web page** for everyday use, a **JSON API** with Swagger UI, **API tokens**
   for scripts, **agent skills** for AI assistants, and an **MCP server** that
-  lets LLM clients read and update transactions.
+  lets LLM clients read and update transactions and balances.
 
 ## Quick start
 
@@ -60,7 +60,7 @@ Run the tests with `make test`. Details, flags and requirements:
 | [API](docs/api.md) | Every endpoint and `curl` examples (live spec at `/swagger/`) |
 | [Web page](docs/web.md) | How the built-in web page works |
 | [AI agents](docs/agents.md) | Agent skills (run the server, use the API, log a transaction) and API tokens |
-| [MCP server](docs/mcp.md) | `expense-mcp`: read and update transactions from Claude, Cursor and other MCP clients |
+| [MCP server](docs/mcp.md) | `expense-mcp`: read and update transactions and balances from Claude, Cursor and other MCP clients |
 | [Authentication](docs/auth.md) | Login, sessions, API tokens, CSRF, throttling |
 | [Balances](docs/balances.md) · [Categories](docs/categories.md) · [User profiles](docs/user-profile.md) | Details of each resource |
 | [Reports](docs/reports.md) | Income & expenses, assets & liabilities and balance transactions reports (web page and API, PDF export) |

@@ -58,7 +58,7 @@ func TestProtocol(t *testing.T) {
 	for _, tl := range tools {
 		names = append(names, tl.(map[string]any)["name"].(string))
 	}
-	if got := strings.Join(names, ","); got != "list_balances,list_categories,list_transactions,get_transaction,create_transaction,update_transaction,delete_transaction" {
+	if got := strings.Join(names, ","); got != "list_balances,get_balance,create_balance,update_balance,list_categories,list_transactions,get_transaction,create_transaction,update_transaction,delete_transaction" {
 		t.Fatalf("tools: %s", got)
 	}
 	if resps[1]["id"] != "two" {
@@ -94,7 +94,7 @@ func TestReadOnlyTools(t *testing.T) {
 			t.Fatalf("%s in read-only set", tl.Name)
 		}
 	}
-	if n := len(Tools(&Client{}, true)); n != 4 {
+	if n := len(Tools(&Client{}, true)); n != 5 {
 		t.Fatalf("read-only tools: %d", n)
 	}
 }
@@ -294,5 +294,83 @@ func TestDecimalArg(t *testing.T) {
 	}
 	if err := decodeArgs([]byte(`{"a":true}`), &a); err == nil {
 		t.Fatal("bool accepted as decimal")
+	}
+}
+
+func TestMergeBalanceUpdate(t *testing.T) {
+	card := map[string]any{
+		"uid": "u", "name": "Card", "type": "credit_card", "kind": "liability", "currency": "THB", "description": "main",
+		"balance": nil, "debt": "100.00", "limit": "50000.00", "available": "49900.00", "version": json.Number("3"),
+	}
+	got := mergeBalanceUpdate(card, map[string]string{"limit": "60000", "description": ""})
+	want := map[string]string{"name": "Card", "type": "credit_card", "currency": "THB", "description": "", "debt": "100.00", "limit": "60000"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v", got)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Fatalf("%s: got %q want %q (%v)", k, got[k], v, got)
+		}
+	}
+}
+
+// TestUpdateBalanceRequests checks the read-modify-write against a fake API:
+// PUT with If-Match and the merged body, then hide with the new version.
+func TestUpdateBalanceRequests(t *testing.T) {
+	const uid = "11111111-2222-4333-8444-555555555555"
+	var calls []string
+	var putBody map[string]any
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path+" "+r.Header.Get("If-Match"))
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("ETag", `"4"`)
+			_, _ = w.Write([]byte(`{"uid":"` + uid + `","name":"Cash","type":"payment_account","currency":"THB","description":"","balance":"10.00","debt":null,"limit":null,"hidden":false,"version":4}`))
+		case http.MethodPut:
+			_ = json.NewDecoder(r.Body).Decode(&putBody)
+			w.Header().Set("ETag", `"5"`)
+			_, _ = w.Write([]byte(`{"uid":"` + uid + `","name":"Old cash","type":"payment_account","currency":"THB","balance":"10.00","hidden":false,"version":5}`))
+		case http.MethodPost:
+			_, _ = w.Write([]byte(`{"uid":"` + uid + `","name":"Old cash","hidden":true,"version":6}`))
+		}
+	}))
+	defer api.Close()
+	s := &Server{Tools: Tools(&Client{BaseURL: api.URL, Token: "t"}, false)}
+
+	out := mustCall(t, s, "update_balance", map[string]any{"uid": uid, "name": "Old cash", "hidden": true})
+	if out["hidden"] != true || out["version"].(float64) != 6 {
+		t.Fatalf("result: %v", out)
+	}
+	want := []string{"GET /api/balances/" + uid + " ", "PUT /api/balances/" + uid + ` "4"`, "POST /api/balances/" + uid + `/hide "5"`}
+	if strings.Join(calls, "|") != strings.Join(want, "|") {
+		t.Fatalf("calls: %q", calls)
+	}
+	if putBody["name"] != "Old cash" || putBody["balance"] != "10.00" || putBody["type"] != "payment_account" || putBody["debt"] != nil {
+		t.Fatalf("put body: %v", putBody)
+	}
+
+	// hidden alone: no PUT
+	calls = nil
+	mustCall(t, s, "update_balance", map[string]any{"uid": uid, "hidden": true})
+	if len(calls) != 2 || !strings.HasPrefix(calls[1], "POST /api/balances/"+uid+`/hide "4"`) {
+		t.Fatalf("hide only: %q", calls)
+	}
+
+	// type, stale version and empty updates write nothing
+	calls = nil
+	for _, args := range []map[string]any{
+		{"uid": uid, "type": "credit_card"},
+		{"uid": uid, "version": 3, "name": "x"},
+		{"uid": uid},
+	} {
+		if text, isErr := callTool(t, s, "update_balance", args); !isErr {
+			t.Fatalf("%v: no error: %s", args, text)
+		}
+	}
+	for _, c := range calls {
+		if !strings.HasPrefix(c, "GET ") {
+			t.Fatalf("wrote: %q", calls)
+		}
 	}
 }

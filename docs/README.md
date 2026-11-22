@@ -38,7 +38,7 @@ match the Go JSON shapes.
 - [AI agents](agents.md): the agent skills in `skills/` and API tokens for
   agents.
 - [MCP server](mcp.md): `expense-mcp`, a stdio MCP server that lets LLM
-  clients read and update transactions through the API.
+  clients read and update transactions and balances through the API.
 - [Open questions](open-questions.md): ideas and decisions still open.
 - [User profiles](user-profile.md): the `users` and `user_identities` tables,
   the `/api/users` API, and the auth-readiness decisions.
