@@ -30,9 +30,9 @@ func (s *Server) registerReportRoutes(api *gin.RouterGroup) {
 	api.GET("/reports/"+report.BalanceTransactionsID, s.balanceTransactionsReport)
 }
 
-// incomeExpenseReport answers GET /api/reports/income-expense?from=&to=
-// (both optional RFC 3339 date-times with offset, inclusive, like the
-// transaction list filter).
+// incomeExpenseReport answers GET /api/reports/income-expense?from=&to=&tz=
+// (all optional; dates or RFC 3339 date-times, inclusive, like the
+// transaction list filter: see parseTimeRange).
 func (s *Server) incomeExpenseReport(c *gin.Context) {
 	fields := map[string]string{}
 	from, to := parseTimeRange(c, fields)
@@ -76,7 +76,7 @@ func echoTime(c *gin.Context, t *time.Time, name string) *string {
 // balanceTransactionsReport answers
 // GET /api/reports/balance-transactions?balance_uid=&from=&to=: a statement
 // of one balance (hidden ones included). balance_uid is required; from and
-// to are optional, inclusive RFC 3339 bounds like the other reports.
+// to (and tz) are optional, inclusive bounds like the other reports.
 func (s *Server) balanceTransactionsReport(c *gin.Context) {
 	fields := map[string]string{}
 	uid := common_type.NormalizeUID(c.Query("balance_uid"))

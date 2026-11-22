@@ -10,9 +10,9 @@ and SGD accounts sees one section for each.
 
 | Report | Web page | API |
 |---|---|---|
-| Income & expenses | `/reports/income-expense?from=YYYY-MM-DD&to=YYYY-MM-DD` | `GET /api/reports/income-expense?from=<RFC 3339>&to=<RFC 3339>` |
+| Income & expenses | `/reports/income-expense?from=YYYY-MM-DD&to=YYYY-MM-DD` | `GET /api/reports/income-expense?from=<date or RFC 3339>&to=<date or RFC 3339>[&tz=<zone>]` |
 | Assets & liabilities | `/reports/assets-liabilities` | `GET /api/reports/assets-liabilities` |
-| Balance transactions | `/reports/balance-transactions?balance=<uid>&from=YYYY-MM-DD&to=YYYY-MM-DD` | `GET /api/reports/balance-transactions?balance_uid=<uid>&from=<RFC 3339>&to=<RFC 3339>` |
+| Balance transactions | `/reports/balance-transactions?balance=<uid>&from=YYYY-MM-DD&to=YYYY-MM-DD` | `GET /api/reports/balance-transactions?balance_uid=<uid>&from=<date or RFC 3339>&to=<date or RFC 3339>[&tz=<zone>]` |
 
 `GET /api/reports` lists the available reports (`id`, `name`, `description`,
 `path`), so clients can discover new ones as they are added. `/reports`

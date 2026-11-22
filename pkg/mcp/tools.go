@@ -250,8 +250,9 @@ func listTransactionsTool(c *Client) Tool {
 			"Category names are not included: map category_uid with list_categories. " +
 			"Paged: while next_cursor is not null, call again with cursor=next_cursor and the same filters to get more.",
 		InputSchema: obj(map[string]any{
-			"from":         str("Only transactions at or after this time, RFC 3339 with offset, e.g. 2026-10-01T00:00:00+08:00."),
-			"to":           str("Only transactions at or before this time, RFC 3339 with offset, e.g. 2026-10-31T23:59:59+08:00."),
+			"from":         str("Only transactions on or after this date (YYYY-MM-DD, from the start of that day in tz), e.g. 2026-10-01. An RFC 3339 date-time with offset (2026-10-01T09:00:00+08:00) is also accepted for an exact time."),
+			"to":           str("Only transactions on or before this date (YYYY-MM-DD, through the end of that day in tz), e.g. 2026-10-31. An RFC 3339 date-time with offset is also accepted for an exact time."),
+			"tz":           str("Time zone for date-only from/to: an IANA name (Asia/Bangkok) or a UTC offset (+07:00). Default UTC. Use the user's time zone; ask if unknown."),
 			"type":         enum("Only this type.", append(append([]string{}, writableTypes...), "balance_adjustment", "beginning_balance")...),
 			"category_uid": str("Only transactions in this category (uid from list_categories)."),
 			"balance_uid":  str("Only transactions from or to this balance (uid from list_balances)."),
@@ -264,6 +265,7 @@ func listTransactionsTool(c *Client) Tool {
 			var a struct {
 				From        string `json:"from"`
 				To          string `json:"to"`
+				TZ          string `json:"tz"`
 				Type        string `json:"type"`
 				CategoryUID string `json:"category_uid"`
 				BalanceUID  string `json:"balance_uid"`
@@ -283,6 +285,7 @@ func listTransactionsTool(c *Client) Tool {
 			q := url.Values{"limit": {strconv.Itoa(limit)}}
 			setIf(q, "from", a.From)
 			setIf(q, "to", a.To)
+			setIf(q, "tz", a.TZ)
 			setIf(q, "type", a.Type)
 			setIf(q, "category_uid", a.CategoryUID)
 			setIf(q, "balance_uid", a.BalanceUID)

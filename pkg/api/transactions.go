@@ -269,26 +269,66 @@ func parseListFilter(c *gin.Context) (store.ListFilter, map[string]string) {
 	return f, fields
 }
 
-// parseTimeRange reads the optional ?from= and ?to= RFC 3339 query
-// parameters (inclusive bounds). Problems are added to fields.
+// parseTimeRange reads the optional ?from= and ?to= query parameters
+// (inclusive bounds). Each is either an RFC 3339 date-time with offset or a
+// plain date (YYYY-MM-DD): a date means the whole day, so from is its first
+// instant and to its last, in the time zone named by the optional ?tz=
+// (IANA name such as Asia/Bangkok, or an offset such as +07:00; default
+// UTC). Problems are added to fields.
 func parseTimeRange(c *gin.Context, fields map[string]string) (from, to *time.Time) {
-	parseTime := func(name string) *time.Time {
-		raw := queryTime(c, name)
+	loc := time.UTC
+	if raw := queryTime(c, "tz"); strings.TrimSpace(raw) != "" {
+		l, err := parseZone(raw)
+		if err != nil {
+			fields["tz"] = err.Error()
+		} else {
+			loc = l
+		}
+	}
+	parseTime := func(name string, endOfDay bool) *time.Time {
+		raw := strings.TrimSpace(queryTime(c, name))
 		if raw == "" {
 			return nil
 		}
+		if d, err := time.ParseInLocation(time.DateOnly, raw, loc); err == nil {
+			if endOfDay {
+				// The last instant of the day (a day is not always 24 hours).
+				d = time.Date(d.Year(), d.Month(), d.Day()+1, 0, 0, 0, 0, loc).Add(-time.Nanosecond)
+			}
+			return &d
+		}
 		t, err := transaction.ParseTimestamp(raw)
 		if err != nil {
-			fields[name] = err.Error()
+			fields[name] = "must be a date (YYYY-MM-DD) or an RFC 3339 / ISO 8601 date-time with a timezone offset, e.g. 2026-10-06 or 2026-10-06T21:06:00+08:00"
 			return nil
 		}
 		return &t
 	}
-	from, to = parseTime("from"), parseTime("to")
+	from, to = parseTime("from", false), parseTime("to", true)
 	if from != nil && to != nil && from.After(*to) {
 		fields["to"] = "must not be earlier than from"
 	}
 	return from, to
+}
+
+// parseZone reads a ?tz= value: "UTC", "Z", an offset ("+07:00", "-0530")
+// or an IANA time zone name ("Asia/Bangkok").
+func parseZone(raw string) (*time.Location, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "Z" || strings.EqualFold(raw, "UTC") {
+		return time.UTC, nil
+	}
+	if raw[0] == '+' || raw[0] == '-' {
+		for _, layout := range []string{"-07:00", "-0700", "-07"} {
+			if t, err := time.Parse(layout, raw); err == nil {
+				_, off := t.Zone()
+				return time.FixedZone(raw, off), nil
+			}
+		}
+	} else if loc, err := time.LoadLocation(raw); err == nil && raw != "Local" {
+		return loc, nil
+	}
+	return nil, errors.New("must be an IANA time zone (e.g. Asia/Bangkok) or a UTC offset (e.g. +07:00)")
 }
 
 // queryTime is the raw ?name= timestamp. An unencoded "+08:00" in a query
