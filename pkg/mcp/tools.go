@@ -252,7 +252,7 @@ func listTransactionsTool(c *Client) Tool {
 		InputSchema: obj(map[string]any{
 			"from":         str("Only transactions at or after this time, RFC 3339 with offset, e.g. 2026-10-01T00:00:00+08:00."),
 			"to":           str("Only transactions at or before this time, RFC 3339 with offset, e.g. 2026-10-31T23:59:59+08:00."),
-			"type":         enum("Only this type.", append(append([]string{}, writableTypes...), "balance_adjustment")...),
+			"type":         enum("Only this type.", append(append([]string{}, writableTypes...), "balance_adjustment", "beginning_balance")...),
 			"category_uid": str("Only transactions in this category (uid from list_categories)."),
 			"balance_uid":  str("Only transactions from or to this balance (uid from list_balances)."),
 			"limit":        map[string]any{"type": "integer", "minimum": 1, "maximum": maxListLimit, "description": fmt.Sprintf("Page size, default %d, at most %d.", defaultListLimit, maxListLimit)},
@@ -462,7 +462,7 @@ func updateTransactionTool(c *Client) Tool {
 	props["interest_amount"] = decimalSchema(descInterest + ` Send "" to remove it.`)
 	props["fee_amount"] = decimalSchema(descFee + ` Send "" to remove it.`)
 	props["gain_loss"] = decimalSchema(descGainLoss + ` Send "" to remove it.`)
-	props["adjustment_direction"] = enum("Balance adjustments only: whether the adjustment raised (increase) or lowered (decrease) the balance (for an asset) or the debt (for a credit card or other liability).", "increase", "decrease")
+	props["adjustment_direction"] = enum("Balance adjustments and beginning balances only: whether the adjustment raised (increase) or lowered (decrease) the balance (for an asset) or the debt (for a credit card or other liability); for a beginning balance, decrease means it started below zero.", "increase", "decrease")
 	return Tool{
 		Name:  "update_transaction",
 		Title: "Update a transaction",
@@ -470,7 +470,8 @@ func updateTransactionTool(c *Client) Tool {
 			"Balances are corrected automatically (the old effect is reversed, the new one applied). " +
 			"When the type changes, send the fields the new type needs (e.g. category_uid when changing a transfer to an expense, to_balance_uid when changing to a transfer); " +
 			"to_balance_uid is dropped automatically for types without a destination, category_uid for a transfer (and for a repay_debt left without interest or fees, or an asset_sale left without gain_loss), foreign_amount/foreign_currency, interest_amount/fee_amount and gain_loss/entire_asset_sale for types that do not allow them. " +
-			"A balance_adjustment can be edited too (amount, adjustment_direction, balance_uid — any balance type —, spent_at, note) but stays a balance adjustment; its balance moves by the difference. Returns the updated transaction.",
+			"A balance_adjustment can be edited too (amount, adjustment_direction, balance_uid — any balance type —, spent_at, note) but stays a balance adjustment; its balance moves by the difference. " +
+			"A beginning_balance (the amount a balance started with) can be edited the same way except balance_uid; its amount may be 0 and its spent_at may not be later than the balance's other transactions. Returns the updated transaction.",
 		InputSchema: obj(props, "uid"),
 		Idempotent:  true,
 		Handler: func(ctx context.Context, raw json.RawMessage) (any, error) {
@@ -548,7 +549,7 @@ func mergeUpdate(cur map[string]any, changes map[string]string) (map[string]stri
 		body[k] = v
 	}
 	typ := strings.ToLower(strings.TrimSpace(body["type"]))
-	if typ != "balance_adjustment" {
+	if typ != "balance_adjustment" && typ != "beginning_balance" {
 		delete(body, "adjustment_direction") // let the API reject an explicit one
 		if v, ok := changes["adjustment_direction"]; ok {
 			body["adjustment_direction"] = v
@@ -642,7 +643,8 @@ func deleteTransactionTool(c *Client) Tool {
 		Name:  "delete_transaction",
 		Title: "Delete a transaction",
 		Description: "Permanently delete a transaction; its effect on the balances is reversed. " +
-			"Confirm with the user first (show amount, account, date and note). Deleting a balance_adjustment reverts the balance correction it recorded.",
+			"Confirm with the user first (show amount, account, date and note). Deleting a balance_adjustment reverts the balance correction it recorded. " +
+			"A beginning_balance cannot be deleted (edit its amount instead).",
 		InputSchema: obj(map[string]any{
 			"uid":     str("uid of the transaction to delete."),
 			"version": map[string]any{"type": "integer", "minimum": 1, "description": "Optional: the version you showed the user; if the transaction changed since, nothing is deleted."},

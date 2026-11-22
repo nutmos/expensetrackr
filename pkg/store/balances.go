@@ -29,7 +29,8 @@ func nullInt(p *int64) any {
 
 // CreateBalance inserts a validated balance owned by userUID, assigns a new
 // UUID v4 as UID, and fills in ID and CreatedAt. Any UID already on b is
-// overwritten.
+// overwritten. Its beginning_balance transaction (the amount it starts with,
+// dated now) is recorded in the same database transaction.
 func (s *Store) CreateBalance(ctx context.Context, userUID string, b *balance.Balance) error {
 	scale, ok := money.MinorUnits(b.Currency)
 	if !ok {
@@ -39,17 +40,25 @@ func (s *Store) CreateBalance(ctx context.Context, userUID string, b *balance.Ba
 	if err != nil {
 		return err
 	}
-	b.UID = uid
-	b.CreatedAt = s.nowRFC3339()
-	b.UpdatedAt, b.Version, b.Hidden = nil, 1, false
-	err = s.db.QueryRowContext(ctx,
-		`INSERT INTO balances (uid, user_uid, name, type, currency, description, amount_scale, balance_minor, debt_minor, limit_minor, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
-		b.UID, userUID, b.Name, string(b.Type), b.Currency, b.Description, scale,
-		nullInt(b.BalanceMinor), nullInt(b.DebtMinor), nullInt(b.LimitMinor), b.CreatedAt).Scan(&b.ID)
+	next := *b
+	next.UID = uid
+	next.Scale = scale
+	next.CreatedAt = s.nowRFC3339()
+	next.UpdatedAt, next.Version, next.Hidden = nil, 1, false
+	err = s.inTx(ctx, "insert balance", func(tx *sql.Tx) error {
+		if err := tx.QueryRowContext(ctx,
+			`INSERT INTO balances (uid, user_uid, name, type, currency, description, amount_scale, balance_minor, debt_minor, limit_minor, created_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+			next.UID, userUID, next.Name, string(next.Type), next.Currency, next.Description, scale,
+			nullInt(next.BalanceMinor), nullInt(next.DebtMinor), nullInt(next.LimitMinor), next.CreatedAt).Scan(&next.ID); err != nil {
+			return fmt.Errorf("insert balance: %w", err)
+		}
+		return recordBeginningBalance(ctx, tx, userUID, next, next.CreatedAt, s.now())
+	})
 	if err != nil {
-		return fmt.Errorf("insert balance: %w", err)
+		return err
 	}
+	*b = next
 	return nil
 }
 
@@ -166,9 +175,12 @@ func (s *Store) UpdateBalanceWith(ctx context.Context, userUID string, id int64,
 		if next.Type != cur.Type {
 			return fmt.Errorf("update balance: type cannot change (%s -> %s)", cur.Type, next.Type)
 		}
-		if next.Currency != cur.Currency {
+		currencyChange := next.Currency != cur.Currency
+		if currencyChange {
+			// The beginning balance does not count: it follows the balance.
 			var n int
-			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM transactions WHERE user_uid = $1 AND (balance_uid = $2 OR to_balance_uid = $3)`, userUID, cur.UID, cur.UID).Scan(&n); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM transactions WHERE user_uid = $1 AND (balance_uid = $2 OR to_balance_uid = $3) AND type <> $4`,
+				userUID, cur.UID, cur.UID, string(transaction.BeginningBalance)).Scan(&n); err != nil {
 				return fmt.Errorf("update balance: %w", err)
 			}
 			if n > 0 {
@@ -188,7 +200,12 @@ func (s *Store) UpdateBalanceWith(ctx context.Context, userUID string, id int64,
 		if n, err := res.RowsAffected(); err != nil || n != 1 {
 			return ErrVersionConflict
 		}
-		if err := recordBalanceAdjustment(ctx, tx, userUID, cur, next, now, s.now()); err != nil {
+		next.Scale = scale
+		if currencyChange {
+			if err := resetBeginningBalance(ctx, tx, userUID, next, now); err != nil {
+				return err
+			}
+		} else if err := recordBalanceAdjustment(ctx, tx, userUID, cur, next, now, s.now()); err != nil {
 			return err
 		}
 		saved = next

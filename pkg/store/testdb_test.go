@@ -3,6 +3,8 @@ package store
 import (
 	"os"
 	"testing"
+
+	"github.com/nutmos/expensetrackr/pkg/transaction"
 )
 
 // testURL is storetest.URL for this package's own tests (which can't import
@@ -37,4 +39,16 @@ func openTestStore(t testing.TB) *Store {
 	}
 	t.Cleanup(func() { st.Close() })
 	return st
+}
+
+// withoutBeginning drops the balances' beginning balances from a List
+// result (every balance has one from the start): withoutBeginning(st.List(...)).
+func withoutBeginning(items []transaction.Transaction, err error) ([]transaction.Transaction, error) {
+	out := items[:0:0]
+	for _, e := range items {
+		if e.Type != transaction.BeginningBalance {
+			out = append(out, e)
+		}
+	}
+	return out, err
 }

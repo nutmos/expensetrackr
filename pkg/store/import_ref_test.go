@@ -51,7 +51,7 @@ func TestCreateBulkStore(t *testing.T) {
 			t.Errorf("%+v: balance moved %s -> %s", opts, payAfter, now)
 		}
 	}
-	list, _ := f.st.List(ctx, f.userUID, ListFilter{})
+	list, _ := withoutBeginning(f.st.List(ctx, f.userUID, ListFilter{}))
 	if len(list) != 1 {
 		t.Errorf("rows %d, want 1", len(list))
 	}

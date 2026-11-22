@@ -13,7 +13,7 @@ func (e Transaction) DestinationCurrency() string {
 func (e Transaction) Effects() []Effect {
 	amt := e.AmountMinor
 	switch e.Type {
-	case BalanceAdjustment:
+	case BalanceAdjustment, BeginningBalance:
 		if e.AdjustmentDirection != nil && *e.AdjustmentDirection == Decrease {
 			amt = -amt
 		}

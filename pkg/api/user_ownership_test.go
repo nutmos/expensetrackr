@@ -37,10 +37,11 @@ func TestBalancesAndTransactionsArePerUser(t *testing.T) {
 	if _, l := do(t, alice, "GET", "/api/balances", ""); l["count"].(float64) != 1 {
 		t.Errorf("alice balance list: %v", l)
 	}
-	if _, l := do(t, bob, "GET", "/api/transactions", ""); l["count"].(float64) != 0 {
+	// (Expenses only: each balance has its own beginning balance too.)
+	if _, l := do(t, bob, "GET", "/api/transactions?type=expense", ""); l["count"].(float64) != 0 {
 		t.Errorf("bob tx list: %v", l)
 	}
-	if _, l := do(t, alice, "GET", "/api/transactions", ""); l["count"].(float64) != 1 {
+	if _, l := do(t, alice, "GET", "/api/transactions?type=expense", ""); l["count"].(float64) != 1 {
 		t.Errorf("alice tx list: %v", l)
 	}
 
@@ -89,7 +90,7 @@ func TestBalancesAndTransactionsArePerUser(t *testing.T) {
 			t.Errorf("bearer bob GET %s: %d", path, rec.Code)
 		}
 	}
-	if rec := anon.req("GET", "/api/transactions", "", bearer(tok.Token)); !strings.Contains(rec.Body.String(), `"count":0`) {
+	if rec := anon.req("GET", "/api/transactions?type=expense", "", bearer(tok.Token)); !strings.Contains(rec.Body.String(), `"count":0`) {
 		t.Errorf("bearer bob list: %s", rec.Body)
 	}
 }

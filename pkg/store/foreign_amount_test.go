@@ -45,7 +45,7 @@ func TestForeignAmountStored(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	list, err := f.st.List(ctx, f.userUID, ListFilter{})
+	list, err := withoutBeginning(f.st.List(ctx, f.userUID, ListFilter{}))
 	if err != nil || len(list) != 1 {
 		t.Fatalf("list: %v %d", err, len(list))
 	}

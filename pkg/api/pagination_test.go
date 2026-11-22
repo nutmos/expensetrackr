@@ -41,7 +41,7 @@ func TestTransactionPagination(t *testing.T) {
 	}
 	_, all := do(t, h, "GET", "/api/transactions", "")
 	want := uidsOf(t, all)
-	if len(want) != 7 || all["next_cursor"] != nil {
+	if len(want) != 8 || all["next_cursor"] != nil { // + Cash's beginning balance
 		t.Fatalf("unpaged list: %d rows, next_cursor %v", len(want), all["next_cursor"])
 	}
 
@@ -75,9 +75,9 @@ func TestTransactionPagination(t *testing.T) {
 	}
 
 	// An exact multiple of the page size: the last full page has no cursor.
-	_, b := do(t, h, "GET", "/api/transactions?limit=7", "")
-	if b["next_cursor"] != nil || len(uidsOf(t, b)) != 7 {
-		t.Errorf("limit=7: next_cursor %v, %d rows", b["next_cursor"], len(uidsOf(t, b)))
+	_, b := do(t, h, "GET", "/api/transactions?limit=8", "")
+	if b["next_cursor"] != nil || len(uidsOf(t, b)) != 8 {
+		t.Errorf("limit=8: next_cursor %v, %d rows", b["next_cursor"], len(uidsOf(t, b)))
 	}
 
 	// Rows added or deleted after page 1 don't shift page 2.
@@ -128,9 +128,16 @@ func TestTransactionBalanceFilter(t *testing.T) {
 	t1 := post(transferBody(bank, cash, "30", "THB", "2026-10-03T08:00:00Z", "")) // cash is the destination
 	t2 := post(transferBody(cash, bank, "40", "THB", "2026-10-04T08:00:00Z", "")) // cash is the source
 
+	// Cash's beginning balance was moved back to e1's time; it is older
+	// (created first), so it comes last.
+	_, bb := do(t, alice, "GET", "/api/transactions?balance_uid="+cash+"&type=beginning_balance", "")
+	begin := uidsOf(t, bb)
+	if len(begin) != 1 {
+		t.Fatalf("cash beginning balance: %v", bb)
+	}
 	rec, b := do(t, alice, "GET", "/api/transactions?balance_uid="+cash, "")
-	if rec.Code != 200 || fmt.Sprint(uidsOf(t, b)) != fmt.Sprint([]string{t2, t1, e1}) {
-		t.Errorf("cash rows: %d %v, want %v", rec.Code, uidsOf(t, b), []string{t2, t1, e1})
+	if want := []string{t2, t1, e1, begin[0]}; rec.Code != 200 || fmt.Sprint(uidsOf(t, b)) != fmt.Sprint(want) {
+		t.Errorf("cash rows: %d %v, want %v", rec.Code, uidsOf(t, b), want)
 	}
 	// Combined with type and paging.
 	_, b = do(t, alice, "GET", "/api/transactions?balance_uid="+cash+"&type=transfer&limit=1", "")

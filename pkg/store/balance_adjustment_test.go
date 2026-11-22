@@ -85,7 +85,7 @@ func TestManualEditRecordsAdjustment(t *testing.T) {
 	// Ordinary transactions are not affected and do not show up in the filter.
 	f.create(f.tx("expense", "10", "THB", f.pay, nil))
 	f.want(f.pay, "940.00", 3)
-	all, _ := f.st.List(context.Background(), f.userUID, ListFilter{})
+	all, _ := withoutBeginning(f.st.List(context.Background(), f.userUID, ListFilter{}))
 	if len(all) != 5 || len(f.adjustments()) != 4 {
 		t.Errorf("list %d, adjustments %d", len(all), len(f.adjustments()))
 	}

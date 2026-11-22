@@ -93,8 +93,8 @@ func TestPerUserStoreIsolation(t *testing.T) {
 	if err := st.Create(ctx, bob.UID, &cross); !errors.As(err, &ve) || ve.Fields["balance_uid"] == "" {
 		t.Fatalf("cross-user create: %v", err)
 	}
-	alist, _ := st.List(ctx, alice.UID, ListFilter{})
-	blist, _ := st.List(ctx, bob.UID, ListFilter{})
+	alist, _ := withoutBeginning(st.List(ctx, alice.UID, ListFilter{}))
+	blist, _ := withoutBeginning(st.List(ctx, bob.UID, ListFilter{}))
 	if len(alist) != 1 || len(blist) != 0 {
 		t.Errorf("lists alice=%d bob=%d", len(alist), len(blist))
 	}

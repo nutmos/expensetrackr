@@ -124,6 +124,7 @@ pkg/store/                         persistence (Postgres via pgx, database/sql)
   reports.go                       SumFlows: aggregate income / expense rows for the income & expense report
   balances.go                      table "balances": CreateBalance, ListBalances, GetBalance, UpdateBalance(With), DeleteBalance(With)
   adjustments.go                   balance_adjustment transactions recorded by manual balance edits
+  beginning_balance.go             beginning_balance transactions: recorded with each balance, kept its earliest transaction
   categories.go                    table "user_categories" (one JSON row per user): CreateCategory, ListCategories, GetCategoryByUID, UpdateCategory, DeleteCategory
   users.go                         tables "users", "user_identities": CreateUser, ListUsers, GetUserByUID, UpdateUser, DeleteUser, SetPasswordHash, CreateIdentity, ListIdentities, FindUserByIdentity
   schema.go                        baseline schema (v1): every table and index

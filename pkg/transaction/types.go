@@ -20,7 +20,7 @@ type Transaction struct {
 	Amount       string  `json:"amount"`         // decimal string, e.g. "120.50"
 	AmountMinor  int64   `json:"amount_minor"`   // integer minor units, e.g. 12050
 	Currency     string  `json:"currency"`       // ISO 4217, e.g. "THB"
-	Type         Type    `json:"type"`           // expense | income | transfer | asset_purchase | return_on_investment | asset_sale | repay_debt | balance_adjustment
+	Type         Type    `json:"type"`           // expense | income | transfer | asset_purchase | return_on_investment | asset_sale | repay_debt | balance_adjustment | beginning_balance
 	BalanceUID   UID     `json:"balance_uid"`    // paying (expense, asset_purchase), receiving (income, return_on_investment, asset_sale) or source (transfer) balance
 	Account      string  `json:"account"`        // denormalized balance name at write time
 	ToBalanceUID *UID    `json:"to_balance_uid"` // transfer / asset_purchase destination, return_on_investment linked asset, asset_sale sold asset; null otherwise
@@ -38,9 +38,12 @@ type Transaction struct {
 	// edit that recorded it already set the value). Editing or deleting a row
 	// with false leaves balances alone.
 	AdjustsBalances bool `json:"adjusts_balances"`
-	// AdjustmentDirection is set only for type balance_adjustment: whether the
-	// manual edit increased or decreased the edited amount (balance for an
-	// asset, debt for a liability). Amount is always the positive difference.
+	// AdjustmentDirection is set only for types balance_adjustment and
+	// beginning_balance: whether the manual edit increased or decreased the
+	// edited amount (balance for an asset, debt for a liability), or for a
+	// beginning balance the sign of the starting amount (decrease = below
+	// zero, e.g. an overdrawn account). Amount is the positive difference
+	// (a beginning balance may be 0).
 	AdjustmentDirection *Direction `json:"adjustment_direction"`
 	// Cross-currency transfers only (null otherwise): the amount credited to
 	// the destination in its own currency, the rate used (destination units
@@ -141,8 +144,9 @@ type CreateInput struct {
 	// again (POST /api/balances/:uid/unhide does).
 	EntireAssetSale bool `json:"entire_asset_sale"`
 	// AdjustmentDirection ("increase" | "decrease") is required when editing
-	// a balance_adjustment (PUT only; see ValidateAdjustment) and must be
-	// empty or null otherwise.
+	// a balance_adjustment or beginning_balance (PUT only; see
+	// ValidateAdjustment and ValidateBeginningBalance) and must be empty or
+	// null otherwise.
 	AdjustmentDirection *string `json:"adjustment_direction"`
 
 	// IgnoredUID accepts a "uid" in PUT bodies so a previous response can be
@@ -214,7 +218,28 @@ const (
 	// difference. Its effect is on the balance's amount as shown: increase
 	// raises an asset's balance or a liability's debt.
 	BalanceAdjustment Type = "balance_adjustment"
+	// BeginningBalance ("Beginning Balance") is the amount a balance started
+	// with. The server records exactly one per balance when the balance is
+	// created (POST /api/balances); it cannot be created through the
+	// transactions API and cannot be deleted (it goes only with its balance).
+	// It can be edited like a balance adjustment (amount, direction, date,
+	// note; not its balance), which moves the balance by the difference. Its
+	// amount may be 0; direction decrease means a starting amount below zero.
+	// It is always the balance's earliest transaction: recording a
+	// transaction dated before it moves it back to that transaction's date
+	// and time.
+	BeginningBalance Type = "beginning_balance"
 )
+
+// ServerRecorded reports whether transactions of this type are written only
+// by the server (balance_adjustment, beginning_balance): they cannot be
+// created through the transactions API, and no transaction changes type to
+// or from them.
+func (t Type) ServerRecorded() bool { return t == BalanceAdjustment || t == BeginningBalance }
+
+// HasDirection reports whether the type carries adjustment_direction
+// (balance_adjustment, beginning_balance).
+func (t Type) HasDirection() bool { return t.ServerRecorded() }
 
 // HasDestination reports whether the type uses to_balance_uid (transfer,
 // asset_purchase, return_on_investment, asset_sale and repay_debt).
@@ -270,6 +295,19 @@ const ErrAdjustmentType = "balance_adjustment transactions are created automatic
 // an existing balance_adjustment another type.
 const ErrAdjustmentTypeChange = "a balance adjustment keeps type balance_adjustment (omit type or send balance_adjustment); delete it and record a new transaction instead"
 
+// ErrBeginningBalanceType is the field message for an attempt to create a
+// beginning_balance, or turn another transaction into one, through
+// POST/PUT /api/transactions.
+const ErrBeginningBalanceType = "beginning_balance transactions are created automatically when a balance is created (POST /api/balances); they cannot be created here, and other transactions cannot be turned into one"
+
+// ErrBeginningBalanceTypeChange is the field message for a PUT that tries to
+// give an existing beginning_balance another type.
+const ErrBeginningBalanceTypeChange = "a beginning balance keeps type beginning_balance (omit type or send beginning_balance)"
+
+// ErrBeginningBalanceMove is the balance_uid message for a PUT that tries to
+// move a beginning balance to another balance.
+const ErrBeginningBalanceMove = "a beginning balance belongs to the balance it was created with and cannot be moved to another balance"
+
 // ConversionRate is one direction of the conversion a cross-currency
 // transfer actually made: Rate units of To per 1 From. It has the same
 // from/to/rate shape as GET /api/exchange-rates.
@@ -306,6 +344,8 @@ type ConversionRate struct {
 //	          to_balance_uid   value -= amount  (sold other_asset down by the principal)
 //	balance_adjustment balance_uid amount ±= amount (ByAmount: increase raises an asset's
 //	                           balance or a liability's debt; decrease lowers it)
+//	beginning_balance balance_uid amount ±= amount (ByAmount, like balance_adjustment;
+//	                           amount may be 0)
 type Effect struct {
 	BalanceUID UID
 	Field      string // "balance_uid" or "to_balance_uid" (for error messages)
@@ -313,7 +353,8 @@ type Effect struct {
 	Currency   string // currency of Delta ("" = the transaction currency)
 	// ByAmount means Delta changes the balance's amount as shown (balance
 	// of an asset, debt of a liability) instead of its value; the value
-	// change is -Delta for a liability. Only balance adjustments use it,
+	// change is -Delta for a liability. Only balance adjustments and
+	// beginning balances use it,
 	// since the transaction alone does not know the balance's kind.
 	ByAmount bool
 }

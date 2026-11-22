@@ -23,10 +23,11 @@ All responses are JSON. Every error looks like
 only on validation and conflict errors.
 - Some errors also carry a machine-readable `"code"`: `version_required`,
   `version_conflict` (with `"current"`, the record as it is now),
-  `balance_in_use`, or `balance_adjustment_readonly` (a write that would
-  create a balance adjustment or change a transaction's type to or from
-  `balance_adjustment`; in practice only seen per item in bulk imports, since
-  single writes are rejected with 422 first).
+  `balance_in_use`, `balance_adjustment_readonly` (a write that would
+  create a balance adjustment or beginning balance, or change a transaction's
+  type to or from one; in practice only seen per item in bulk imports, since
+  single writes are rejected with 422 first), or
+  `beginning_balance_undeletable` (DELETE of a beginning balance).
 
 **Versioning** applies to balances and transactions (details in
 [docs/balances.md](balances.md#3-optimistic-locking-versions)):
@@ -38,13 +39,13 @@ only on validation and conflict errors.
 
 | Method | Path                 | Success | Notes |
 |--------|----------------------|---------|-------|
-| POST   | `/api/transactions`      | 201 + transaction, `Location` + `ETag` headers | Moves the balance(s) in the same DB transaction. 422 on validation errors (incl. a missing `category_uid` on any type but transfer, currency ≠ balance currency, `type` `balance_adjustment`), 400 on malformed JSON or unknown fields. Optional `import_ref` (≤ 200 chars, unique per balance; 409 `duplicate_import_ref`). Optional `foreign_amount` + `foreign_currency` (expense, income, asset_purchase, return_on_investment): the amount in another currency, for reference only (never moves a balance; see [docs/data-model.md](data-model.md#foreign-currency-amount)) |
+| POST   | `/api/transactions`      | 201 + transaction, `Location` + `ETag` headers | Moves the balance(s) in the same DB transaction. 422 on validation errors (incl. a missing `category_uid` on any type but transfer, currency ≠ balance currency, `type` `balance_adjustment` or `beginning_balance`), 400 on malformed JSON or unknown fields. Optional `import_ref` (≤ 200 chars, unique per balance; 409 `duplicate_import_ref`). Optional `foreign_amount` + `foreign_currency` (expense, income, asset_purchase, return_on_investment): the amount in another currency, for reference only (never moves a balance; see [docs/data-model.md](data-model.md#foreign-currency-amount)) |
 | POST   | `/api/transactions/bulk` | 201 / 200 `{"created","skipped","failed","valid","dry_run","atomic","written","results":[...],"balances":[...]}` | Up to 500 items with the POST body shape (+ `import_ref`); `atomic` (default true: 422 and nothing written if any item fails), `dry_run`. Duplicate `import_ref` per balance → `skipped`. 413 over 500 items, 2 MiB body. See [docs/bulk-import.md](bulk-import.md) |
-| GET    | `/api/transactions`      | 200 `{"transactions":[...],"count":n,"next_cursor":...}` | Newest first by spend time. Optional `from`, `to` (RFC 3339 with offset, both inclusive), `limit` (1–5000 per page, default 500), `type` (`expense`/`income`/`transfer`/`asset_purchase`/`return_on_investment`/`repay_debt`/`balance_adjustment`; 400 if invalid), `category_uid` (UUID; 400 if malformed), `balance_uid` (UUID; source or destination). **Paged:** while `next_cursor` is not null, send it back as `cursor` with the same filters for the next page (keyset pagination, stable under inserts and deletes) |
+| GET    | `/api/transactions`      | 200 `{"transactions":[...],"count":n,"next_cursor":...}` | Newest first by spend time. Optional `from`, `to` (RFC 3339 with offset, both inclusive), `limit` (1–5000 per page, default 500), `type` (`expense`/`income`/`transfer`/`asset_purchase`/`return_on_investment`/`asset_sale`/`repay_debt`/`balance_adjustment`/`beginning_balance`; 400 if invalid), `category_uid` (UUID; 400 if malformed), `balance_uid` (UUID; source or destination). **Paged:** while `next_cursor` is not null, send it back as `cursor` with the same filters for the next page (keyset pagination, stable under inserts and deletes) |
 | GET    | `/api/transactions/:uid`  | 200 + transaction | `:uid` is the transaction UUID (case-insensitive). **400** if it is not UUID-shaped (including numeric ids such as `/api/transactions/1`), **404** if no such uid. Same for PUT/DELETE |
-| PUT    | `/api/transactions/:uid`  | 200 + updated transaction | Full replace with the same body and rules as POST. An omitted `note` (or `foreign_amount` / `foreign_currency`) clears it; an omitted `import_ref` is kept (`""` clears it). Requires `If-Match` or `"version"` (428 / 409). Reverses the old balance effect and applies the new one. On a **balance adjustment** the body may change `amount`, `currency`, `balance_uid` (any balance type), `spent_at`, `note` and `adjustment_direction` (`increase`/`decrease`, required); `type` must be omitted or `balance_adjustment`, and destination, category, `to_amount`, foreign amount and `import_ref` are not allowed (422). `adjustment_direction` on any other type is a 422. 404 if missing, 422 for invalid values, 400 for malformed JSON or unknown fields |
-| DELETE | `/api/transactions/:uid`  | 204 | Reverses the balance effect (for a balance adjustment: reverts the manual change it recorded). Optional `If-Match` (409 if stale). 404 if missing |
-| POST   | `/api/balances`      | 201 + balance, `Location` header | 422 on validation errors (incl. per-type amount rules), 400 on malformed JSON or unknown fields. Names need not be unique |
+| PUT    | `/api/transactions/:uid`  | 200 + updated transaction | Full replace with the same body and rules as POST. An omitted `note` (or `foreign_amount` / `foreign_currency`) clears it; an omitted `import_ref` is kept (`""` clears it). Requires `If-Match` or `"version"` (428 / 409). Reverses the old balance effect and applies the new one. On a **balance adjustment** the body may change `amount`, `currency`, `balance_uid` (any balance type), `spent_at`, `note` and `adjustment_direction` (`increase`/`decrease`, required); `type` must be omitted or `balance_adjustment`, and destination, category, `to_amount`, foreign amount and `import_ref` are not allowed (422). A **beginning balance** follows the same rules, except that `type` must be omitted or `beginning_balance`, `balance_uid` cannot change, `amount` may be `0`, and `spent_at` may not be later than the balance's other transactions (422). `adjustment_direction` on any other type is a 422. 404 if missing, 422 for invalid values, 400 for malformed JSON or unknown fields |
+| DELETE | `/api/transactions/:uid`  | 204 | Reverses the balance effect (for a balance adjustment: reverts the manual change it recorded). A beginning balance cannot be deleted: 409 `beginning_balance_undeletable`. Optional `If-Match` (409 if stale). 404 if missing |
+| POST   | `/api/balances`      | 201 + balance, `Location` header | 422 on validation errors (incl. per-type amount rules), 400 on malformed JSON or unknown fields. Names need not be unique. Records the balance's `beginning_balance` transaction with the starting amount ([balances.md §2a](balances.md#2a-beginning-balance)) |
 | GET    | `/api/balances`      | 200 `{"balances":[...],"count":n,"totals":[...]}` | Grouped by type, then by name. Optional `type=` filter (400 if invalid). Optional `payable=1` / `payable=true` returns only `payment_account` and `credit_card` (cannot combine with `type=`). Hidden balances are left out unless `include_hidden=1` / `include_hidden=true`. `totals` covers the returned rows, per currency |
 | GET    | `/api/balances/:uid`  | 200 + balance | `:uid` is the balance UUID. 400 if not UUID-shaped (numeric ids are no longer accepted), 404 if missing. Same for PUT/DELETE |
 | PUT    | `/api/balances/:uid`  | 200 + updated balance | Full replace (manual override of the amounts; a balance/debt change records a `balance_adjustment` transaction). `type` is required and must equal the stored type (422 on `type` otherwise). `uid` in the body is ignored. Requires `If-Match` or `"version"` (428 / 409). 409 `balance_in_use` for a currency change while transactions reference it. Returns 404, 409, 422 or 400 as for POST |
@@ -144,7 +145,8 @@ curl -s -X POST http://127.0.0.1:8080/api/transactions -H 'Content-Type: applica
 
 Expense and income rows return `"to_balance_uid":null,"to_account":null`.
 `GET /api/transactions?type=income` lists only income;
-`?type=balance_adjustment` lists only balance adjustments.
+`?type=balance_adjustment` lists only balance adjustments, and
+`?type=beginning_balance` only beginning balances.
 
 Unknown or non-payable `balance_uid` → HTTP 422 on that field:
 

@@ -79,7 +79,7 @@ func valueDelta(b balance.Balance, tx transaction.Transaction) *big.Int {
 // transactions that use b, spent in the range) and after (those spent after
 // the range, used to work back from b's current amount to the closing
 // amount). Both may be in any order; entries are sorted oldest first (by
-// spend time, then by input order). names maps category uids to names.
+// spend time, a beginning balance first, then by input order). names maps category uids to names.
 func BuildBalanceTransactions(b balance.Balance, inRange, after []transaction.Transaction, names map[common_type.UID]string) BalanceTransactions {
 	liability := b.Type.IsLiability()
 	scale := b.Scale
@@ -108,7 +108,14 @@ func BuildBalanceTransactions(b balance.Balance, inRange, after []transaction.Tr
 	}
 
 	txs := append([]transaction.Transaction(nil), inRange...)
-	sort.SliceStable(txs, func(i, j int) bool { return txs[i].SpentTime.Before(txs[j].SpentTime) })
+	// The beginning balance comes first among transactions at the same time:
+	// it is moved to the time of the earliest one recorded before it.
+	sort.SliceStable(txs, func(i, j int) bool {
+		if !txs[i].SpentTime.Equal(txs[j].SpentTime) {
+			return txs[i].SpentTime.Before(txs[j].SpentTime)
+		}
+		return txs[i].Type == transaction.BeginningBalance && txs[j].Type != transaction.BeginningBalance
+	})
 
 	deltas := make([]*big.Int, len(txs))
 	var in, out big.Int

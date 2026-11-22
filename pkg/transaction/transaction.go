@@ -38,7 +38,8 @@ func fieldError(field, msg string) error {
 }
 
 // ParseType normalizes a type a client may write; empty means Expense
-// (backward compat). balance_adjustment is not accepted (see ParseFilterType).
+// (backward compat). balance_adjustment and beginning_balance are not
+// accepted (see ParseFilterType).
 func ParseType(s string) (Type, bool) {
 	switch t := normalizeType(s); t {
 	case "":
@@ -50,10 +51,11 @@ func ParseType(s string) (Type, bool) {
 }
 
 // ParseFilterType parses a list filter type: any stored type, including
-// balance_adjustment. Empty is not valid here (the caller skips the filter).
+// balance_adjustment and beginning_balance. Empty is not valid here (the
+// caller skips the filter).
 func ParseFilterType(s string) (Type, bool) {
 	switch t := normalizeType(s); t {
-	case Expense, Income, Transfer, AssetPurchase, ReturnOnInvestment, AssetSale, RepayDebt, BalanceAdjustment:
+	case Expense, Income, Transfer, AssetPurchase, ReturnOnInvestment, AssetSale, RepayDebt, BalanceAdjustment, BeginningBalance:
 		return t, true
 	}
 	return "", false
@@ -78,8 +80,9 @@ func IsPayableType(t balance.Type) bool {
 //     there; the sold other_asset is to_balance_uid)
 //   - repay_debt: payment_account only (the money that pays the debt)
 //   - balance_adjustment: any balance type (the adjusted balance)
+//   - beginning_balance: any balance type (the balance it starts)
 func SourceAllowed(tt Type, bt balance.Type) bool {
-	if tt == Transfer || tt == BalanceAdjustment {
+	if tt == Transfer || tt.ServerRecorded() {
 		return bt.Valid()
 	}
 	if tt == RepayDebt {
@@ -144,9 +147,10 @@ func DestinationAllowed(tt Type, bt balance.Type) bool {
 // Validate checks the input and returns a normalized Transaction (without ID,
 // CreatedAt, or Account). Account is filled later by AttachPaymentBalance once
 // the balance_uid has been resolved against the store. Type
-// balance_adjustment is rejected (see ValidateAdjustment).
+// balance_adjustment and beginning_balance are rejected (see
+// ValidateAdjustment and ValidateBeginningBalance).
 func (in CreateInput) Validate() (Transaction, error) {
-	return in.validate(false)
+	return in.validate("")
 }
 
 // ValidateAdjustment checks a PUT body for an existing balance_adjustment:
@@ -159,10 +163,26 @@ func (in CreateInput) ValidateAdjustment() (Transaction, error) {
 		return Transaction{}, fieldError("type", ErrAdjustmentTypeChange)
 	}
 	in.Type = string(BalanceAdjustment)
-	return in.validate(true)
+	return in.validate(BalanceAdjustment)
 }
 
-func (in CreateInput) validate(adjustment bool) (Transaction, error) {
+// ValidateBeginningBalance checks a PUT body for an existing
+// beginning_balance: like ValidateAdjustment, except that type must be
+// omitted or beginning_balance and the amount may be 0. Whether balance_uid
+// is still the beginning balance's own balance is checked by the caller,
+// which knows the stored row.
+func (in CreateInput) ValidateBeginningBalance() (Transaction, error) {
+	if t := normalizeType(in.Type); t != "" && t != BeginningBalance {
+		return Transaction{}, fieldError("type", ErrBeginningBalanceTypeChange)
+	}
+	in.Type = string(BeginningBalance)
+	return in.validate(BeginningBalance)
+}
+
+// validate checks the input. fixed is "" for an ordinary transaction (which
+// may not be a server-recorded type), or the server-recorded type of the
+// transaction being edited (BalanceAdjustment, BeginningBalance).
+func (in CreateInput) validate(fixed Type) (Transaction, error) {
 	fields := map[string]string{}
 	var exp Transaction
 
@@ -176,7 +196,11 @@ func (in CreateInput) validate(adjustment bool) (Transaction, error) {
 	exp.Currency = cur
 
 	if known {
-		minor, err := money.ParseAmount(string(in.Amount), exponent)
+		parse := money.ParseAmount
+		if fixed == BeginningBalance {
+			parse = money.ParseNonNegative // a balance may start at 0
+		}
+		minor, err := parse(string(in.Amount), exponent)
 		if err != nil {
 			fields["amount"] = err.Error()
 		} else {
@@ -188,10 +212,12 @@ func (in CreateInput) validate(adjustment bool) (Transaction, error) {
 	}
 
 	tt, okType := ParseType(in.Type)
-	if adjustment {
-		tt, okType = BalanceAdjustment, true
+	if fixed != "" {
+		tt, okType = fixed, true
 	} else if normalizeType(in.Type) == BalanceAdjustment {
 		fields["type"] = ErrAdjustmentType
+	} else if normalizeType(in.Type) == BeginningBalance {
+		fields["type"] = ErrBeginningBalanceType
 	} else if !okType {
 		fields["type"] = "must be one of: expense, income, transfer, asset_purchase, return_on_investment, asset_sale, repay_debt"
 	}
@@ -234,7 +260,7 @@ func (in CreateInput) validate(adjustment bool) (Transaction, error) {
 	// asset_sale. A transfer may not have one; a repay_debt may have an
 	// expense category for its interest and fees only when it has some; an
 	// asset_sale may have one for its gain or loss only when it has one. A
-	// balance_adjustment may not have one.
+	// balance_adjustment or beginning_balance may not have one.
 	cat := common_type.NormalizeUID(in.CategoryUID)
 	if cat == "" {
 		if okType && tt.NeedsCategory() {
@@ -283,12 +309,12 @@ func (in CreateInput) validate(adjustment bool) (Transaction, error) {
 		dir = strings.ToLower(strings.TrimSpace(*in.AdjustmentDirection))
 	}
 	switch {
-	case tt != BalanceAdjustment || !okType:
+	case !tt.HasDirection() || !okType:
 		if dir != "" {
-			fields["adjustment_direction"] = "is only allowed when editing a balance_adjustment"
+			fields["adjustment_direction"] = "is only allowed when editing a balance_adjustment or beginning_balance"
 		}
 	case dir == "":
-		fields["adjustment_direction"] = "is required for a balance adjustment (increase or decrease)"
+		fields["adjustment_direction"] = "is required for " + article(tt) + " " + strings.ReplaceAll(string(tt), "_", " ") + " (increase or decrease)"
 	case dir != string(Increase) && dir != string(Decrease):
 		fields["adjustment_direction"] = "must be increase or decrease"
 	default:
@@ -305,8 +331,8 @@ func (in CreateInput) validate(adjustment bool) (Transaction, error) {
 	// A nil ImportRef means none (create) / keep the stored ref (PUT).
 	if in.ImportRef != nil {
 		if ref := strings.TrimSpace(*in.ImportRef); ref != "" {
-			if tt == BalanceAdjustment {
-				fields["import_ref"] = "is not allowed for a balance adjustment"
+			if tt.ServerRecorded() {
+				fields["import_ref"] = "is not allowed for " + article(tt) + " " + strings.ReplaceAll(string(tt), "_", " ")
 			} else if utf8.RuneCountInString(ref) > MaxImportRefLen {
 				fields["import_ref"] = fmt.Sprintf("must be at most %d characters", MaxImportRefLen)
 			} else if strings.ContainsFunc(ref, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
@@ -538,10 +564,11 @@ func (e *Transaction) AttachDestinationBalance(b balance.Balance) error {
 
 // NeedsCategory reports whether a new or edited transaction of this type must
 // have a category: every type except transfer, repay_debt, asset_sale (whose
-// category is optional) and balance_adjustment (which may not have one).
-// Transactions saved before categories were required may still have none.
+// category is optional), balance_adjustment and beginning_balance (which may
+// not have one). Transactions saved before categories were required may still
+// have none.
 func (t Type) NeedsCategory() bool {
-	return t != Transfer && t != RepayDebt && t != AssetSale && t != BalanceAdjustment
+	return t != Transfer && t != RepayDebt && t != AssetSale && !t.ServerRecorded()
 }
 
 // article is "an" before the vowel-initial type names, else "a".

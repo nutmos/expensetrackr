@@ -80,5 +80,8 @@ func recordBalanceAdjustment(ctx context.Context, tx *sql.Tx, userUID string, cu
 		at.Format(time.RFC3339), at.UTC(), note, createdAt, string(a.direction)); err != nil {
 		return fmt.Errorf("record balance adjustment: %w", err)
 	}
-	return nil
+	// A beginning balance dated in the future comes back to the adjustment.
+	return pullBeginningBalances(ctx, tx, userUID, transaction.Transaction{
+		Type: transaction.BalanceAdjustment, BalanceUID: cur.UID, SpentAt: at.Format(time.RFC3339), SpentTime: at,
+	}, createdAt)
 }

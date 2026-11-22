@@ -3,7 +3,8 @@
 Balances now follow the transactions recorded against them. You can still set
 the amount by hand when it has to match a statement; that edit is recorded as
 a **Balance Adjustment** transaction, which you can later edit or delete like
-any other transaction. Every balance and
+any other transaction. The amount a balance starts with is recorded as its
+**Beginning Balance** transaction (§2a). Every balance and
 transaction has a **version**, so two edits based on the same data cannot
 silently overwrite each other.
 
@@ -36,6 +37,7 @@ is always > 0.
 | `repay_debt` (source) | `balance_uid` (payment_account only) | `balance −= amount + interest_amount + fee_amount` | n/a (not allowed) | paying a card bill or a loan instalment from a bank account |
 | `repay_debt` (destination) | `to_balance_uid` (credit_card / other_liability) | n/a (not allowed) | `debt −= amount` (the principal only; may go negative = in credit) | the card or loan repaid |
 | `balance_adjustment` | `balance_uid` (any type) | `increase`: `balance += amount`; `decrease`: `balance −= amount` | `increase`: `debt += amount`; `decrease`: `debt −= amount` | recorded by a manual balance edit, which already set the value; applied only when the adjustment is later edited or deleted (§2) |
+| `beginning_balance` | `balance_uid` (any type; its own balance) | like `balance_adjustment` from 0: `increase`: `balance += amount`; `decrease`: `balance −= amount` | `increase`: `debt += amount`; `decrease`: `debt −= amount` | recorded when the balance is created, which already set the value; applied only when it is later edited (§2a) |
 
 The code is `transaction.Effects` (signs) and
 `store.applyBalanceEffects` (writes).
@@ -81,10 +83,12 @@ rejected with **422** and nothing is written:
 - The error is on `to_balance_uid` when the destination is the mismatch.
 - So a transfer between a THB and an SGD account cannot be recorded until FX
   support exists. Adjust both balances by hand instead.
-- A balance's **currency cannot change while any transaction references it**:
-  **409** with `"code":"balance_in_use"`. Those transactions' amounts are in
-  the old currency and would be reversed against it. Unreferenced balances
-  may still change currency.
+- A balance's **currency cannot change while any transaction references it**
+  (its own beginning balance aside): **409** with `"code":"balance_in_use"`.
+  Those transactions' amounts are in the old currency and would be reversed
+  against it. Balances referenced only by their beginning balance may still
+  change currency; the beginning balance then takes the new currency and the
+  new amount.
 - The web form fills in the balance's currency when you pick a balance.
 
 ### Negative debt and over-limit
@@ -172,6 +176,70 @@ its type (shown, not changeable) and has a **Direction** field (Increase /
 Decrease, with a hint saying whether it moves the balance or the debt); the
 adjusted balance may be any balance. Deleting one asks for confirmation and
 says that its change will be reverted.
+
+## 2a. Beginning Balance
+
+Every balance has exactly one transaction of type **`beginning_balance`**
+(shown as **"Beginning Balance"**, issue #172): the amount it started with.
+The server records it in the **same database transaction** as
+`POST /api/balances`.
+
+| Field | Value |
+|---|---|
+| `type` | `beginning_balance` |
+| `amount` | the starting `balance` (asset) or `debt` (liability) without its sign; may be `0.00` |
+| `adjustment_direction` | `increase`, or `decrease` when the starting amount is below zero (an overdrawn account, a card in credit) |
+| `balance_uid`, `account`, `currency` | the new balance, its name and currency |
+| `spent_at` | the time of creation: the **server's** current local time with its UTC offset, whole seconds |
+| `note` | `""` |
+| `category_uid`, `to_balance_uid`, `import_ref` | `null` |
+| `adjusts_balances` | `true`: the amount is already in the balance (recording it does not move the balance again) |
+
+**Always the earliest transaction.** Saving a transaction (create, replace or
+bulk import) dated before a balance's beginning balance — as its
+`balance_uid` or `to_balance_uid` — moves the beginning balance back to
+exactly that transaction's `spent_at` (as entered, offset included); its
+`version` goes up and `updated_at` is set. Balances do not move. So you can
+add an account today and then record last month's transactions: the
+beginning balance follows them back. A balance adjustment recorded while the
+beginning balance is dated in the future pulls it back the same way.
+
+**Editable, not creatable or deletable.**
+- `POST /api/transactions` (or a bulk item) with `"type":"beginning_balance"`,
+  or a PUT that changes another transaction to that type: **422** on `type`.
+- `PUT /api/transactions/:uid` on a beginning balance (versioned as usual)
+  works like on a balance adjustment (§2): `amount` (≥ 0), `adjustment_direction`
+  (**required**), `currency` (must match the balance), `spent_at` and `note`
+  may change; `type` must be omitted or `beginning_balance`; `category_uid`,
+  `to_balance_uid`, `to_amount`/`to_currency`, `foreign_amount`/`foreign_currency`
+  and `import_ref` are 422. The balance moves by the difference: changing
+  *increase 1000.00* to *increase 1200.00* raises the balance by 200.00.
+  - `balance_uid` must stay the same (422: it belongs to its balance).
+  - `spent_at` may not be later than any other transaction of the balance
+    (422 on `spent_at`, naming the earliest one); the same time is fine.
+- `DELETE` is **409** with `"code":"beginning_balance_undeletable"`. It is
+  removed only together with its balance (`DELETE /api/balances/:uid` counts
+  it in `deleted_transactions`).
+- Listed in `GET /api/transactions`, filterable with
+  `?type=beginning_balance`; excluded from expense/income totals and the
+  income & expense report, listed first in the balance statement report.
+
+**Existing balances** (schema v9, `pkg/store/migrate_v9.go`) got theirs when
+the database was upgraded: the current amount minus everything their
+transactions did (reversed with the same rules as an edit or delete), dated
+at their earliest transaction, or at the balance's creation time (UTC) when
+they had none.
+
+Guarded in the database: one per balance (unique index
+`transactions_beginning_balance_uq`), no destination, category or import ref
+(`transactions_beginning_balance_check`), `adjustment_direction` set exactly
+on `balance_adjustment` and `beginning_balance` rows
+(`transactions_direction_check`), and an amount of 0 allowed only on this type.
+
+**Web UI.** The new-balance form says the starting amount is recorded as the
+Beginning Balance. On the transactions list it has the adjustment style, a
+signed amount and **Edit** only. Its edit form shows the type and the balance
+but does not let you change them, and has the Direction field.
 
 ## 3. Optimistic locking (versions)
 
@@ -292,7 +360,7 @@ account or a paid-off loan whose history you want to keep.
 **Delete** (`DELETE /api/balances/:uid`): removes the balance **and every
 transaction that references it**, as `balance_uid` or `to_balance_uid`
 (transfers to or from it, asset purchases into it, returns on investment
-linked to it, its balance adjustments).
+linked to it, its balance adjustments and its beginning balance).
 - Each removed transaction's effect on your **other** balances is reversed,
   exactly as if it had been deleted on its own: deleting a savings account
   that received a 300.00 transfer from Cash puts 300.00 back on Cash; deleting

@@ -17,8 +17,8 @@ Transactions are stored in the Postgres table **`transactions`**, with index
 | amount        | `amount`       | `amount_minor bigint` + `amount_scale smallint` (see below)             |
 | amount (raw)  | `amount_minor` | the integer itself, e.g. `12050`                                       |
 | currency      | `currency`     | `char(3)`, ISO 4217 alphabetic code, upper-cased (`THB`, `SGD`, `USD`, …) |
-| type          | `type`         | `text NOT NULL DEFAULT 'expense'`: `expense`, `income`, `transfer`, `asset_purchase`, `return_on_investment`, `asset_sale`, `repay_debt`, or `balance_adjustment` (created by the server only, then editable and deletable; see "Transaction types") |
-| adj. direction | `adjustment_direction` | `text`, `increase` / `decrease` on `balance_adjustment` rows, `NULL` (JSON `null`) otherwise |
+| type          | `type`         | `text NOT NULL DEFAULT 'expense'`: `expense`, `income`, `transfer`, `asset_purchase`, `return_on_investment`, `asset_sale`, `repay_debt`, `balance_adjustment` (created by the server only, then editable and deletable) or `beginning_balance` (one per balance, created with it; editable, not deletable); see "Transaction types" |
+| adj. direction | `adjustment_direction` | `text`, `increase` / `decrease` on `balance_adjustment` and `beginning_balance` rows, `NULL` (JSON `null`) otherwise |
 | payment acct  | `balance_uid`  | `uuid` of of the balance paid from (expense), received into (income, return_on_investment, asset_sale) or moved from (transfer, asset_purchase, repay_debt); no FK |
 | destination   | `to_balance_uid` | `uuid`, transfers, asset purchases, returns on investment, asset sales and debt repayments only (else `null`); UUID of the destination balance (for a return on investment, the linked `other_asset`; for an asset sale, the `other_asset` sold; for a debt repayment, the `credit_card` / `other_liability` repaid); no FK |
 | dest. name    | `to_account`   | denormalized destination name snapshot (transfers, asset purchases, returns on investment, asset sales and debt repayments only, else `null`)    |
@@ -275,6 +275,7 @@ adjusts its balances automatically:
 | `asset_sale` ("Asset Sale") | like income: account `balance += amount + gain_loss`; card `debt −= amount + gain_loss` | the `other_asset` sold: `balance −= amount` (the principal); hidden when `entire_asset_sale` |
 | `repay_debt` ("Repay Debt") | the `payment_account` paid from: `balance −= amount + interest_amount + fee_amount` | the `credit_card` / `other_liability` repaid: `debt −= amount` (may go negative = in credit) |
 | `balance_adjustment` ("Balance Adjustment") | any balance: `increase` raises an asset's `balance` or a liability's `debt` by `amount`, `decrease` lowers it. Recorded by a manual balance edit that already set the value, so this applies only when the adjustment is edited or deleted | n/a |
+| `beginning_balance` ("Beginning Balance") | its own balance: like a balance adjustment from zero (`decrease` = the balance started below zero; `amount` may be 0). Recorded with the balance, which already holds the amount, so this applies only when it is edited | n/a |
 
 **Balance adjustments** are created only by the server, in the same database
 transaction as a manual `PUT /api/balances/:uid` that changes the
@@ -293,6 +294,16 @@ transaction as a manual `PUT /api/balances/:uid` that changes the
   — required —, `balance_uid` of any balance type, `currency`, `spent_at`,
   `note`; it stays a `balance_adjustment`) and deleted with DELETE. The
   balance moves by the difference, or back by the whole change on delete.
+
+**Beginning balances** (issue #172) are created only by the server, one per
+balance, in the same database transaction as `POST /api/balances`: the
+starting `balance` / `debt` as `amount` (≥ 0) and `adjustment_direction`
+(`decrease` when it is below zero), dated at the time of creation. They can
+be edited like a balance adjustment except that `balance_uid` cannot change,
+and they cannot be deleted (409 `beginning_balance_undeletable`; they go
+with their balance). A beginning balance is always its balance's earliest
+transaction: saving a transaction dated before it moves it back to that
+date and time. See [balances.md §2a](balances.md#2a-beginning-balance).
 
 Details (updates, deletes, older transactions, currency rule) are in
 [docs/balances.md](balances.md). The table below says which balance
@@ -436,6 +447,7 @@ versioning lives in `pkg/store/migrate.go`.
 | 6       | balance adjustments editable and deletable: sets `balance_applied = true` on `balance_adjustment` rows, replaces the baseline check that required it false with `transactions_adjustment_check` (no destination or category) |
 | 7       | balances can be hidden: adds `balances.hidden boolean NOT NULL DEFAULT false` |
 | 8       | transaction type `asset_sale`: widens `transactions_type_check`, adds `transactions.gain_loss_minor`, `entire_asset_sale`, `transactions_sale_result_check`, `transactions_sale_proceeds_check` and `transactions_sale_category_check` |
+| 9       | transaction type `beginning_balance`: widens `transactions_type_check`, lets `transactions_amount_minor_check` accept 0 on it, replaces the baseline direction check with `transactions_direction_check`, adds `transactions_beginning_balance_check` (no destination, category or import ref) and the unique index `transactions_beginning_balance_uq` (one per balance), and records one for every existing balance: its current amount minus what its transactions did, dated at its earliest transaction (or its creation) |
 
 **Coming from SQLite?** Earlier versions stored everything in
 `data/expenses.db`. That data is **not migrated**: the Postgres version starts

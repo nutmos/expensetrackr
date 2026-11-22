@@ -53,7 +53,7 @@ match the Go JSON shapes.
   and guidance for agents importing bank statements.
 - [Balances](balances.md): automatic adjustment from transactions (sign
   rules), manual overrides via PUT recorded as Balance Adjustment
-  transactions, optimistic locking (`version`, `ETag`, `If-Match`, 428/409).
+  transactions, the Beginning Balance recorded with each balance, optimistic locking (`version`, `ETag`, `If-Match`, 428/409).
 - [Reports](reports.md): the income & expense and assets & liabilities
   reports (`/api/reports`, the web page's Reports tab) and how to add one.
 - [Currencies](currencies.md): supported ISO 4217 codes, `GET

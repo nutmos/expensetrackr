@@ -106,6 +106,7 @@ func createBalanceTool(c *Client) Tool {
 			"Only use values the user gave: never invent the name, currency or amounts; ask when one is missing. " +
 			"Check list_balances (include_hidden: true) first: if a balance with that name already exists, ask the user whether they mean it instead. " +
 			"Assets (payment_account, other_asset) need balance; liabilities (credit_card, other_liability) need debt and limit. " +
+			"The starting amount is recorded as the balance's beginning_balance transaction. " +
 			"Returns the stored balance with its uid and version.",
 		InputSchema: obj(balanceProperties(), "name", "type", "currency"),
 		Handler: func(ctx context.Context, raw json.RawMessage) (any, error) {

@@ -177,7 +177,7 @@ index on `(balance_uid, import_ref) WHERE import_ref IS NOT NULL`.
      `type: "return_on_investment"`, received into a `payment_account` or
      `credit_card`, with `to_balance_uid` = that asset (its value is not
      changed); with an income category.
-   - never `balance_adjustment`. It is rejected per item. To reconcile a
+   - never `balance_adjustment` or `beginning_balance`. They are rejected per item. To reconcile a
      final difference, edit the balance instead (the recorded adjustment can
      be edited or deleted later).
 4. **`spent_at`** must have an offset. Use the bank's local time zone, e.g.

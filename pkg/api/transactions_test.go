@@ -108,7 +108,8 @@ func TestListOrderingAndFilters(t *testing.T) {
 		}
 	}
 
-	rec, body := do(t, h, "GET", "/api/transactions", "")
+	// (Only expenses: the balances' beginning balances are listed too.)
+	rec, body := do(t, h, "GET", "/api/transactions?type=expense", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list: %d", rec.Code)
 	}
@@ -117,7 +118,7 @@ func TestListOrderingAndFilters(t *testing.T) {
 		t.Errorf("order = %v, want newest first [2.00 3.00 1.00]", got)
 	}
 
-	q := url.Values{"from": {"2026-10-05T10:30:00+08:00"}, "to": {"2026-10-05T11:30:00+08:00"}}
+	q := url.Values{"from": {"2026-10-05T10:30:00+08:00"}, "to": {"2026-10-05T11:30:00+08:00"}, "type": {"expense"}}
 	rec, body = do(t, h, "GET", "/api/transactions?"+q.Encode(), "")
 	if rec.Code != http.StatusOK || strings.Join(amounts(body), ",") != "3.00" {
 		t.Errorf("filtered = %d %v, want [3.00]", rec.Code, amounts(body))

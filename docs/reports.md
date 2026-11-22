@@ -29,7 +29,7 @@ same rule as the totals under the transaction list:
 | `income`, `return_on_investment` | income |
 | `repay_debt` | its `interest_amount` + `fee_amount` count as **expense**, under its category (or no category); the principal is not counted |
 | `asset_sale` | its `gain_loss` counts as **income** when positive (a gain) and as **expense** when negative (a loss), under its category (or no category); the principal is not counted |
-| `transfer`, `asset_purchase`, `balance_adjustment` | not counted (they move value between your balances or correct them) |
+| `transfer`, `asset_purchase`, `balance_adjustment`, `beginning_balance` | not counted (they move value between your balances, correct them or start them) |
 
 `from` and `to` are optional, inclusive bounds on `spent_at` (RFC 3339 with
 offset, like the transaction list filter); omit both for all time. A bad
@@ -121,6 +121,11 @@ The report also has `opening_amount` and `closing_amount`, the totals
 every change made after the range, and the opening amount from the closing
 amount minus the range's net, so both are right even with later
 transactions.
+
+The balance's **beginning balance** is listed like any other transaction (it
+is always the earliest one, before any transaction at the same time), so a
+report over all time opens at 0 and its first row brings the balance to its
+starting amount.
 
 ```bash
 curl -s -b jar 'http://127.0.0.1:8080/api/reports/balance-transactions?balance_uid=<uid>&from=2026-11-01T00:00:00%2B07:00&to=2026-11-30T23:59:59%2B07:00'

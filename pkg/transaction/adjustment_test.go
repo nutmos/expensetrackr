@@ -80,3 +80,34 @@ func TestValidateAdjustment(t *testing.T) {
 		t.Errorf("expense with empty direction: %v", err)
 	}
 }
+
+// Beginning balances: never created through Validate; ValidateBeginningBalance
+// keeps the type, accepts 0 and requires a direction.
+func TestValidateBeginningBalance(t *testing.T) {
+	dir := "decrease"
+	in := CreateInput{Type: "beginning_balance", Amount: "0", Currency: "THB", BalanceUID: "4dc73a4a-a60b-414e-98bc-3c71298a0af5",
+		SpentAt: "2026-10-01T00:00:00+07:00", AdjustmentDirection: &dir}
+	if _, err := in.Validate(); err == nil || err.(*ValidationError).Fields["type"] != ErrBeginningBalanceType {
+		t.Errorf("Validate: %v", err)
+	}
+	e, err := in.ValidateBeginningBalance()
+	if err != nil || e.Type != BeginningBalance || e.Amount != "0.00" || e.AdjustmentDirection == nil || *e.AdjustmentDirection != Decrease {
+		t.Fatalf("ValidateBeginningBalance: %+v %v", e, err)
+	}
+	if ef := e.Effects(); len(ef) != 1 || !ef[0].ByAmount || ef[0].Delta != 0 {
+		t.Errorf("effects %+v", ef)
+	}
+	in.Type = "expense"
+	if _, err := in.ValidateBeginningBalance(); err == nil || err.(*ValidationError).Fields["type"] != ErrBeginningBalanceTypeChange {
+		t.Errorf("type change: %v", err)
+	}
+	in.Type, in.AdjustmentDirection, in.Amount = "", nil, "-1"
+	_, err = in.ValidateBeginningBalance()
+	if f := err.(*ValidationError).Fields; f["adjustment_direction"] == "" || f["amount"] == "" {
+		t.Errorf("missing direction / negative amount: %v", f)
+	}
+	in.Amount = "0"
+	if _, err := in.ValidateAdjustment(); err == nil || err.(*ValidationError).Fields["amount"] == "" {
+		t.Errorf("a balance adjustment still needs an amount > 0: %v", err)
+	}
+}
