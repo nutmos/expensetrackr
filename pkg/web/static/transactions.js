@@ -781,15 +781,8 @@
     const params = new URLSearchParams();
     const from = $("#filter-from").value;
     const to = $("#filter-to").value;
-    // Date filters are interpreted as whole days in the browser's time zone.
-    if (from) {
-      const [y, m, dd] = from.split("-").map(Number);
-      params.set("from", toRFC3339(new Date(y, m - 1, dd, 0, 0, 0)));
-    }
-    if (to) {
-      const [y, m, dd] = to.split("-").map(Number);
-      params.set("to", toRFC3339(new Date(y, m - 1, dd, 23, 59, 59)));
-    }
+    // Date filters are whole days in this device's time zone.
+    App.setDateRange(params, from, to);
     if ($("#filter-type").value) params.set("type", $("#filter-type").value);
     return params;
   }

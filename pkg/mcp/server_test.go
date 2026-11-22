@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // rpc sends the given JSON-RPC lines to s and returns the decoded responses.
@@ -371,6 +372,32 @@ func TestUpdateBalanceRequests(t *testing.T) {
 	for _, c := range calls {
 		if !strings.HasPrefix(c, "GET ") {
 			t.Fatalf("wrote: %q", calls)
+		}
+	}
+}
+
+func TestLocalDayBounds(t *testing.T) {
+	saved := time.Local
+	defer func() { time.Local = saved }()
+	ny, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skip("no tz database:", err)
+	}
+	time.Local = ny
+	for _, tc := range []struct{ in, start, end string }{
+		{"2026-10-01", "2026-10-01T00:00:00-04:00", "2026-10-01T23:59:59.999999999-04:00"},
+		// DST ends: the day starts at -04:00 and ends at -05:00.
+		{"2026-11-01", "2026-11-01T00:00:00-04:00", "2026-11-01T23:59:59.999999999-05:00"},
+		// Exact times and junk pass through for the server to judge.
+		{"2026-10-01T09:00:00+08:00", "2026-10-01T09:00:00+08:00", "2026-10-01T09:00:00+08:00"},
+		{"yesterday", "yesterday", "yesterday"},
+		{"", "", ""},
+	} {
+		if got := localDayStart(tc.in); got != tc.start {
+			t.Errorf("localDayStart(%q) = %q, want %q", tc.in, got, tc.start)
+		}
+		if got := localDayEnd(tc.in); got != tc.end {
+			t.Errorf("localDayEnd(%q) = %q, want %q", tc.in, got, tc.end)
 		}
 	}
 }

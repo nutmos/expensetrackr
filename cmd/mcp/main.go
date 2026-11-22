@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	_ "time/tzdata" // TZ=Asia/Bangkok works in the zoneinfo-less Docker image (date filters)
 
 	"github.com/nutmos/expensetrackr/pkg/mcp"
 )

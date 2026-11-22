@@ -15,7 +15,7 @@ path, and `router.js` shows the view for `location.pathname`:
 
 | URL                          | Page |
 |------------------------------|------|
-| `/`, `/transactions`         | Transactions list (browse only). Date filters live in the query: `/transactions?from=2026-10-01&to=2026-10-31` |
+| `/`, `/transactions`         | Transactions list (browse only). Date filters live in the query: `/transactions?from=2026-10-01&to=2026-10-31`; they are whole days in the device's current time zone (sent to the API as `tz=<IANA zone>`) |
 | `/transactions/new`          | Add a transaction, step 1: pick the type (Expense, Income, Transfer, Asset Purchase, Return on Investment, Asset Sale, Repay Debt) |
 | `/transactions/new?type=<type>` | Add a transaction, step 2: the form with that type selected (it can still be changed there). An unknown `type` shows the picker |
 | `/transactions/<uid>/edit`   | Edit a transaction (same form) |
