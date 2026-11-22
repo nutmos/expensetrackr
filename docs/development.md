@@ -116,7 +116,7 @@ pkg/category/                      category domain model (Type expense|income, I
 pkg/user/                          user profile model: Input, Validate, ApplyPatch, Preferences (typed JSON settings), Identity
 pkg/balance/                       balance domain model + per-type validation (no I/O)
   balance.go                       Type, Balance, Input, Validate, ComputeTotals
-pkg/report/                        reports (no I/O): Catalog, BuildIncomeExpense, BuildAssetsLiabilities (docs/reports.md)
+pkg/report/                        reports (no I/O): Catalog, BuildIncomeExpense, BuildAssetsLiabilities, BuildBalanceTransactions (docs/reports.md)
 pkg/store/                         persistence (Postgres via pgx, database/sql)
   store.go                         Store, Open, Close; errors shared by every table (ErrNotFound, ErrVersionConflict, ...), WriteOptions
   transactions.go                  table "transactions": Create, List, Get(ByUID), UpdateWith, DeleteWith
@@ -136,7 +136,7 @@ pkg/api/                           Gin routes and handlers
   transactions.go                  /api/transactions routes (parseListFilter for the list query)
   exchange.go                      exchange-rate lookups (cache, bulk memo), GET /api/exchange-rates
   balances.go                      /api/balances routes
-  reports.go                       /api/reports routes (catalog, income-expense, assets-liabilities)
+  reports.go                       /api/reports routes (catalog, income-expense, assets-liabilities, balance-transactions)
   version.go                       optimistic locking: If-Match / "version", ETag, 428 / 409
   categories.go                    /api/categories routes
   users.go                         /api/users routes (+ read-only /identities)

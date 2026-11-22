@@ -23,7 +23,8 @@ categories are private to them.
   and cross-currency transfers at ECB rates or your own.
 - **Bulk import** of up to 500 transactions at once, safe to retry.
 - **Reports** with bar charts: income and expenses in a time range (by
-  category), and assets and liabilities (by account).
+  category), and assets and liabilities (by account); plus a statement of
+  one balance's transactions that can be exported as PDF.
 - **Web page** for everyday use, a **JSON API** with Swagger UI, **API tokens**
   for scripts, **agent skills** for AI assistants, and an **MCP server** that
   lets LLM clients read and update transactions.
@@ -60,7 +61,7 @@ Run the tests with `make test`. Details, flags and requirements:
 | [MCP server](docs/mcp.md) | `expense-mcp`: read and update transactions from Claude, Cursor and other MCP clients |
 | [Authentication](docs/auth.md) | Login, sessions, API tokens, CSRF, throttling |
 | [Balances](docs/balances.md) · [Categories](docs/categories.md) · [User profiles](docs/user-profile.md) | Details of each resource |
-| [Reports](docs/reports.md) | Income & expenses and assets & liabilities reports (web page and API) |
+| [Reports](docs/reports.md) | Income & expenses, assets & liabilities and balance transactions reports (web page and API, PDF export) |
 | [Exchange rates](docs/exchange-rates.md) · [Currencies](docs/currencies.md) · [Bulk import](docs/bulk-import.md) | Cross-currency transfers, currency codes, importing statements |
 | [Open questions](docs/open-questions.md) | Ideas and decisions still open |
 

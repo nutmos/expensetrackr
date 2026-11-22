@@ -21,7 +21,7 @@ path, and `router.js` shows the view for `location.pathname`:
 | `/transactions/<uid>/edit`   | Edit a transaction (same form) |
 | `/balances`, `/balances/new`, `/balances/<uid>/edit` | Balances list / add / edit. `/balances?hidden=1` also lists hidden balances (the **Show hidden** box) |
 | `/categories`, `/categories/new`, `/categories/<uid>/edit` | Categories list / add / edit |
-| `/reports`, `/reports/income-expense?from=…&to=…`, `/reports/assets-liabilities` | Reports with bar charts (see [docs/reports.md](reports.md)); `/reports` opens Income & expenses |
+| `/reports`, `/reports/income-expense?from=…&to=…`, `/reports/assets-liabilities`, `/reports/balance-transactions?balance=…&from=…&to=…` | Reports with bar charts (see [docs/reports.md](reports.md)); `/reports` opens Income & expenses |
 | `/swagger/`                  | API documentation (Swagger UI; opens in a new tab from the header) |
 
 Old hash links (`/#balances`, `/#categories`, `/#transactions`) are rewritten
@@ -176,6 +176,11 @@ confirmations use human labels instead. For example, an edit page is titled
 - **Assets & liabilities**: Assets vs Liabilities bars with the net worth,
   then one bar per account. Negative amounts are hatched and labelled
   "overdrawn" / "in credit".
+- **Balance transactions**: pick a balance (hidden ones included) and a
+  range like Income & expenses; a table of its transactions with In / Out
+  and the running balance (debt for a liability). **Export PDF** opens the
+  browser's print dialog ("Save as PDF"); the print stylesheet keeps only
+  the statement. Balance and range are kept in the URL.
 
 User data is only inserted with `textContent` / input `.value` (never
 `innerHTML`), so HTML in notes or names is shown as text.

@@ -182,6 +182,9 @@ func TestOpenAPIResponseShapes(t *testing.T) {
 	check("ReportCurrencyPosition", report.CurrencyPosition{})
 	check("ReportTypeAmount", report.TypeAmount{})
 	check("ReportAccountAmount", report.AccountAmount{})
+	check("BalanceTransactionsReport", report.BalanceTransactions{})
+	check("ReportBalanceRef", report.BalanceRef{})
+	check("ReportBalanceEntry", report.BalanceEntry{})
 	// Per-item results omit fields that do not apply, so only the field set is compared.
 	for schema, v := range map[string]any{"BulkTransactionResult": bulkItemResult{}, "BulkItemError": bulkItemError{}} {
 		want := map[string]bool{}

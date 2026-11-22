@@ -479,6 +479,23 @@
         <p class="muted small">Current balances of assets (payment accounts, other assets) and debts of liabilities (credit cards, other liabilities). Each currency is shown separately (no conversion).</p>
       </div>
 
+      <div id="report-balance-transactions" class="report" hidden>
+        <form id="rb-filter-form" class="filters report-filters">
+          <label>Balance <select id="rb-balance" required></select></label>
+          <label>From <input type="date" id="rb-from"></label>
+          <label>To <input type="date" id="rb-to"></label>
+          <button type="submit" class="secondary">Show</button>
+          <span class="report-presets">
+            <button type="button" class="secondary" data-preset="this-month">This month</button>
+            <button type="button" class="secondary" data-preset="last-month">Last month</button>
+            <button type="button" class="secondary" data-preset="this-year">This year</button>
+            <button type="button" class="secondary" data-preset="all">All time</button>
+          </span>
+          <button type="button" id="rb-export" disabled title="Opens the print dialog: choose “Save as PDF”">Export PDF</button>
+        </form>
+        <p class="muted small">Every transaction that moved the balance, oldest first, in the balance's currency. For a credit card or other liability, “In” lowers the debt (payments) and “Out” raises it (charges). Export PDF opens the print dialog: choose “Save as PDF”.</p>
+      </div>
+
       <p id="report-status" class="muted" role="status"></p>
       <div id="report-body"></div>
     </section>

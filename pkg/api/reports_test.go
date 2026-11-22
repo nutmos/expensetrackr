@@ -20,7 +20,7 @@ func mustTx(t *testing.T, h http.Handler, body string) {
 func TestReportCatalog(t *testing.T) {
 	h := newTestServer(t)
 	rec, body := do(t, h, "GET", "/api/reports", "")
-	if rec.Code != 200 || body["count"].(float64) != 2 {
+	if rec.Code != 200 || body["count"].(float64) != 3 {
 		t.Fatalf("catalog: %d %v", rec.Code, body)
 	}
 	first := body["reports"].([]any)[0].(map[string]any)
@@ -197,5 +197,114 @@ func TestReportsArePerUser(t *testing.T) {
 		if _, b := do(t, alice, "GET", path, ""); len(b["currencies"].([]any)) != 1 {
 			t.Errorf("alice %s: %v", path, b)
 		}
+	}
+}
+
+func TestBalanceTransactionsReport(t *testing.T) {
+	h := newTestServer(t)
+	cash := seedPayable(t, h, "Cash", "THB") // balance 10000
+	card := seedCard(t, h, "Card", "THB")    // debt 0
+	other := seedPayable(t, h, "Other", "THB")
+	food := mkCat(t, h, "Food", "expense")["uid"].(string)
+
+	mustTx(t, h, `{"type":"expense","amount":"50","currency":"THB","balance_uid":"`+cash+`","category_uid":"`+food+`","spent_at":"2026-10-31T23:59:59+07:00"}`) // before
+	mustTx(t, h, `{"type":"income","amount":"1000","currency":"THB","balance_uid":"`+cash+`","spent_at":"2026-11-01T09:00:00+07:00","note":"pay"}`)
+	mustTx(t, h, `{"type":"expense","amount":"200","currency":"THB","balance_uid":"`+cash+`","category_uid":"`+food+`","spent_at":"2026-11-02T12:00:00+07:00"}`)
+	mustTx(t, h, `{"type":"transfer","amount":"500","to_amount":"500","currency":"THB","balance_uid":"`+cash+`","to_balance_uid":"`+card+`","spent_at":"2026-11-03T12:00:00+07:00"}`)
+	mustTx(t, h, `{"type":"expense","amount":"300","currency":"THB","balance_uid":"`+card+`","spent_at":"2026-11-04T12:00:00+07:00"}`)
+	mustTx(t, h, `{"type":"repay_debt","amount":"100","interest_amount":"10","currency":"THB","balance_uid":"`+cash+`","to_balance_uid":"`+card+`","spent_at":"2026-11-05T12:00:00+07:00"}`)
+	mustTx(t, h, `{"type":"expense","amount":"75","currency":"THB","balance_uid":"`+other+`","spent_at":"2026-11-05T12:00:00+07:00"}`) // other balance
+	mustTx(t, h, `{"type":"expense","amount":"100","currency":"THB","balance_uid":"`+cash+`","spent_at":"2026-12-01T09:00:00+07:00"}`) // after
+
+	q := url.Values{"balance_uid": {cash}, "from": {"2026-11-01T00:00:00+07:00"}, "to": {"2026-11-30T23:59:59+07:00"}}
+	rec, body := do(t, h, "GET", "/api/reports/balance-transactions?"+q.Encode(), "")
+	if rec.Code != 200 {
+		t.Fatalf("report: %d %v", rec.Code, body)
+	}
+	bal := body["balance"].(map[string]any)
+	if body["report"] != "balance-transactions" || bal["uid"] != cash || bal["name"] != "Cash" || bal["amount"] != "10040.00" ||
+		bal["kind"] != "asset" || body["from"] != "2026-11-01T00:00:00+07:00" || body["to"] != "2026-11-30T23:59:59+07:00" {
+		t.Errorf("header: %v", body)
+	}
+	if body["opening_amount"] != "9950.00" || body["closing_amount"] != "10140.00" || body["money_in"] != "1000.00" ||
+		body["money_out"] != "810.00" || body["net"] != "190.00" || body["count"].(float64) != 4 {
+		t.Errorf("totals: %v", body)
+	}
+	txs := body["transactions"].([]any)
+	type row struct{ typ, in, out, after, counterparty string }
+	str := func(v any) string { s, _ := v.(string); return s }
+	want := []row{
+		{"income", "1000.00", "", "10950.00", ""},
+		{"expense", "", "200.00", "10750.00", ""},
+		{"transfer", "", "500.00", "10250.00", "Card"},
+		{"repay_debt", "", "110.00", "10140.00", "Card"},
+	}
+	if len(txs) != len(want) {
+		t.Fatalf("transactions: %v", txs)
+	}
+	for i, w := range want {
+		e := txs[i].(map[string]any)
+		got := row{str(e["type"]), str(e["money_in"]), str(e["money_out"]), str(e["amount_after"]), str(e["counterparty"])}
+		if got != w {
+			t.Errorf("row %d: got %+v, want %+v (%v)", i, got, w, e)
+		}
+	}
+	if e := txs[1].(map[string]any); e["category_name"] != "Food" || e["category_uid"] != food {
+		t.Errorf("category: %v", e)
+	}
+	if e := txs[0].(map[string]any); e["note"] != "pay" || e["money_out"] != nil {
+		t.Errorf("income row: %v", e)
+	}
+
+	// A liability over all time: the transfer and repayment lower the debt
+	// (money in), the purchase raises it (money out).
+	_, body = do(t, h, "GET", "/api/reports/balance-transactions?balance_uid="+card, "")
+	if body["opening_amount"] != "0.00" || body["closing_amount"] != "-300.00" || body["money_in"] != "600.00" ||
+		body["money_out"] != "300.00" || body["from"] != nil || body["to"] != nil {
+		t.Errorf("card: %v", body)
+	}
+	if txs := body["transactions"].([]any); len(txs) != 3 || txs[0].(map[string]any)["counterparty"] != "Cash" ||
+		txs[0].(map[string]any)["amount_after"] != "-500.00" || txs[1].(map[string]any)["money_out"] != "300.00" ||
+		txs[2].(map[string]any)["money_in"] != "100.00" {
+		t.Errorf("card rows: %v", txs)
+	}
+
+	// Hidden balances can still be reported on.
+	if rec, b := doH(t, h, "POST", "/api/balances/"+other+"/hide", "", nil); rec.Code != 200 {
+		t.Fatalf("hide: %d %v", rec.Code, b)
+	}
+	if rec, b := do(t, h, "GET", "/api/reports/balance-transactions?balance_uid="+other, ""); rec.Code != 200 || b["count"].(float64) != 1 ||
+		b["balance"].(map[string]any)["hidden"] != true {
+		t.Errorf("hidden: %d %v", rec.Code, b)
+	}
+
+	for _, bad := range []string{"", "balance_uid=nope", "balance_uid=" + cash + "&from=yesterday",
+		"balance_uid=" + cash + "&from=2026-11-02T00:00:00Z&to=2026-11-01T00:00:00Z"} {
+		if rec, b := do(t, h, "GET", "/api/reports/balance-transactions?"+bad, ""); rec.Code != 400 || fieldsOf(b) == nil {
+			t.Errorf("%q: %d %v", bad, rec.Code, b)
+		}
+	}
+	if rec, _ := do(t, h, "GET", "/api/reports/balance-transactions?balance_uid=3525dd1f-ae96-4c71-b996-06a43679cfa2", ""); rec.Code != 404 {
+		t.Errorf("unknown balance: %d", rec.Code)
+	}
+	if rec, _ := do(t, h, "GET", "/reports/balance-transactions", ""); rec.Code != 200 {
+		t.Errorf("/reports/balance-transactions page: %d", rec.Code)
+	}
+}
+
+// Another user's balance is not found.
+func TestBalanceTransactionsReportPerUser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	st := storetest.Open(t)
+	router := (&Server{Store: st, Static: fstest.MapFS{"index.html": {Data: []byte("x")}}}).Router()
+	alice := asUser(t, router, st, "alice")
+	bob := asUser(t, router, st, "bob")
+	cash := seedPayable(t, alice, "Cash", "THB")
+	mustTx(t, alice, `{"amount":"10","currency":"THB","balance_uid":"`+cash+`","spent_at":"2026-10-01T10:00:00+07:00"}`)
+	if rec, _ := do(t, bob, "GET", "/api/reports/balance-transactions?balance_uid="+cash, ""); rec.Code != 404 {
+		t.Errorf("bob: %d", rec.Code)
+	}
+	if rec, b := do(t, alice, "GET", "/api/reports/balance-transactions?balance_uid="+cash, ""); rec.Code != 200 || b["count"].(float64) != 1 {
+		t.Errorf("alice: %d %v", rec.Code, b)
 	}
 }

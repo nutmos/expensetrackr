@@ -3,6 +3,7 @@ package report
 import (
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/nutmos/expensetrackr/pkg/balance"
 	"github.com/nutmos/expensetrackr/pkg/common_type"
@@ -104,5 +105,45 @@ func TestCatalog(t *testing.T) {
 		if r.Path != "/api/reports/"+r.ID {
 			t.Errorf("%s path %s", r.ID, r.Path)
 		}
+	}
+}
+
+func TestBuildBalanceTransactions(t *testing.T) {
+	ptr := func(v int64) *int64 { return &v }
+	str := func(s string) *string { return &s }
+	day := func(d int) time.Time { return time.Date(2026, 11, d, 12, 0, 0, 0, time.UTC) }
+	// A USD card with a debt of 40.00 now.
+	card := balance.Balance{UID: "c", Name: "Card", Type: balance.TypeCreditCard, Currency: "USD", Scale: 2, DebtMinor: ptr(4000)}
+	inc := transaction.Increase
+	dec := transaction.Decrease
+	inRange := []transaction.Transaction{
+		// A manual edit raised the debt by 10.00 (by amount: debt, not value).
+		{UID: "a1", Type: transaction.BalanceAdjustment, BalanceUID: "c", AmountMinor: 1000, Amount: "10.00", Currency: "USD", AdjustmentDirection: &inc, SpentTime: day(2)},
+		// 3000.00 THB paid into it, credited as 90.00 USD.
+		{UID: "t1", Type: transaction.Transfer, BalanceUID: "s", Account: "THB acct", ToBalanceUID: uid("c"), ToAccount: str("Card"),
+			AmountMinor: 300000, Amount: "3000.00", Currency: "THB", ToAmountMinor: ptr(9000), ToCurrency: str("USD"), SpentTime: day(3)},
+		{UID: "a2", Type: transaction.BalanceAdjustment, BalanceUID: "c", AmountMinor: 500, Amount: "5.00", Currency: "USD", AdjustmentDirection: &dec, SpentTime: day(1)},
+	}
+	after := []transaction.Transaction{
+		{UID: "e1", Type: transaction.Expense, BalanceUID: "c", AmountMinor: 2500, Amount: "25.00", Currency: "USD", SpentTime: day(20)},
+	}
+	r := BuildBalanceTransactions(card, inRange, after, nil)
+	// closing debt = 40 - 25 = 15; net value change in range = +5 - 10 + 90 = +85; opening debt = 15 + 85 = 100.
+	if r.Balance.Amount != "40.00" || r.ClosingAmount != "15.00" || r.OpeningAmount != "100.00" ||
+		r.MoneyIn != "95.00" || r.MoneyOut != "10.00" || r.Net != "85.00" || r.Count != 3 {
+		t.Fatalf("totals: %+v", r)
+	}
+	want := []struct{ uid, after string }{{"a2", "95.00"}, {"a1", "105.00"}, {"t1", "15.00"}}
+	for i, w := range want {
+		e := r.Transactions[i]
+		if string(e.UID) != w.uid || e.AmountAfter != w.after {
+			t.Errorf("row %d: %s after %s, want %s after %s", i, e.UID, e.AmountAfter, w.uid, w.after)
+		}
+	}
+	if e := r.Transactions[2]; e.MoneyIn == nil || *e.MoneyIn != "90.00" || e.MoneyOut != nil || e.Counterparty == nil || *e.Counterparty != "THB acct" || e.Currency != "THB" {
+		t.Errorf("transfer row: %+v", e)
+	}
+	if e := r.Transactions[1]; e.MoneyOut == nil || *e.MoneyOut != "10.00" || e.Counterparty != nil {
+		t.Errorf("adjustment row: %+v", e)
 	}
 }

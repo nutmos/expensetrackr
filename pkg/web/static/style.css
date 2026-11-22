@@ -236,6 +236,15 @@ td.acct, td.cat { min-width: 7em; }
 .neg-text { color: var(--err); }
 .report-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 0 28px; }
 /* One grid per chart (rows share it through subgrid), so every bar in a chart starts and ends at the same x. */
+.report-summary { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 10px 0 4px; }
+.report-summary dt { font-size: 0.8rem; }
+.report-summary dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+table.statement td.details { min-width: 12em; }
+table.statement td.details span { display: block; }
+table.statement td.type { white-space: nowrap; }
+table.statement .note-line { font-size: 0.9em; overflow-wrap: anywhere; }
+table.statement tfoot th { border-bottom: none; border-top: 2px solid var(--border); color: var(--fg); }
+.report-printed { margin-top: 10px; }
 .bar-chart { display: grid; grid-template-columns: minmax(6em, 11em) minmax(60px, 1fr) auto; gap: 6px 10px; }
 .bar-row { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center; }
 .bar-label { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
@@ -284,3 +293,25 @@ tr.is-hidden td { color: var(--muted); }
 .pw-rules li.met::before { content: "✓"; }
 .pw-rules li.unmet { color: var(--err); }
 .pw-rules li.unmet::before { content: "✕"; }
+
+/* Printing the balance transactions report (Export PDF, issue #160): only the
+   statement, black on white, the table split across pages with its header
+   repeated. Applies whenever the Reports page is the one shown. */
+@media print {
+  @page { margin: 14mm; }
+  body:has(#view-reports:not([hidden])) { background: #fff; font-size: 11px; }
+  body:has(#view-reports:not([hidden])) main { max-width: none; padding: 0; }
+  body:has(#view-reports:not([hidden])) .app-header,
+  body:has(#view-reports:not([hidden])) #app-nav,
+  body:has(#view-reports:not([hidden])) #view-reports .list-header,
+  body:has(#view-reports:not([hidden])) .report-tabs,
+  body:has(#view-reports:not([hidden])) .report { display: none !important; }
+  #view-reports .card { border: none; padding: 0; margin: 0; }
+  #view-reports .table-wrap { overflow: visible; }
+  #view-reports table, #view-reports th { font-size: 10px; }
+  #view-reports th, #view-reports td { padding: 4px 6px; }
+  #view-reports table .foreign-amt { font-size: 0.9em; }
+  #view-reports thead { display: table-header-group; }
+  #view-reports tr { break-inside: avoid; }
+  #view-reports .pos-text, #view-reports .neg-text { color: inherit; }
+}
