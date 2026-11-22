@@ -284,8 +284,18 @@
     return `${p2(d.getDate())} ${MONTHS[d.getMonth()]} ${d.getFullYear()} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
   }
 
+  // Copies each column header's text onto the row's cells as data-label, so
+  // the narrow-screen card layout (.stack-table in style.css) can show
+  // "Label  value" lines (issue #171). Call after the rows are rendered.
+  function labelCells(table) {
+    const head = [...table.querySelectorAll("thead th")].map((th) => th.textContent.trim());
+    for (const tr of table.querySelectorAll("tbody tr, tfoot tr")) {
+      [...tr.children].forEach((td, i) => { if (head[i]) td.dataset.label = head[i]; });
+    }
+  }
+
   window.App = {
-    loadCurrencies, currencyText, setCurrency, fillCurrencySelect, fmtAmount, fmtDateTime,
+    labelCells, loadCurrencies, currencyText, setCurrency, fillCurrencySelect, fmtAmount, fmtDateTime,
     $, cell, button, link, clearErrors, showFieldErrors, setStatus,
     setFlash, takeFlash, route, navigate, returnToList, replaceQuery, ifMatch, showConflict, hideConflict,
     isUUID: (s) => UUID_RE.test(s),

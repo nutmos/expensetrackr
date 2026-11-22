@@ -134,6 +134,7 @@
         continue;
       }
       const table = document.createElement("table");
+      table.className = "category-table";
       table.dataset.type = t.id;
       const thead = document.createElement("thead");
       const htr = document.createElement("tr");

@@ -306,6 +306,51 @@ tr.is-hidden td { color: var(--muted); }
 .pw-rules li.unmet { color: var(--err); }
 .pw-rules li.unmet::before { content: "✕"; }
 
+/* ---- Phones (issue #171) ---------------------------------------------- */
+button, a.button { white-space: nowrap; }
+@media screen and (max-width: 640px) {
+  /* 16px text in form fields stops iOS Safari zooming in on focus. */
+  input, select, textarea, .filters input, .filters select { font-size: 16px; }
+  /* Header: just the name (shortened if long) and Log out on one line. */
+  .app-header { flex-wrap: nowrap; }
+  .app-header h1 { flex: none; white-space: nowrap; }
+  .user-bar { min-width: 0; }
+  .user-bar .signed-in-label { display: none; }
+  #user-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45vw; }
+  /* Section tabs: a 3-column grid of buttons, all visible, instead of a
+     sideways-scrolling strip that hides Reports, Settings and API docs. */
+  .tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; overflow: visible; margin: 0 0 14px; padding: 0; border-bottom: none; }
+  .tab { margin: 0; padding: 8px 4px; text-align: center; border: 1px solid var(--border); border-radius: 8px; background: #fff; font-size: 0.9rem; }
+  .tab.active { color: #fff; background: var(--accent); border-color: var(--accent); }
+  .tab-docs { margin-left: 0; }
+  /* Tables that become one card per row: "Label  value" lines, the first
+     cell as the card's heading. Labels come from App.labelCells (router.js). */
+  .stack-table, .stack-table tbody, .stack-table tfoot, .stack-table tr { display: block; }
+  .stack-table thead { display: none; }
+  .stack-table tr { padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .stack-table td, .stack-table tfoot th { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 2px 0; border: 0; text-align: right; white-space: normal; }
+  .stack-table td::before, .stack-table tfoot th::before { content: attr(data-label); color: var(--muted); font-size: 0.85rem; font-weight: 400; text-align: left; text-transform: none; letter-spacing: 0; }
+  .stack-table td:first-child, .stack-table tfoot th:first-child { font-weight: 600; color: var(--fg); }
+  .stack-table td:first-child::before, .stack-table tfoot th:first-child::before, .stack-table td[colspan]::before { content: none; }
+  .stack-table td:empty, .stack-table tfoot th:empty { display: none; }
+  .stack-table td.actions-cell { justify-content: flex-end; margin-top: 4px; }
+  .stack-table tfoot tr { border-bottom: none; border-top: 2px solid var(--border); }
+  table.stack-table tfoot th { border: 0; font-size: inherit; text-transform: none; letter-spacing: 0; color: var(--fg); }
+  /* Balance transactions report: details (category, note) as a block. */
+  table.statement td.details { display: block; min-width: 0; text-align: left; }
+  table.statement td.details::before { content: none; }
+  table.statement td.time { white-space: nowrap; }
+  /* Categories: name and description left, Edit / Delete right. */
+  .category-table thead { display: none; }
+  .category-table, .category-table tbody { display: block; }
+  .category-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name actions" "desc actions"; column-gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .category-table td { border: 0; padding: 1px 0; }
+  .category-table td:first-child { grid-area: name; font-weight: 600; overflow-wrap: anywhere; }
+  .category-table td.note { grid-area: desc; min-width: 0; max-width: none; font-size: 0.85rem; }
+  .category-table td.note:empty { display: none; }
+  .category-table td.actions-cell { grid-area: actions; align-self: center; }
+}
+
 /* Printing the balance transactions report (Export PDF, issue #160): only the
    statement, black on white, the table split across pages with its header
    repeated. Applies whenever the Reports page is the one shown. */

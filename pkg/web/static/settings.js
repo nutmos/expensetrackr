@@ -97,6 +97,7 @@
       );
       tBody.append(tr);
     }
+    App.labelCells($("#token-table"));
   }
 
   async function loadTokens() {
