@@ -50,10 +50,18 @@ func statuses(t *testing.T, b map[string]any) string {
 	return strings.Join(s, ",")
 }
 
+// txCount counts the transactions other than the balances' beginning
+// balances (which every balance has from the start).
 func txCount(t *testing.T, h http.Handler) int {
 	t.Helper()
 	_, b := do(t, h, "GET", "/api/transactions", "")
-	return int(b["count"].(float64))
+	n := 0
+	for _, e := range b["transactions"].([]any) {
+		if e.(map[string]any)["type"] != "beginning_balance" {
+			n++
+		}
+	}
+	return n
 }
 
 func cardDebt(t *testing.T, h http.Handler, uid string) string {

@@ -103,13 +103,13 @@ func TestFreshDatabaseGetsBaseline(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.Account = "Cash"
-	if err := st.Create(ctx, owner, &e); err != nil || e.ID != 1 {
+	if err := st.Create(ctx, owner, &e); err != nil || e.ID != 2 { // 1 is the balance's beginning balance
 		t.Fatalf("create on fresh db: id=%d err=%v", e.ID, err)
 	}
 	st.Close()
 
-	if SchemaVersion != 8 {
-		t.Errorf("SchemaVersion = %d, want 8", SchemaVersion)
+	if SchemaVersion != 9 {
+		t.Errorf("SchemaVersion = %d, want 9", SchemaVersion)
 	}
 	if v := schemaVersion(t, url); v != SchemaVersion {
 		t.Errorf("schema version = %d, want %d", v, SchemaVersion)

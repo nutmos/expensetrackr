@@ -43,6 +43,7 @@
     typeSel.disabled = false;
     $("#b-type-note").hidden = true;
     $("#b-edit-hint").hidden = true;
+    $("#b-new-hint").hidden = false;
     App.hideConflict(conflictBox);
     syncTypeFields();
     App.clearErrors(form);
@@ -106,6 +107,7 @@
     $("#b-debt").value = b.debt ?? "";
     $("#b-limit").value = b.limit ?? "";
     $("#b-edit-hint").hidden = false;
+    $("#b-new-hint").hidden = true;
     syncTypeFields();
     $("#b-name").focus();
   }

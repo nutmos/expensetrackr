@@ -93,7 +93,7 @@ func TestBalanceCRUDAndConstraints(t *testing.T) {
 	if only, _ := st.ListBalances(ctx, owner, balance.TypeCreditCard); len(only) != 1 {
 		t.Errorf("type filter: %d", len(only))
 	}
-	if n, err := st.DeleteBalance(ctx, owner, card.ID); err != nil || n != 0 {
+	if n, err := st.DeleteBalance(ctx, owner, card.ID); err != nil || n != 1 { // its beginning balance
 		t.Fatalf("delete: %d transaction(s), %v", n, err)
 	}
 	if _, err := st.DeleteBalance(ctx, owner, card.ID); !errors.Is(err, ErrNotFound) {

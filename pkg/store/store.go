@@ -30,12 +30,18 @@ var ErrNotFound = errors.New("not found")
 // else changed it since the caller read it. Nothing is written.
 var ErrVersionConflict = errors.New("version conflict: the record was changed since it was read")
 
-// ErrReadOnly is returned when a write tries to create a balance_adjustment
-// transaction, or to change the type of a transaction to or from
-// balance_adjustment. Balance adjustments are created automatically by manual
-// balance edits (UpdateBalanceWith); once recorded they can be edited (as
-// balance adjustments) and deleted like any other transaction.
-var ErrReadOnly = errors.New("balance adjustments are created automatically by balance edits; they cannot be created directly, and a transaction cannot change type to or from balance_adjustment")
+// ErrReadOnly is returned when a write tries to create a server-recorded
+// transaction (balance_adjustment, beginning_balance), or to change the type
+// of a transaction to or from one. Balance adjustments are created
+// automatically by manual balance edits (UpdateBalanceWith) and beginning
+// balances when a balance is created (CreateBalance); once recorded they can
+// be edited (keeping their type), and balance adjustments deleted, like any
+// other transaction.
+var ErrReadOnly = errors.New("balance adjustments and beginning balances are created automatically (by balance edits and when a balance is created); they cannot be created directly, and a transaction cannot change type to or from balance_adjustment or beginning_balance")
+
+// ErrUndeletable is returned when a write tries to delete a beginning_balance
+// transaction: it goes only together with its balance (DeleteBalanceWith).
+var ErrUndeletable = errors.New("a beginning balance cannot be deleted; edit it instead (it is removed only together with its balance)")
 
 // WriteOptions controls optimistic locking for updates and deletes.
 type WriteOptions struct {

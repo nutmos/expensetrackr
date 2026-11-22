@@ -19,7 +19,7 @@
 
   const TX_TYPE_LABEL = {
     expense: "Expense", income: "Income", transfer: "Transfer", asset_purchase: "Asset purchase",
-    return_on_investment: "Return on investment", repay_debt: "Repay debt", balance_adjustment: "Balance adjustment",
+    return_on_investment: "Return on investment", repay_debt: "Repay debt", balance_adjustment: "Balance adjustment", beginning_balance: "Beginning balance",
   };
   const TYPE_GROUP = {
     payment_account: "Payment accounts", credit_card: "Credit cards",

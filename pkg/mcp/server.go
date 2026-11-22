@@ -52,6 +52,7 @@ Rules:
 - spent_at and the from/to filters are RFC 3339 with a UTC offset (e.g. 2026-10-06T12:30:00+08:00); ask for the user's offset if unknown.
 - category_uid is required for every type except transfer (not allowed), repay_debt (only with interest/fees) and asset_sale (only with a gain_loss: income category for a gain, expense category for a loss); expense/asset_purchase take an expense category, income/return_on_investment an income category.
 - balance_adjustment rows are written by the server when a balance is corrected; they cannot be created here, but can be edited (amount, adjustment_direction, balance, date, note) or deleted, which moves the balance by the difference or reverts the correction.
+- Every balance has one beginning_balance row (the amount it started with), written when the balance is created; it cannot be created or deleted, but its amount, adjustment_direction, date and note can be edited, which moves the balance by the difference. Recording a transaction dated before it moves it back to that date.
 - create_balance / update_balance add and edit balances (accounts, cards, assets, loans). Check list_balances (include_hidden) before creating one, to avoid duplicates.
 - Setting a balance's balance or debt overrides what transactions did and records a balance_adjustment; prefer recording the missing transaction, and confirm an override with the user.
 - Confirm with the user before deleting a transaction.`

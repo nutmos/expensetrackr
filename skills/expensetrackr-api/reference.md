@@ -201,6 +201,7 @@ Balance effects (automatic):
 | asset_sale | like income, by the proceeds: account +(amount + gain_loss) / card debt −(amount + gain_loss) | sold `other_asset` −amount (the principal; same currency required); hidden when `entire_asset_sale` |
 | repay_debt | `payment_account` −(amount + interest_amount + fee_amount) | `credit_card` / `other_liability` debt −amount (the principal; same currency required) |
 | balance_adjustment | any balance: `increase` raises an asset's balance / a liability's debt by amount, `decrease` lowers it (server-created record of a manual edit; applied only when the adjustment is edited or deleted) | – |
+| beginning_balance | its balance: like balance_adjustment from 0 (`decrease` = started below zero; amount may be 0). Server-created with each balance; applied only when edited; never deleted | – |
 
 `adjusts_balances` is `false` for rows created before automatic balances
 existed; editing/deleting those doesn't move balances.
@@ -210,7 +211,7 @@ existed; editing/deleting those doesn't move balances.
 | param | meaning |
 |---|---|
 | `from`, `to` | RFC 3339 with offset, inclusive; encode `+` as `%2B` (a raw `+` also works) |
-| `type` | `expense`, `income`, `transfer`, `asset_purchase`, `return_on_investment`, `asset_sale`, `repay_debt`, `balance_adjustment` |
+| `type` | `expense`, `income`, `transfer`, `asset_purchase`, `return_on_investment`, `asset_sale`, `repay_debt`, `balance_adjustment`, `beginning_balance` |
 | `category_uid` | one category |
 | `limit` | 1–5000, default 500 |
 
@@ -259,11 +260,16 @@ Same body rules as POST, plus the version (SKILL.md "Edit"). Notes:
   `balance_uid` may be any balance; no `category_uid`, `to_balance_uid`,
   `to_amount`, foreign amount or `import_ref` (422). `adjustment_direction`
   on any other type is 422.
+- **Beginning balance:** the same, except `type` omitted or
+  `beginning_balance`, `balance_uid` must stay the same, `amount` may be 0,
+  and `spent_at` may not be later than the balance's other transactions
+  (422).
 
 ### Delete: `DELETE /api/transactions/{uid}` → 204 (optional `If-Match`)
 
 Reverses the balance effect; for a `balance_adjustment` that reverts the
-manual change it recorded.
+manual change it recorded. A `beginning_balance` cannot be deleted (409
+`beginning_balance_undeletable`).
 
 ### Same-currency transfer with `to_amount`
 

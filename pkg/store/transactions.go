@@ -13,6 +13,7 @@ import (
 	"github.com/nutmos/expensetrackr/pkg/common_type"
 	"github.com/nutmos/expensetrackr/pkg/money"
 	"github.com/nutmos/expensetrackr/pkg/transaction"
+	"github.com/nutmos/expensetrackr/pkg/validate"
 )
 
 // Create inserts a validated transaction as a new row in transactions owned by
@@ -21,7 +22,7 @@ import (
 // transaction. A referenced balance that is missing, owned by another user, or
 // in another currency is a *validate.ValidationError and nothing is written.
 func (s *Store) Create(ctx context.Context, userUID string, e *transaction.Transaction) error {
-	if e.Type == transaction.BalanceAdjustment {
+	if e.Type.ServerRecorded() {
 		return ErrReadOnly
 	}
 	if err := checkFX(*e); err != nil {
@@ -49,8 +50,9 @@ func (s *Store) Create(ctx context.Context, userUID string, e *transaction.Trans
 	return nil
 }
 
-// insertTx inserts e (already validated, not a balance adjustment) inside tx
-// and applies its balance effects. A duplicate (balance_uid, import_ref) is a
+// insertTx inserts e (already validated, not a server-recorded type) inside
+// tx, applies its balance effects and moves the beginning balances of its
+// balances back to its date when it is earlier. A duplicate (balance_uid, import_ref) is a
 // *DuplicateImportRefError.
 func insertTx(ctx context.Context, tx *sql.Tx, userUID string, e transaction.Transaction, now string) (transaction.Transaction, error) {
 	scale, ok := money.MinorUnits(e.Currency)
@@ -83,6 +85,9 @@ func insertTx(ctx context.Context, tx *sql.Tx, userUID string, e transaction.Tra
 		return e, err
 	}
 	if err := hideSoldAsset(ctx, tx, userUID, next, now); err != nil {
+		return e, err
+	}
+	if err := pullBeginningBalances(ctx, tx, userUID, next, now); err != nil {
 		return e, err
 	}
 	return next, nil
@@ -259,6 +264,17 @@ func (s *Store) GetByUID(ctx context.Context, userUID string, uid common_type.UI
 func (s *Store) UpdateWith(ctx context.Context, userUID string, id int64, opts WriteOptions, fn func(cur transaction.Transaction) (transaction.Transaction, error)) (transaction.Transaction, error) {
 	var saved transaction.Transaction
 	err := s.inTx(ctx, "update transaction", func(tx *sql.Tx) error {
+		// Other writes lock a balance before moving its beginning balance
+		// (pullBeginningBalances); an edit of the beginning balance itself
+		// takes the same order (its balance never changes), so the two
+		// cannot deadlock.
+		var typ, buid string
+		if err := tx.QueryRowContext(ctx, `SELECT type, balance_uid FROM transactions WHERE id = $1 AND user_uid = $2`, id, userUID).Scan(&typ, &buid); err == nil &&
+			typ == string(transaction.BeginningBalance) {
+			if _, err := lockBalanceUIDs(ctx, tx, userUID, []string{buid}); err != nil {
+				return err
+			}
+		}
 
 		cur, err := scan(tx.QueryRowContext(ctx, `SELECT `+selectCols+` FROM transactions WHERE id = $1 AND user_uid = $2 FOR UPDATE`, id, userUID))
 		if errors.Is(err, sql.ErrNoRows) {
@@ -274,14 +290,24 @@ func (s *Store) UpdateWith(ctx context.Context, userUID string, id int64, opts W
 		if err != nil {
 			return err
 		}
-		// A balance adjustment stays one, and nothing else becomes one.
-		if (cur.Type == transaction.BalanceAdjustment) != (next.Type == transaction.BalanceAdjustment) {
+		// A server-recorded transaction (balance adjustment, beginning
+		// balance) keeps its type, and nothing else becomes one.
+		if (cur.Type.ServerRecorded() || next.Type.ServerRecorded()) && cur.Type != next.Type {
 			return ErrReadOnly
 		}
-		if next.Type != transaction.BalanceAdjustment {
+		if !next.Type.HasDirection() {
 			next.AdjustmentDirection = nil
 		} else if next.AdjustmentDirection == nil {
-			return errors.New("balance adjustment without adjustment_direction")
+			return fmt.Errorf("%s without adjustment_direction", next.Type)
+		}
+		if next.Type == transaction.BeginningBalance {
+			// It stays with its balance and comes before its other transactions.
+			if next.BalanceUID != cur.BalanceUID {
+				return &validate.ValidationError{Fields: map[string]string{"balance_uid": transaction.ErrBeginningBalanceMove}}
+			}
+			if err := checkBeginningBalanceDate(ctx, tx, userUID, id, next); err != nil {
+				return err
+			}
 		}
 		if err := checkFX(next); err != nil {
 			return err
@@ -334,6 +360,9 @@ func (s *Store) UpdateWith(ctx context.Context, userUID string, id int64, opts W
 		if err := hideSoldAsset(ctx, tx, userUID, next, now); err != nil {
 			return err
 		}
+		if err := pullBeginningBalances(ctx, tx, userUID, next, now); err != nil {
+			return err
+		}
 		saved = next
 		return nil
 	})
@@ -345,8 +374,9 @@ func (s *Store) UpdateWith(ctx context.Context, userUID string, id int64, opts W
 
 // DeleteWith removes one row from transactions owned by userUID and reverses
 // its balance effect, in one database transaction. Returns ErrNotFound
-// (including when the id belongs to another user), or ErrVersionConflict when
-// opts.Version > 0 and differs from the stored one.
+// (including when the id belongs to another user), ErrVersionConflict when
+// opts.Version > 0 and differs from the stored one, or ErrUndeletable for a
+// beginning balance.
 func (s *Store) DeleteWith(ctx context.Context, userUID string, id int64, opts WriteOptions) error {
 	return s.inTx(ctx, "delete transaction", func(tx *sql.Tx) error {
 
@@ -360,6 +390,9 @@ func (s *Store) DeleteWith(ctx context.Context, userUID string, id int64, opts W
 		if opts.Version > 0 && cur.Version != opts.Version {
 			return ErrVersionConflict
 		}
+		if cur.Type == transaction.BeginningBalance {
+			return ErrUndeletable
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM transactions WHERE id = $1`, id); err != nil {
 			return fmt.Errorf("delete transaction: %w", err)
 		}
@@ -371,7 +404,7 @@ func (s *Store) DeleteWith(ctx context.Context, userUID string, id int64, opts W
 }
 
 // directionArg is the adjustment_direction column value (NULL unless next is
-// a balance adjustment).
+// a balance adjustment or beginning balance).
 func directionArg(next transaction.Transaction) any {
 	if next.AdjustmentDirection == nil {
 		return nil

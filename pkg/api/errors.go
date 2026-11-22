@@ -48,6 +48,7 @@ var sharedErrorCases = []errorCase{
 		return errorBody{Error: fxMessage(err), Code: "exchange_rate_unavailable"}
 	}},
 	{store.ErrReadOnly, http.StatusConflict, withText("balance_adjustment_readonly", nil)},
+	{store.ErrUndeletable, http.StatusConflict, withText("beginning_balance_undeletable", nil)},
 }
 
 // writeError answers err for a request about resource ("transaction",

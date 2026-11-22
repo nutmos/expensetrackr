@@ -56,7 +56,7 @@ info:
     - **Errors** are always JSON: `{"error": "…", "fields": {…}, "code": "…", "current": {…}}`.
       Only `error` is always present. `fields` maps field names to problems (validation, query,
       conflict and duplicate errors). `code` is one of `version_required`, `version_conflict`,
-      `balance_in_use`, `balance_adjustment_readonly`.
+      `balance_in_use`, `balance_adjustment_readonly`, `beginning_balance_undeletable`.
       Status codes: **400** malformed request (bad JSON, unknown field, wrong JSON type, empty
       users patch, bad query parameter, bad uid, bad `If-Match`, body over 64 KiB), **404** not found,
       **409** conflict, **422** validation failed (`fields`), **428** version required,
@@ -83,6 +83,7 @@ info:
     | `asset_sale` | `payment_account` or `credit_card` (receives the proceeds) | **required**, the `other_asset` sold ≠ source | account balance +(amount + `gain_loss`) / card debt −(amount + `gain_loss`); asset balance −amount (the principal); same currency only. Category only for the gain (income category) or loss (expense category), optional. `entire_asset_sale: true` hides the asset when saved |
     | `repay_debt` | `payment_account` | **required**, a `credit_card` or `other_liability` | account balance −(amount + `interest_amount` + `fee_amount`), destination debt −amount (the principal; may go negative = in credit); same currency only. Category only for the interest/fees (optional, expense category) |
     | `balance_adjustment` | the edited balance (any type) | — | server-created; its change is already in the balance. Editing or deleting it moves the balance: `increase` = balance / debt +amount, `decrease` = −amount |
+    | `beginning_balance` | its balance (any type; fixed) | — | server-created with the balance, one per balance: the amount it started with (`decrease` = below zero; may be `0`). Editing it moves the balance by the difference; it cannot be deleted |
 
     The transaction `currency` must equal the currency of its balance(s) (422 otherwise); the asset
     linked by a `return_on_investment` is not moved, so it may be in another currency.
@@ -92,12 +93,22 @@ info:
     (`type: balance_adjustment` on create, or a replace that turns another transaction into one, is a
     422), but an existing one can be replaced (it stays a `balance_adjustment`; `adjustment_direction`
     is required) or deleted, which moves the balance by the difference or reverts the change.
+
+    Every balance has exactly one `beginning_balance` transaction, recorded by `POST /api/balances`
+    with the starting `balance` (asset) or `debt` (liability), dated at the time of creation. Its
+    `amount` is the absolute starting amount (it may be `0`) and `adjustment_direction` is `decrease`
+    when the amount started below zero. It cannot be created through this API (422 on `type`) and
+    cannot be deleted (409 `beginning_balance_undeletable`; it goes with its balance), but it can be
+    replaced like a balance adjustment, except that `balance_uid` must stay the same. It is always
+    the balance's earliest transaction: saving a transaction dated before it (as `balance_uid` or
+    `to_balance_uid`) moves it back to that transaction's `spent_at` (its `version` goes up), and
+    replacing it with a `spent_at` later than another transaction of the balance is a 422.
 servers:
   - url: /
     description: This server
 tags:
   - name: transactions
-    description: Expenses, income, transfers, asset purchases, returns on investment, debt repayments and (server-created, editable) balance adjustments. Writes move the linked balances in the same database transaction.
+    description: Expenses, income, transfers, asset purchases, returns on investment, debt repayments and (server-created, editable) balance adjustments and beginning balances. Writes move the linked balances in the same database transaction.
   - name: balances
     description: Payment accounts, credit cards, other assets and liabilities. Type is fixed after creation. Manual amount edits record a balance_adjustment transaction. A balance can be hidden (kept with its transactions, left out of the list) or deleted (removed together with every transaction that references it).
   - name: categories
@@ -125,8 +136,9 @@ paths:
       summary: Create a transaction
       description: |
         Creates an expense, income, transfer, asset purchase or return on investment and moves the linked balance(s) in the same
-        database transaction. `type` defaults to `expense`. `type: balance_adjustment` is rejected
-        (422). The transaction currency must match the balance currency (422 on `balance_uid` /
+        database transaction. `type` defaults to `expense`. `type: balance_adjustment` and
+        `type: beginning_balance` are rejected (422). A transaction dated before the beginning balance
+        of one of its balances moves that beginning balance back to its `spent_at`. The transaction currency must match the balance currency (422 on `balance_uid` /
         `to_balance_uid`). A `version` in the body is ignored.
       requestBody:
         required: true
@@ -181,7 +193,7 @@ paths:
           schema: { type: string, format: date-time, example: '2026-10-31T23:59:59+08:00' }
         - name: type
           in: query
-          description: Only transactions of this type (case-insensitive). `balance_adjustment` is allowed here.
+          description: Only transactions of this type (case-insensitive). `balance_adjustment` and `beginning_balance` are allowed here.
           schema: { $ref: '#/components/schemas/TransactionType' }
         - name: category_uid
           in: query
@@ -214,7 +226,7 @@ paths:
               example:
                 error: invalid query parameters
                 fields:
-                  type: 'must be one of: expense, income, transfer, asset_purchase, return_on_investment, asset_sale, repay_debt, balance_adjustment'
+                  type: 'must be one of: expense, income, transfer, asset_purchase, return_on_investment, asset_sale, repay_debt, balance_adjustment, beginning_balance'
                   limit: must be an integer between 1 and 5000
                   cursor: is not a cursor from this API (use next_cursor from the previous page)
         '500': { $ref: '#/components/responses/InternalError' }
@@ -339,6 +351,11 @@ paths:
         `balance_uid` may be any balance, and `category_uid`, `to_balance_uid`, `to_amount`,
         `to_currency`, `foreign_amount`, `foreign_currency` and `import_ref` are not allowed (422).
         `adjustment_direction` on any other type is a 422.
+
+        **Beginning balances** follow the same rules as balance adjustments (they stay
+        `beginning_balance`), except that `balance_uid` must stay the balance it belongs to (422),
+        `amount` may be `0`, and `spent_at` may not be later than the balance's other transactions
+        (422 on `spent_at`).
       parameters:
         - $ref: '#/components/parameters/IfMatch'
       requestBody:
@@ -357,6 +374,17 @@ paths:
                   spent_at: '2026-10-05T09:15:00+07:00'
                   note: pad thai + drink
                   version: 1
+              beginning_balance:
+                summary: Edit a beginning balance
+                value:
+                  type: beginning_balance
+                  amount: '2500'
+                  currency: THB
+                  balance_uid: 4dc73a4a-a60b-414e-98bc-3c71298a0af5
+                  adjustment_direction: increase
+                  spent_at: '2026-10-01T00:00:00+07:00'
+                  note: opening balance
+                  version: 2
               balance_adjustment:
                 summary: Edit a balance adjustment
                 value:
@@ -392,7 +420,8 @@ paths:
       description: |
         Deletes the transaction and reverses its balance effect (balances that no longer exist
         are skipped). `If-Match` is optional; a stale one is a 409. Deleting a `balance_adjustment`
-        reverts the manual change it recorded.
+        reverts the manual change it recorded. A `beginning_balance` cannot be deleted (409
+        `beginning_balance_undeletable`); it is removed only together with its balance.
       parameters:
         - $ref: '#/components/parameters/IfMatchOptional'
       responses:
@@ -413,7 +442,8 @@ paths:
         (`credit_card`, `other_liability`) need `debt` (may be negative, i.e. in credit) and `limit` (≥ 0).
         Sending an amount that does not apply to the type is a 422. Names need not be unique: two
         balances may share a name (each has its own `uid`).
-        A `version` in the body is ignored.
+        A `version` in the body is ignored. The starting `balance` / `debt` is recorded as the balance's
+        `beginning_balance` transaction (in the same database transaction), dated now.
       requestBody:
         required: true
         content:
@@ -521,8 +551,9 @@ paths:
         and must equal the stored type (422 on `type` otherwise). The amounts sent override whatever
         transactions did to the balance. A change of `balance` (assets) or `debt` (liabilities) records
         a `balance_adjustment` transaction (editable and deletable afterwards). Limit-only, name, description and currency changes
-        record nothing. The currency cannot change while transactions reference the balance (409
-        `balance_in_use`). An omitted `description` is cleared. Requires `If-Match` or `"version"`.
+        record nothing. The currency cannot change while transactions other than its beginning balance
+        reference the balance (409 `balance_in_use`); a currency change rewrites the beginning balance
+        with the new currency and amount. An omitted `description` is cleared. Requires `If-Match` or `"version"`.
       parameters:
         - $ref: '#/components/parameters/IfMatch'
       requestBody:
@@ -1545,8 +1576,9 @@ components:
       description: |
         Validation failed. `fields` lists every invalid field. This includes an unknown, non-allowed
         or wrong-currency `balance_uid` / `to_balance_uid`, a category of the wrong type,
-        `type: balance_adjustment` on create or on another type, another type on a balance adjustment,
-        and a missing or misplaced `adjustment_direction`.
+        `type: balance_adjustment` / `beginning_balance` on create or on another type, another type on a
+        balance adjustment or beginning balance, a beginning balance moved to another balance or dated
+        after another transaction of its balance, and a missing or misplaced `adjustment_direction`.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ValidationError' }
@@ -1582,8 +1614,9 @@ components:
       description: |
         `version_conflict`: the transaction changed since the version you sent. Nothing was saved,
         `current` is the transaction as it is now, and `ETag` is its version.
-        `balance_adjustment_readonly`: the write would create a balance adjustment or change a
-        transaction's type to or from `balance_adjustment` (normally caught as a 422 first).
+        `balance_adjustment_readonly`: the write would create a balance adjustment or beginning
+        balance, or change a transaction's type to or from one (normally caught as a 422 first).
+        `beginning_balance_undeletable`: a beginning balance cannot be deleted.
       headers:
         ETag:
           description: Current version (only with `version_conflict`).
@@ -1594,6 +1627,7 @@ components:
           examples:
             version_conflict: { $ref: '#/components/examples/ErrTxVersionConflict' }
             balance_adjustment_readonly: { $ref: '#/components/examples/ErrTxReadOnly' }
+            beginning_balance_undeletable: { $ref: '#/components/examples/ErrTxUndeletable' }
     BalanceConflict:
       description: |
         `version_conflict` (stale version; `current` + `ETag` sent) or `balance_in_use` (currency change
@@ -1772,7 +1806,7 @@ components:
         code:
           type: string
           description: Stable machine-readable reason, present for some errors only.
-          enum: [version_required, version_conflict, balance_in_use, balance_adjustment_readonly, exchange_rate_unsupported, exchange_rate_unavailable]
+          enum: [version_required, version_conflict, balance_in_use, balance_adjustment_readonly, beginning_balance_undeletable, exchange_rate_unsupported, exchange_rate_unavailable]
         current:
           type: object
           description: With `version_conflict` only, the record (Transaction or Balance) as it is now.
@@ -1789,7 +1823,7 @@ components:
       required: [error, code]
       properties:
         error: { type: string }
-        code: { type: string, enum: [version_conflict, balance_adjustment_readonly] }
+        code: { type: string, enum: [version_conflict, balance_adjustment_readonly, beginning_balance_undeletable] }
         fields:
           type: object
           additionalProperties: { type: string }
@@ -1817,13 +1851,15 @@ components:
         principal, the account receives principal + gain or − loss), `repay_debt` (payment account →
         credit card / other liability, debt down by the principal; optional interest and fees paid
         on top), or the
-        server-created `balance_adjustment` (editable and deletable, never created by clients).
-      enum: [expense, income, transfer, asset_purchase, return_on_investment, asset_sale, repay_debt, balance_adjustment]
+        server-created `balance_adjustment` (editable and deletable, never created by clients) and
+        `beginning_balance` (one per balance, recorded with it; editable, never created or deleted by clients).
+      enum: [expense, income, transfer, asset_purchase, return_on_investment, asset_sale, repay_debt, balance_adjustment, beginning_balance]
     TransactionWriteType:
       type: string
       description: |
-        Types a client may write. Empty or omitted means `expense`. `balance_adjustment` is a 422, except
-        when replacing an existing balance adjustment (where omitted means `balance_adjustment`).
+        Types a client may write. Empty or omitted means `expense`. `balance_adjustment` and
+        `beginning_balance` are a 422, except when replacing an existing one of that type (where
+        omitted means that type).
       enum: [expense, income, transfer, asset_purchase, return_on_investment, asset_sale, repay_debt]
       default: expense
     AdjustmentDirection:
@@ -1853,7 +1889,7 @@ components:
         balance_uid:
           type: string
           format: uuid
-          description: Paying (expense), receiving (income, return_on_investment), source (transfer, asset_purchase, repay_debt) or adjusted (balance_adjustment) balance. May point to a deleted balance.
+          description: Paying (expense), receiving (income, return_on_investment), source (transfer, asset_purchase, repay_debt) or adjusted (balance_adjustment, beginning_balance) balance. May point to a deleted balance.
           example: 4dc73a4a-a60b-414e-98bc-3c71298a0af5
         account:
           type: string
@@ -1904,7 +1940,7 @@ components:
           type: string
           enum: [increase, decrease, null]
           nullable: true
-          description: Set only for `balance_adjustment` (whether it raised or lowered the balance/debt); `null` otherwise.
+          description: Set only for `balance_adjustment` (whether it raised or lowered the balance/debt) and `beginning_balance` (`decrease` = it started below zero); `null` otherwise.
           example: null
         to_amount:
           type: string
@@ -2174,9 +2210,10 @@ components:
             - $ref: '#/components/schemas/AdjustmentDirection'
           nullable: true
           description: |
-            PUT of a `balance_adjustment` only, and required there: `increase` raises the balance (asset)
-            or debt (liability) of `balance_uid` by `amount`, `decrease` lowers it. Empty or `null` on
-            other types (a value is a 422). A replaced adjustment moves the balance by the difference.
+            PUT of a `balance_adjustment` or `beginning_balance` only, and required there: `increase` raises
+            the balance (asset) or debt (liability) of `balance_uid` by `amount`, `decrease` lowers it
+            (for a beginning balance: it started at minus `amount`). Empty or `null` on other types (a value
+            is a 422). A replaced adjustment or beginning balance moves the balance by the difference.
         import_ref:
           type: string
           nullable: true
@@ -2404,7 +2441,7 @@ components:
       properties:
         deleted_transactions:
           type: integer
-          description: How many transactions were deleted with the balance.
+          description: How many transactions were deleted with the balance (its beginning balance included).
           example: 3
     BalanceList:
       type: object
@@ -2972,10 +3009,15 @@ components:
           adjusts_balances: true
           adjustment_direction: null
     ErrTxReadOnly:
-      summary: Balance adjustments cannot be created or converted
+      summary: Balance adjustments and beginning balances cannot be created or converted
       value:
-        error: balance adjustments are created automatically by balance edits; they cannot be created directly, and a transaction cannot change type to or from balance_adjustment
+        error: balance adjustments and beginning balances are created automatically (by balance edits and when a balance is created); they cannot be created directly, and a transaction cannot change type to or from balance_adjustment or beginning_balance
         code: balance_adjustment_readonly
+    ErrTxUndeletable:
+      summary: A beginning balance cannot be deleted
+      value:
+        error: a beginning balance cannot be deleted; edit it instead (it is removed only together with its balance)
+        code: beginning_balance_undeletable
     ErrBalanceVersionConflict:
       summary: Stale version
       value:

@@ -263,9 +263,12 @@ func TestBalanceTransactionsReport(t *testing.T) {
 		body["money_out"] != "300.00" || body["from"] != nil || body["to"] != nil {
 		t.Errorf("card: %v", body)
 	}
-	if txs := body["transactions"].([]any); len(txs) != 3 || txs[0].(map[string]any)["counterparty"] != "Cash" ||
-		txs[0].(map[string]any)["amount_after"] != "-500.00" || txs[1].(map[string]any)["money_out"] != "300.00" ||
-		txs[2].(map[string]any)["money_in"] != "100.00" {
+	// All time starts with the card's beginning balance (0.00, moved back to
+	// the first transfer's time and listed before it).
+	if txs := body["transactions"].([]any); len(txs) != 4 || txs[0].(map[string]any)["type"] != "beginning_balance" ||
+		txs[0].(map[string]any)["amount_after"] != "0.00" || txs[1].(map[string]any)["counterparty"] != "Cash" ||
+		txs[1].(map[string]any)["amount_after"] != "-500.00" || txs[2].(map[string]any)["money_out"] != "300.00" ||
+		txs[3].(map[string]any)["money_in"] != "100.00" {
 		t.Errorf("card rows: %v", txs)
 	}
 
@@ -273,7 +276,7 @@ func TestBalanceTransactionsReport(t *testing.T) {
 	if rec, b := doH(t, h, "POST", "/api/balances/"+other+"/hide", "", nil); rec.Code != 200 {
 		t.Fatalf("hide: %d %v", rec.Code, b)
 	}
-	if rec, b := do(t, h, "GET", "/api/reports/balance-transactions?balance_uid="+other, ""); rec.Code != 200 || b["count"].(float64) != 1 ||
+	if rec, b := do(t, h, "GET", "/api/reports/balance-transactions?balance_uid="+other, ""); rec.Code != 200 || b["count"].(float64) != 2 || // + its beginning balance
 		b["balance"].(map[string]any)["hidden"] != true {
 		t.Errorf("hidden: %d %v", rec.Code, b)
 	}
@@ -304,7 +307,7 @@ func TestBalanceTransactionsReportPerUser(t *testing.T) {
 	if rec, _ := do(t, bob, "GET", "/api/reports/balance-transactions?balance_uid="+cash, ""); rec.Code != 404 {
 		t.Errorf("bob: %d", rec.Code)
 	}
-	if rec, b := do(t, alice, "GET", "/api/reports/balance-transactions?balance_uid="+cash, ""); rec.Code != 200 || b["count"].(float64) != 1 {
+	if rec, b := do(t, alice, "GET", "/api/reports/balance-transactions?balance_uid="+cash, ""); rec.Code != 200 || b["count"].(float64) != 2 { // + its beginning balance
 		t.Errorf("alice: %d %v", rec.Code, b)
 	}
 }

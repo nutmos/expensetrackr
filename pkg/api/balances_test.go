@@ -76,7 +76,7 @@ func TestBalanceCreateGetListDelete(t *testing.T) {
 		t.Errorf("bad type filter: %d %v", rec.Code, body)
 	}
 
-	if rec, body := do(t, h, "DELETE", acctPath, ""); rec.Code != http.StatusOK || body["deleted_transactions"] != float64(0) {
+	if rec, body := do(t, h, "DELETE", acctPath, ""); rec.Code != http.StatusOK || body["deleted_transactions"] != float64(1) { // its beginning balance
 		t.Errorf("delete: %d %v", rec.Code, body)
 	}
 	if rec, body := do(t, h, "GET", acctPath, ""); rec.Code != 404 || body["error"] != "balance not found" {

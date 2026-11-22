@@ -149,6 +149,8 @@
     repay_debt: ["payment_account"],
     // Only when editing one (they are recorded by manual balance edits).
     balance_adjustment: ["payment_account", "credit_card", "other_asset", "other_liability"],
+    // Only when editing one (recorded with each balance; its balance is fixed).
+    beginning_balance: ["payment_account", "credit_card", "other_asset", "other_liability"],
   };
   // Which balance types may be the destination (to_balance_uid).
   const DEST_TYPES = {
@@ -179,7 +181,7 @@
   // repayment may have an (expense) category for its interest and fees only,
   // and an asset sale one for its gain or loss only, so their category field
   // is shown only while those are filled in.
-  const NO_CATEGORY = new Set(["transfer", "repay_debt", "asset_sale", "balance_adjustment"]);
+  const NO_CATEGORY = new Set(["transfer", "repay_debt", "asset_sale", "balance_adjustment", "beginning_balance"]);
   // Whether the category field applies to type t in the current form.
   function categoryShown(t) {
     return !NO_CATEGORY.has(t) || (t === "repay_debt" && hasCharges()) || (t === "asset_sale" && hasGainLoss());
@@ -239,7 +241,7 @@
   // Types that may record a foreign-currency amount (reference only; never
   // moves a balance). Transfers use to_amount instead.
   const FOREIGN_TYPES = new Set(["expense", "income", "asset_purchase", "return_on_investment"]);
-  const SOURCE_LABEL = { expense: "Payment account", income: "Received into", transfer: "From (source)", asset_purchase: "Paid from", return_on_investment: "Received into", asset_sale: "Received into", repay_debt: "Paid from", balance_adjustment: "Adjusted balance" };
+  const SOURCE_LABEL = { expense: "Payment account", income: "Received into", transfer: "From (source)", asset_purchase: "Paid from", return_on_investment: "Received into", asset_sale: "Received into", repay_debt: "Paid from", balance_adjustment: "Adjusted balance", beginning_balance: "Balance" };
   const SOURCE_HINT = {
     expense: "Payment accounts and credit cards.",
     income: "Payment accounts and credit cards (e.g. cash rebates).",
@@ -249,9 +251,13 @@
     asset_sale: "Payment accounts and credit cards (where the sale proceeds arrive).",
     repay_debt: "Payment accounts.",
     balance_adjustment: "Any balance.",
+    beginning_balance: "The balance it starts; it cannot change.",
   };
   // Display names of transaction types (the API uses the lowercase values).
-  const TYPE_LABEL = { expense: "Expense", income: "Income", transfer: "Transfer", asset_purchase: "Asset Purchase", return_on_investment: "Return on Investment", asset_sale: "Asset Sale", repay_debt: "Repay Debt", balance_adjustment: "Balance Adjustment" };
+  const TYPE_LABEL = { expense: "Expense", income: "Income", transfer: "Transfer", asset_purchase: "Asset Purchase", return_on_investment: "Return on Investment", asset_sale: "Asset Sale", repay_debt: "Repay Debt", balance_adjustment: "Balance Adjustment", beginning_balance: "Beginning Balance" };
+  // Types recorded by the server (by balance edits and with each balance):
+  // editable, but they keep their type; they have a direction (+/−).
+  const SERVER_TYPES = new Set(["balance_adjustment", "beginning_balance"]);
   // Account column text: "from → to"; a return on investment and an asset
   // sale flow from the asset into the receiving account.
   function accountText(e) {
@@ -509,19 +515,23 @@
     $("#amount-label").textContent = t === "repay_debt" || t === "asset_sale" ? "Principal" : "Amount";
     updateChargesTotal();
     updateSaleTotal();
-    $("#direction-field").hidden = t !== "balance_adjustment";
+    $("#direction-field").hidden = !SERVER_TYPES.has(t);
     updateDirectionHint();
     updateFx();
   }
 
   // Balance adjustments: what the direction does to the selected balance
-  // (its balance for an asset, its debt for a liability).
+  // (its balance for an asset, its debt for a liability). Beginning
+  // balances: whether the balance started at or below zero.
   function updateDirectionHint() {
-    if (currentType() !== "balance_adjustment") return;
+    const t = currentType();
+    if (!SERVER_TYPES.has(t)) return;
     const b = balanceByUID($("#balance_uid").value);
     const what = b && LIABILITY.has(b.type) ? "debt" : "balance";
-    $("#direction-hint").textContent = $("#adjustment_direction").value === "decrease"
-      ? `Lowers the ${what} by the amount.` : `Raises the ${what} by the amount.`;
+    const down = $("#adjustment_direction").value === "decrease";
+    $("#direction-hint").textContent = t === "beginning_balance"
+      ? (down ? `The ${what} started below zero, at minus the amount.` : `The ${what} started at the amount.`)
+      : (down ? `Lowers the ${what} by the amount.` : `Raises the ${what} by the amount.`);
   }
 
   // Category dropdown: only categories of the selected type; hidden for
@@ -582,6 +592,7 @@
     $("#submit-btn").disabled = false;
     $("#type").disabled = false;
     $("#type-hint").hidden = true;
+    $("#balance_uid").disabled = false;
     $("#type").value = newType && NEW_TYPES.has(newType) ? newType : "expense";
     $("#note").value = "";
     $("#amount").value = "";
@@ -629,15 +640,22 @@
     }
     editing = e;
     form.hidden = false;
-    const isAdj = e.type === "balance_adjustment";
-    $("#form-title").textContent = `Edit ${isAdj ? "balance adjustment" : "transaction"}: ${e.amount} ${e.currency}, ${shownTime(e.spent_at)}`;
+    const isAdj = SERVER_TYPES.has(e.type);
+    const isBegin = e.type === "beginning_balance";
+    const what = isBegin ? "beginning balance" : isAdj ? "balance adjustment" : "transaction";
+    $("#form-title").textContent = `Edit ${what}: ${isAdj && e.adjustment_direction === "decrease" ? "−" : ""}${e.amount} ${e.currency}, ${shownTime(e.spent_at)}`;
     $("#amount").value = e.amount;
     App.setCurrency($("#currency"), e.currency);
     $("#type").value = e.type || "expense";
-    // A balance adjustment (recorded by a manual balance edit) can be
-    // edited, but it stays a balance adjustment.
+    // A balance adjustment (recorded by a manual balance edit) or beginning
+    // balance (recorded with its balance) can be edited, but it keeps its
+    // type; a beginning balance also stays on its balance.
     $("#type").disabled = isAdj;
     $("#type-hint").hidden = !isAdj;
+    $("#type-hint").textContent = isBegin
+      ? "A beginning balance keeps its type and balance. It must not be dated after the balance's other transactions; an earlier transaction moves it back."
+      : "A balance adjustment keeps its type.";
+    $("#balance_uid").disabled = isBegin;
     if (isAdj) $("#adjustment_direction").value = e.adjustment_direction === "decrease" ? "decrease" : "increase";
     // Stored conversion: shown as saved; it is kept unless the amount, date
     // or balances change (then the market rate is looked up again) or the
@@ -686,7 +704,7 @@
       note: $("#note").value.trim(),
     };
     if (DEST_TYPES[type]) payload.to_balance_uid = $("#to_balance_uid").value.trim();
-    if (type === "balance_adjustment") payload.adjustment_direction = $("#adjustment_direction").value;
+    if (SERVER_TYPES.has(type)) payload.adjustment_direction = $("#adjustment_direction").value;
     if (categoryShown(type) && $("#category_uid").value) payload.category_uid = $("#category_uid").value;
     // Interest and fees of a debt repayment; omitting them on an edit clears
     // them (PUT is a full replace).
@@ -790,8 +808,8 @@
   // income; the interest and fees of a debt repayment count as spent; the
   // gain of an asset sale as received and its loss as spent); transfers,
   // asset purchases, the principal of debt repayments and asset sales, and
-  // balance adjustments (manual corrections, not spending or income) are
-  // excluded.
+  // balance adjustments (manual corrections, not spending or income) and
+  // beginning balances are excluded.
   function renderTotals(items) {
     const sums = new Map(); // currency -> {scale, expense, income}
     for (const e of items) {
@@ -814,7 +832,7 @@
     const title = document.createElement("div");
     title.className = "totals-title";
     title.textContent = "Totals of the loaded rows";
-    title.title = "Transfers, asset purchases, the principal of debt repayments and asset sales, and balance adjustments are excluded; returns on investment and asset sale gains count as received, debt interest and fees and asset sale losses as spent.";
+    title.title = "Transfers, asset purchases, the principal of debt repayments and asset sales, balance adjustments and beginning balances are excluded; returns on investment and asset sale gains count as received, debt interest and fees and asset sale losses as spent.";
     totalsEl.append(title);
     for (const [code, { scale, expense, income }] of sums) {
       const row = document.createElement("div");
@@ -903,7 +921,8 @@
       timeTd.append(mark);
     }
     const t = e.type || "expense";
-    const isAdj = t === "balance_adjustment";
+    const isAdj = SERVER_TYPES.has(t);
+    const isBegin = t === "beginning_balance";
     const typeTd = cell(TYPE_LABEL[t] || t, "type type-" + t);
     const acctTd = cell(accountText(e));
     // An adjustment shows its direction as a sign: + the edited balance
@@ -973,17 +992,18 @@
     }
     if (isAdj) {
       tr.classList.add("row-adjustment");
-      amountTd.title = `Manual balance edit: ${e.adjustment_direction === "decrease" ? "decreased" : "increased"} by ${e.amount} ${e.currency}`;
+      amountTd.title = isBegin
+        ? `Beginning balance: the balance started at ${e.adjustment_direction === "decrease" ? "−" : ""}${e.amount} ${e.currency}`
+        : `Manual balance edit: ${e.adjustment_direction === "decrease" ? "decreased" : "increased"} by ${e.amount} ${e.currency}`;
     }
     if (fxRow) tr.classList.add("fx-row");
     acctTd.classList.add("acct");
     tr.append(timeTd, typeTd, amountTd, cell(fxRow ? `${App.currencyText(e.currency)} → ${App.currencyText(e.to_currency)}` : App.currencyText(e.currency), "cur"), acctTd, cell(categoryName(e.category_uid), "cat"), cell(e.note || "", "note"));
     const actions = document.createElement("td");
     actions.className = "actions-cell";
-    actions.append(
-      link("Edit", `/transactions/${encodeURIComponent(e.uid)}/edit`, "button edit"),
-      button("Delete", "danger", () => deleteTransaction(e)),
-    );
+    actions.append(link("Edit", `/transactions/${encodeURIComponent(e.uid)}/edit`, "button edit"));
+    // A beginning balance goes only together with its balance.
+    if (!isBegin) actions.append(button("Delete", "danger", () => deleteTransaction(e)));
     tr.append(actions);
     return tr;
   }

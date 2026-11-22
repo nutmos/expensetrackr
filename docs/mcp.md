@@ -136,7 +136,8 @@ The same read-modify-write as `update_transaction`, against
    clears `description`) and `PUT` with `If-Match`. `type` is not accepted:
    it is fixed at creation. Changing `balance` / `debt` records a
    `balance_adjustment` transaction for the difference; a limit, name or
-   description change records nothing.
+   description change records nothing. (`create_balance` records the
+   starting amount as the balance's `beginning_balance` transaction.)
 3. If `hidden` was given and differs, `POST /api/balances/:uid/hide` (or
    `/unhide`) with the new version. `hidden` alone skips the `PUT`.
 

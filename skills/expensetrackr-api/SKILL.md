@@ -24,6 +24,12 @@ authoritative spec is `GET /api/openapi.yaml` (no login needed).
   transaction into one, is 422). Edit or delete an existing one only when the
   user asks: that moves the balance (by the difference, or back by the whole
   change on delete), so confirm it like any balance change.
+- **Never create `beginning_balance` transactions.** Every balance gets one
+  when it is created (its starting amount). It can be edited (amount,
+  `adjustment_direction`, `spent_at`, `note`; not its balance) when the user
+  asks, which moves the balance by the difference, but never deleted (409
+  `beginning_balance_undeletable`). A transaction dated before it moves it
+  back automatically.
 - **Talk in names, not uids.** Use uids in API calls only; show users account
   and category names, amounts and dates unless they ask for ids.
 - **Protect credentials.** Read them from `EXPENSETRACKR_USERNAME` /
@@ -252,7 +258,7 @@ curl -sS -b "$JAR" -c "$JAR" \
   | jq -r '.count, (.transactions[] | [.spent_at, .type, .amount, .currency, .account, .note] | @tsv)'
 ```
 
-Other filters: `category_uid=<uid>`, `type=income|transfer|asset_purchase|return_on_investment|asset_sale|repay_debt|balance_adjustment`.
+Other filters: `category_uid=<uid>`, `type=income|transfer|asset_purchase|return_on_investment|asset_sale|repay_debt|balance_adjustment|beginning_balance`.
 `limit` is 1–5000 (default **500**; if `count` equals the limit there may be
 more — narrow the date range). There is no server-side sum: total the
 `amount` strings per currency yourself, count returns on investment as income,

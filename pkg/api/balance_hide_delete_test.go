@@ -96,13 +96,13 @@ func TestBalanceDeleteRemovesTransactions(t *testing.T) {
 		t.Errorf("stale delete: %d %v", rec.Code, b)
 	}
 	rec, b := do(t, h, "DELETE", savingsPath, "")
-	if rec.Code != 200 || b["deleted_transactions"] != float64(2) {
+	if rec.Code != 200 || b["deleted_transactions"] != float64(3) { // + its beginning balance
 		t.Fatalf("delete: %d %v", rec.Code, b)
 	}
 	if rec, b := do(t, h, "GET", "/api/balances/"+cashUID, ""); rec.Code != 200 || b["balance"] != "95.00" {
 		t.Errorf("cash after delete: %d %v", rec.Code, b)
 	}
-	rec, list := do(t, h, "GET", "/api/transactions", "")
+	rec, list := do(t, h, "GET", "/api/transactions?type=expense", "")
 	if rec.Code != 200 || list["count"] != float64(1) {
 		t.Fatalf("transactions left: %d %v", rec.Code, list)
 	}

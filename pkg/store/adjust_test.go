@@ -280,7 +280,7 @@ func TestCurrencyMismatchRejected(t *testing.T) {
 	// Transfer THB -> USD destination.
 	e = f.tx("transfer", "5", "THB", f.pay, &usd)
 	fieldErr(t, f.st.Create(ctx, f.userUID, &e), "to_balance_uid")
-	if items, _ := f.st.List(ctx, f.userUID, ListFilter{}); len(items) != 0 {
+	if items, _ := withoutBeginning(f.st.List(ctx, f.userUID, ListFilter{})); len(items) != 0 {
 		t.Errorf("rejected creates left %d rows", len(items))
 	}
 	f.want(f.pay, "1000.00", 1)
@@ -366,7 +366,7 @@ func TestVersionChecks(t *testing.T) {
 	if err != nil || b.Version != 3 {
 		t.Errorf("fresh balance update: v%d %v", b.Version, err)
 	}
-	if n, err := f.st.DeleteBalanceWith(ctx, f.userUID, f.pay.ID, WriteOptions{Version: 3}); err != nil || n != 1 {
+	if n, err := f.st.DeleteBalanceWith(ctx, f.userUID, f.pay.ID, WriteOptions{Version: 3}); err != nil || n != 2 { // + its beginning balance
 		t.Errorf("fresh balance delete: %d transaction(s), %v", n, err)
 	}
 	if _, err := f.st.DeleteBalanceWith(ctx, f.userUID, f.pay.ID, WriteOptions{Version: 3}); !errors.Is(err, ErrNotFound) {

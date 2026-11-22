@@ -105,6 +105,13 @@ confirmations use human labels instead. For example, an edit page is titled
   hint saying whether it raises or lowers the balance or the debt. Saving
   moves the balance(s) by the difference; deleting (after a confirmation
   that says so) reverts the change.
+- **Beginning Balance** rows (one per balance, recorded when it is created)
+  look like balance adjustments, with a signed amount, but have **Edit only**
+  (no Delete). Their edit form keeps the type and the balance (both shown,
+  disabled), has the **Direction** select (Increase = started at the amount,
+  Decrease = started below zero), and accepts an amount of 0. A transaction
+  dated before it moves it back to that date. The new-balance form says that
+  the starting amount is recorded this way.
 - Columns: time (shown in the device's time zone, with the stored value on
   hover, and an "edited" marker), Type, Amount,
   Currency, Account ("from → to" for transfers, asset purchases and debt repayments, "investment → account" for returns on investment, "asset → account" for asset sales), Category, Note.

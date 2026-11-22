@@ -152,7 +152,7 @@ func (s *Store) CreateBulk(ctx context.Context, userUID string, items []BulkItem
 				continue
 			}
 			e := it.Tx
-			if e.Type == transaction.BalanceAdjustment {
+			if e.Type.ServerRecorded() {
 				r.Status, r.Err = BulkFailed, ErrReadOnly
 				failed++
 				continue

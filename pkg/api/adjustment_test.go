@@ -60,7 +60,7 @@ func TestBalanceAdjustmentAPI(t *testing.T) {
 	if rec, b := do(t, h, "POST", "/api/transactions", `{"amount":"10","currency":"THB","balance_uid":"`+cash+`","spent_at":"2026-10-08T12:00:00+08:00"}`); rec.Code != 201 {
 		t.Fatalf("expense: %d %v", rec.Code, b)
 	}
-	if n := len(list("")); n != 3 {
+	if n := len(list("")); n != 5 { // + the two balances' beginning balances
 		t.Errorf("all: %d", n)
 	}
 	if e := list("?type=expense"); len(e) != 1 {

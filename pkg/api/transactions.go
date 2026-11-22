@@ -172,9 +172,13 @@ func (s *Server) replaceTransaction(c *gin.Context) {
 		return
 	}
 	validate := in.Validate
-	if cur.Type == transaction.BalanceAdjustment {
+	switch cur.Type {
+	case transaction.BalanceAdjustment:
 		// Editable, but it stays a balance adjustment (see ValidateAdjustment).
 		validate = in.ValidateAdjustment
+	case transaction.BeginningBalance:
+		// Editable, but it stays the beginning balance of its balance.
+		validate = in.ValidateBeginningBalance
 	}
 	next, err := validate()
 	if err != nil {
@@ -225,7 +229,7 @@ func parseListFilter(c *gin.Context) (store.ListFilter, map[string]string) {
 		if t, ok := transaction.ParseFilterType(raw); ok {
 			f.Type = t
 		} else {
-			fields["type"] = "must be one of: expense, income, transfer, asset_purchase, return_on_investment, repay_debt, balance_adjustment"
+			fields["type"] = "must be one of: expense, income, transfer, asset_purchase, return_on_investment, asset_sale, repay_debt, balance_adjustment, beginning_balance"
 		}
 	}
 

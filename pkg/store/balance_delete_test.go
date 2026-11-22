@@ -29,7 +29,7 @@ func TestDeleteBalanceRemovesTransactions(t *testing.T) {
 
 	count := func() int {
 		t.Helper()
-		all, err := f.st.List(ctx, f.userUID, ListFilter{})
+		all, err := withoutBeginning(f.st.List(ctx, f.userUID, ListFilter{}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -48,8 +48,8 @@ func TestDeleteBalanceRemovesTransactions(t *testing.T) {
 	f.want(f.gold, "600.00", 5)
 
 	n, err := f.st.DeleteBalanceWith(ctx, f.userUID, f.gold.ID, WriteOptions{Version: 5})
-	if err != nil || n != 5 {
-		t.Fatalf("delete gold: %d transaction(s), %v; want 5", n, err)
+	if err != nil || n != 6 { // + gold's beginning balance
+		t.Fatalf("delete gold: %d transaction(s), %v; want 6", n, err)
 	}
 	if _, err := f.st.GetBalance(ctx, f.userUID, f.gold.ID); !errors.Is(err, ErrNotFound) {
 		t.Errorf("gold still there: %v", err)
@@ -58,7 +58,7 @@ func TestDeleteBalanceRemovesTransactions(t *testing.T) {
 	f.want(f.pay, "945.00", 6)   // +10 (transfer back) −7 (return removed)
 	f.want(f.card, "50.00", 4)   // −20 (asset purchase removed)
 	f.want(f.loan, "5000.00", 3) // +30 debt (repayment from gold removed)
-	left, err := f.st.List(ctx, f.userUID, ListFilter{})
+	left, err := withoutBeginning(f.st.List(ctx, f.userUID, ListFilter{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestDeleteBalanceRemovesTransactions(t *testing.T) {
 	}
 
 	// A balance without transactions: nothing else moves.
-	if n, err := f.st.DeleteBalance(ctx, f.userUID, f.loan.ID); err != nil || n != 0 {
+	if n, err := f.st.DeleteBalance(ctx, f.userUID, f.loan.ID); err != nil || n != 1 { // its beginning balance
 		t.Errorf("delete loan: %d, %v", n, err)
 	}
 	f.want(f.pay, "945.00", 6)
@@ -94,10 +94,10 @@ func TestDeleteBalanceKeepsOtherUsers(t *testing.T) {
 		t.Fatal(err)
 	}
 	other.create(other.tx("expense", "1", "THB", other.pay, nil))
-	if n, err := f.st.DeleteBalance(ctx, f.userUID, f.pay.ID); err != nil || n != 1 {
+	if n, err := f.st.DeleteBalance(ctx, f.userUID, f.pay.ID); err != nil || n != 2 { // + its beginning balance
 		t.Fatalf("delete: %d, %v", n, err)
 	}
-	if got, err := f.st.List(ctx, u.UID, ListFilter{}); err != nil || len(got) != 1 {
+	if got, err := withoutBeginning(f.st.List(ctx, u.UID, ListFilter{})); err != nil || len(got) != 1 {
 		t.Errorf("other user's transactions: %d, %v", len(got), err)
 	}
 	other.want(other.pay, "9.00", 2)
