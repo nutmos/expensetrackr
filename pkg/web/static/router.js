@@ -272,8 +272,20 @@
     try { return m[1] + new Intl.NumberFormat(undefined, opts).format(m[2]); } catch (_) { return s; }
   }
 
+  // "06 Oct 2026 21:06" (DD MMM YYYY HH:mm) in the device's time zone, for any
+  // value Date accepts (RFC 3339 string, Date). The raw value if unparsable
+  // (issue #163: one friendly date-time format across the web UI).
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  function fmtDateTime(v) {
+    if (v === null || v === undefined || v === "") return "";
+    const d = v instanceof Date ? v : new Date(v);
+    if (isNaN(d)) return String(v);
+    const p2 = (n) => String(n).padStart(2, "0");
+    return `${p2(d.getDate())} ${MONTHS[d.getMonth()]} ${d.getFullYear()} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+  }
+
   window.App = {
-    loadCurrencies, currencyText, setCurrency, fillCurrencySelect, fmtAmount,
+    loadCurrencies, currencyText, setCurrency, fillCurrencySelect, fmtAmount, fmtDateTime,
     $, cell, button, link, clearErrors, showFieldErrors, setStatus,
     setFlash, takeFlash, route, navigate, returnToList, replaceQuery, ifMatch, showConflict, hideConflict,
     isUUID: (s) => UUID_RE.test(s),

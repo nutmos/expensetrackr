@@ -75,7 +75,7 @@
 
   function shownDate(s) {
     if (!s) return "";
-    return new Date(s).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
+    return App.fmtDateTime(s);
   }
 
   function renderTokens(list) {
