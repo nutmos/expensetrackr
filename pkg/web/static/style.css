@@ -375,3 +375,23 @@ button, a.button { white-space: nowrap; }
   #view-reports tr { break-inside: avoid; }
   #view-reports .pos-text, #view-reports .neg-text { color: inherit; }
 }
+
+/* ---- Date and time fields on phones (issue #181) ----------------------- */
+/* Native date/time inputs have a built-in minimum width, so they could stick
+   out past the right edge of the card on a narrow screen. */
+input[type="date"], input[type="time"] { min-width: 0; max-width: 100%; }
+/* iOS Safari draws them as native controls: text centred, a different height
+   from the other fields and widths ignored. Make them plain boxes like the
+   text inputs (the picker still opens on tap). */
+@supports (-webkit-touch-callout: none) {
+  input[type="date"], input[type="time"] {
+    -webkit-appearance: none; appearance: none; display: block;
+    background: #fff; color: var(--fg); text-align: left;
+    min-height: calc(1.45em + 18px); /* same height as a text input */
+  }
+  input[type="date"]::-webkit-date-and-time-value,
+  input[type="time"]::-webkit-date-and-time-value { text-align: left; margin: 0; }
+  .filters input[type="date"] { min-height: calc(1.45em + 12px); }
+  /* No calendar icon on iOS, so the formatted label can use the full width. */
+  .picker-field .picker-text { right: 10px; }
+}
