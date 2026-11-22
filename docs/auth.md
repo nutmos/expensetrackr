@@ -24,7 +24,7 @@ in the flow (the `users.email` column stays, optional). SSO (Apple / Google via
 
 | Method | Path | Auth | Result |
 |--------|------|------|--------|
-| POST | `/api/auth/register` | first run: none; afterwards: session | `{"username","password","display_name"?}` → 201 user. First run also logs the new user in. 422 rule violations, 409 username taken, 403 `registration_closed`, 400 unknown fields (e.g. `email`). |
+| POST | `/api/auth/register` | first run: none; afterwards: session | `{"username","password","display_name"?}` → 201 user. Never logs in: the new user then logs in with `POST /api/auth/login`. 422 rule violations, 409 username taken, 403 `registration_closed`, 400 unknown fields (e.g. `email`). |
 | POST | `/api/auth/login` | none | `{"username","password"}` → 200 user + `Set-Cookie`. Updates `last_login_at`. Unknown user, wrong password and `status != active` all give the same **401 `invalid username or password`**; an unknown user still costs one bcrypt comparison (dummy hash) so timing does not reveal which usernames exist. 429 when throttled. |
 | POST | `/api/auth/logout` | none | Deletes the session (if any), clears the cookie. Always 204. |
 | GET | `/api/auth/me` | session | 200 current user; 401 otherwise, with `code: "setup_required"` while no account exists (the web page then offers the Create account button on its Log in page). |
@@ -179,7 +179,9 @@ CREATE INDEX idx_api_tokens_user_uid ON api_tokens (user_uid);
    While no account exists it also shows "No account yet — create one to get
    started." and a **Create account** button leading to `/register`
    (username, password, optional display name, and a "Back to log in" button).
-   This calls `POST /api/auth/register` and logs you in.
+   This calls `POST /api/auth/register` and does not log you in: you return
+   to **Log in** (with a "Account created" note and your username filled in)
+   and log in with the username and password you just chose.
 3. From then on the Log in page has no Create account button (visiting
    `/register` falls back to Log in with a "registration is closed" note);
    registration is closed to anonymous

@@ -1180,7 +1180,8 @@ paths:
       summary: Create an account (first-run setup, or by a logged-in user)
       description: |
         Creates a user with a username and password (no email). While **no user has a password**
-        (first run) anyone may call it, and the new user is logged in (`Set-Cookie: session=…`).
+        (first run) anyone may call it. It never logs anyone in: the new user signs in with
+        `POST /api/auth/login` using the username and password they chose.
         Afterwards it is **403** `registration_closed` unless the caller is logged in; a logged-in
         caller creates the account without switching sessions.
         Username: 3–32 characters, lowercase letters, digits, `.`, `_`, `-` (stored lowercased,
@@ -1200,9 +1201,7 @@ paths:
               additionalProperties: false
       responses:
         '201':
-          description: Created (and, on first run, logged in).
-          headers:
-            Set-Cookie: { description: 'First run only: the session cookie.', schema: { type: string } }
+          description: Created. No session is started; log in with `POST /api/auth/login`.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/User' }
@@ -1397,7 +1396,7 @@ components:
       type: apiKey
       in: cookie
       name: session
-      description: Session cookie set by `POST /api/auth/login` (or first-run `POST /api/auth/register`).
+      description: Session cookie set by `POST /api/auth/login`.
     bearerAuth:
       type: http
       scheme: bearer

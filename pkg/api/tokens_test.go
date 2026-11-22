@@ -20,6 +20,7 @@ func tokenSetup(t *testing.T, srv *Server) (h http.Handler, alice, bob *authClie
 	if rec := alice.req("POST", "/api/auth/register", `{"username":"alice","password":"pw-12345"}`, nil); rec.Code != 201 {
 		t.Fatalf("register alice: %d %s", rec.Code, rec.Body)
 	}
+	alice.login("alice", "pw-12345")
 	if rec := alice.req("POST", "/api/auth/register", `{"username":"bob","password":"pw-12345"}`, nil); rec.Code != 201 {
 		t.Fatalf("register bob: %d %s", rec.Code, rec.Body)
 	}
