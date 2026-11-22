@@ -765,7 +765,7 @@
       if (!isEdit && type === "expense") rememberDefaults(payload.currency, payload.balance_uid);
       App.setFlash("transactions", `${isEdit ? "Updated" : "Saved"} ${body.amount} ${body.currency} (${TYPE_LABEL[body.type] || body.type}).`, body.uid);
       editing = null;
-      App.returnToList(LIST);
+      App.returnToList(LIST, App.BALANCE_PAGE_RE);
     } catch (err) {
       setStatus("Network error: " + err.message, "bad");
     } finally {
@@ -773,7 +773,7 @@
     }
   }
 
-  function cancelForm() { App.returnToList(LIST); }
+  function cancelForm() { App.returnToList(LIST, App.BALANCE_PAGE_RE); }
 
   // ---- List page: /transactions ---------------------------------------------
 

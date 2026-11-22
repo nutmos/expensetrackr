@@ -308,6 +308,28 @@
       </form>
     </dialog>
 
+    <!-- /balances/:uid: the balance's transactions (issue #175), date filter only -->
+    <div id="view-balance-detail" class="view" hidden>
+    <section class="card">
+      <p class="back"><a href="/balances" class="back-link">← Balances</a></p>
+      <div class="list-header">
+        <h2 id="bd-title">Balance</h2>
+        <a href="/balances" id="bd-edit" class="button edit" hidden>Edit balance</a>
+      </div>
+      <p id="bd-meta" class="report-range muted"></p>
+      <form id="bd-filter-form" class="filters">
+        <label>From <input type="date" id="bd-from"></label>
+        <label>To <input type="date" id="bd-to"></label>
+        <button type="submit" class="secondary">Filter</button>
+        <button type="button" id="bd-clear" class="secondary">Clear</button>
+      </form>
+      <p id="flash-balance-detail" class="flash" role="status" hidden></p>
+      <p id="bd-status" class="muted" role="status"></p>
+      <div id="bd-body"></div>
+      <p class="muted small">Every transaction that moved this balance, newest first, in the balance's currency. For a credit card or other liability, “In” lowers the debt (payments) and “Out” raises it (charges).</p>
+    </section>
+    </div>
+
     <!-- /balances/new and /balances/:uid/edit -->
     <div id="view-balance-form" class="view" hidden>
     <section class="card form-card">

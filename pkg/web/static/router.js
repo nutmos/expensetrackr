@@ -6,6 +6,7 @@
 //   /<res>                      balances / categories list
 //   /<res>/new                  add page
 //   /<res>/<uid>/edit           edit page (same form as add)
+//   /balances/<uid>             a balance's transactions (balances.js)
 //   /reports, /reports/<id>     reports (reports.js)
 // Navigation between them uses history.pushState, so the browser back and
 // forward buttons work and every page can be bookmarked or reloaded.
@@ -79,10 +80,13 @@
 
   function setFlash(list, text, uid) { flash = { list, text, uid }; }
 
-  // Show (and consume) the flash for list `name`; returns the uid to highlight.
-  function takeFlash(name) {
-    const el = $(`#flash-${name}`);
-    if (!flash || flash.list !== name) {
+  // Show (and consume) the flash for list `name` (or any of an array of
+  // names) in #flash-<target> (default: #flash-<name>); returns the uid to
+  // highlight.
+  function takeFlash(name, target) {
+    const names = Array.isArray(name) ? name : [name];
+    const el = $(`#flash-${target || names[0]}`);
+    if (!flash || !names.includes(flash.list)) {
       if (el) el.hidden = true;
       return null;
     }
@@ -170,12 +174,14 @@
   // Leave a form page for its list. When we got here from that list in this
   // tab (the usual case), step back in history so the list keeps its filters
   // and the add/edit page does not linger in the back stack; otherwise (page
-  // opened directly) replace this entry with the list.
-  function returnToList(listPath) {
+  // opened directly) replace this entry with the list. `alsoFrom` (a RegExp
+  // of paths) names other pages to step back to the same way, e.g. a
+  // balance's transactions page for the transaction form.
+  function returnToList(listPath, alsoFrom) {
     const from = history.state && history.state.from;
     if (from) {
       const fromPath = new URL(from, location.origin).pathname;
-      if (fromPath === listPath || (listPath === "/transactions" && fromPath === "/")) {
+      if (fromPath === listPath || (listPath === "/transactions" && fromPath === "/") || (alsoFrom && alsoFrom.test(fromPath))) {
         history.back();
         return;
       }
@@ -299,6 +305,8 @@
     $, cell, button, link, clearErrors, showFieldErrors, setStatus,
     setFlash, takeFlash, route, navigate, returnToList, replaceQuery, ifMatch, showConflict, hideConflict,
     isUUID: (s) => UUID_RE.test(s),
+    // Paths of a balance's transactions page (/balances/<uid>).
+    BALANCE_PAGE_RE: /^\/balances\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
   };
 
   // ---- Authentication (issues #30, #32) -----------------------------------
