@@ -506,11 +506,13 @@
     table.id = "bd-table";
     const thead = document.createElement("thead");
     const hr = document.createElement("tr");
-    for (const [t, cls] of [["Date", ""], ["Type", ""], ["Details", ""], ["In", "num"], ["Out", "num"], [what, "num"], ["", "col-actions"]]) {
+    for (const [t, cls] of [["Date", ""], ["Type", ""], ["Details", ""], ["In", "num"], ["Out", "num"], [`${what} after`, "num"], ["", "col-actions"]]) {
       const th = document.createElement("th");
       th.textContent = t;
       if (cls) th.className = cls;
       if (!t) th.setAttribute("aria-label", "Actions");
+      // The running amount right after each row, not the current one (#187).
+      if (t === `${what} after`) th.title = `${what} right after this transaction`;
       hr.append(th);
     }
     thead.append(hr);

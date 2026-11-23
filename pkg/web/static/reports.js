@@ -361,7 +361,7 @@
     const table = el("table", "statement stack-table");
     const thead = el("thead");
     const hr = el("tr");
-    for (const [t, cls] of [["Date", ""], ["Type", ""], ["Details", ""], ["In", "num"], ["Out", "num"], [what, "num"]]) {
+    for (const [t, cls] of [["Date", ""], ["Type", ""], ["Details", ""], ["In", "num"], ["Out", "num"], [`${what} after`, "num"]]) {
       hr.append(el("th", cls, t));
     }
     thead.append(hr);
