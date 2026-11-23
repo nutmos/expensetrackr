@@ -214,6 +214,9 @@ confirmations use human labels instead. For example, an edit page is titled
 **Categories**
 
 - The list is grouped into expense and income categories.
+- On the edit page the **Type** is locked (shown but disabled): a
+  category's type is fixed when it is created. To use the other type, add a
+  new category and delete the old one.
 - **Delete** of a category still used by transactions shows the 409 message
   on the list.
 

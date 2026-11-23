@@ -142,7 +142,7 @@ func TestUserCategoriesInUse(t *testing.T) {
 	if _, err := st.UpdateCategory(ctx, u[0], food.UID, func(c category.Category) (category.Category, error) {
 		c.Type = category.TypeIncome
 		return c, nil
-	}); !errors.Is(err, ErrCategoryInUse) {
+	}); !errors.Is(err, ErrCategoryTypeImmutable) {
 		t.Errorf("type change: %v", err)
 	}
 	if _, err := st.UpdateCategory(ctx, u[0], food.UID, func(c category.Category) (category.Category, error) {

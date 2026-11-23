@@ -24,6 +24,10 @@ var (
 	// ErrCategoryInUse: the category is referenced by transactions, so it
 	// cannot be deleted or change type.
 	ErrCategoryInUse = errors.New("category is used by transactions")
+	// ErrCategoryTypeImmutable: an update tried to change a category's type.
+	// The type is fixed when the category is created (issue #185); to use
+	// the other type, create a new category and delete this one.
+	ErrCategoryTypeImmutable = errors.New("a category's type cannot be changed after it is created; create a new category of the other type and delete this one")
 	// ErrCategoryLimit: the user already has MaxCategoriesPerUser categories.
 	ErrCategoryLimit = fmt.Errorf("category limit reached (at most %d categories per user)", MaxCategoriesPerUser)
 	// errCategoryRowConflict: the user_categories row changed between the
@@ -237,12 +241,12 @@ func countCategoryRefs(ctx context.Context, tx *sql.Tx, userUID string, uid comm
 }
 
 // UpdateCategory loads the user's category uid, applies fn and stores the
-// result (read-modify-write of the user's row, see modifyCategories). A type
-// change is rejected with ErrCategoryInUse when any transaction references
-// the category. UID/CreatedAt are preserved.
+// result (read-modify-write of the user's row, see modifyCategories). The
+// type cannot change: a different type is rejected with
+// ErrCategoryTypeImmutable. UID/CreatedAt are preserved.
 func (s *Store) UpdateCategory(ctx context.Context, userUID string, uid common_type.UID, fn func(cur category.Category) (category.Category, error)) (category.Category, error) {
 	var result category.Category
-	err := s.modifyCategories(ctx, userUID, func(tx *sql.Tx, cats []category.Category) ([]category.Category, error) {
+	err := s.modifyCategories(ctx, userUID, func(_ *sql.Tx, cats []category.Category) ([]category.Category, error) {
 		i := indexOfCategory(cats, uid)
 		if i < 0 {
 			return nil, ErrNotFound
@@ -253,13 +257,7 @@ func (s *Store) UpdateCategory(ctx context.Context, userUID string, uid common_t
 			return nil, err
 		}
 		if next.Type != cur.Type {
-			n, err := countCategoryRefs(ctx, tx, userUID, cur.UID)
-			if err != nil {
-				return nil, err
-			}
-			if n > 0 {
-				return nil, fmt.Errorf("%w (%d transaction(s)); its type cannot change", ErrCategoryInUse, n)
-			}
+			return nil, ErrCategoryTypeImmutable
 		}
 		if nameTaken(cats, next, cur.UID) {
 			return nil, ErrDuplicateCategory

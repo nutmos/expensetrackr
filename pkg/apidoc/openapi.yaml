@@ -731,7 +731,7 @@ paths:
       tags: [categories]
       operationId: replaceCategory
       summary: Replace a category
-      description: Full replace (an omitted `description` clears it). Changing `type` while transactions use the category is a 409. Not versioned.
+      description: Full replace (an omitted `description` clears it). `type` must stay the category's current type; a different type is a 422 `category_type_immutable` (create a new category and delete this one instead). Not versioned.
       requestBody:
         required: true
         content:
@@ -748,7 +748,7 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '404': { $ref: '#/components/responses/CategoryNotFound' }
         '409': { $ref: '#/components/responses/CategoryConflict' }
-        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '422': { $ref: '#/components/responses/CategoryReplaceFailed' }
         '500': { $ref: '#/components/responses/InternalError' }
     delete:
       tags: [categories]
@@ -1580,6 +1580,19 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/ValidationError' }
           example: { error: validation failed, fields: { name: is required, type: is required (expense or income) } }
+    CategoryReplaceFailed:
+      description: Validation failed, or `category_type_immutable` (the body's `type` differs from the category's type, which is fixed at creation).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            validation:
+              value: { error: validation failed, fields: { name: is required } }
+            type_immutable:
+              value:
+                error: a category's type cannot be changed after it is created; create a new category of the other type and delete this one
+                code: category_type_immutable
+                fields: { type: cannot be changed after the category is created; create a new category and delete this one }
     TransactionValidationFailed:
       description: |
         Validation failed. `fields` lists every invalid field. This includes an unknown, non-allowed
@@ -1651,7 +1664,7 @@ components:
             version_conflict: { $ref: '#/components/examples/ErrBalanceVersionConflict' }
             balance_in_use: { $ref: '#/components/examples/ErrBalanceInUse' }
     CategoryConflict:
-      description: Duplicate name within the type among the user's categories (case-insensitive), a type change while transactions use the category, or the per-user limit (500 categories) reached.
+      description: Duplicate name within the type among the user's categories (case-insensitive), deleting a category that transactions use, or the per-user limit (500 categories) reached.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
@@ -1661,7 +1674,7 @@ components:
                 error: a category with this name and type already exists
                 fields: { name: is already used by another category of this type (names are case-insensitive) }
             in_use:
-              value: { error: 'category is used by transactions (2 transaction(s)); its type cannot change; move those transactions to another category first' }
+              value: { error: 'category is used by transactions (2 transaction(s)); it cannot be deleted; move those transactions to another category first' }
             limit:
               value: { error: 'category limit reached (at most 500 categories per user)' }
     UserConflict:

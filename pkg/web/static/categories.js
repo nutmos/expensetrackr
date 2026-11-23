@@ -29,6 +29,9 @@
     App.clearErrors(form);
     setStatus("");
     form.hidden = false;
+    // The type is fixed once the category exists (issue #185).
+    $("#c-type").disabled = !!params.uid;
+    $("#c-type-hint").hidden = !params.uid;
     if (!params.uid) {
       $("#c-form-title").textContent = "Add a category";
       $("#c-submit-btn").textContent = "Save category";
@@ -68,7 +71,7 @@
     const isEdit = !!editing;
     const payload = {
       name: $("#c-name").value.trim(),
-      type: $("#c-type").value,
+      type: isEdit ? editing.type : $("#c-type").value, // the type cannot change
       description: $("#c-description").value.trim(),
     };
     const btn = $("#c-submit-btn");

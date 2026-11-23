@@ -41,7 +41,7 @@ The limits are enforced in Go (`pkg/category`, `pkg/store/categories.go`):
 |------|-------|
 | name | required, ≤ 100 characters (trimmed) |
 | description | optional, ≤ 1000 characters |
-| type | `expense` or `income` |
+| type | `expense` or `income`; fixed when the category is created (cannot be changed, issue #185) |
 | unique name | per user, per type, case-insensitive (Unicode case folding, `strings.EqualFold`; the old table only folded ASCII) → 409 |
 | categories per user | at most **500** (`store.MaxCategoriesPerUser`) → 409 |
 
@@ -55,8 +55,13 @@ the **logged-in user's** categories:
 - `GET /api/categories` lists only that user's categories.
 - `GET/PUT/DELETE /api/categories/{uid}` returns **404** for a uid that belongs
   to another user (the same as for an unknown uid).
-- Deleting a category, or changing its type, returns **409** while any
-  transaction references its uid (`transactions.category_uid` is scanned).
+- Deleting a category returns **409** while any transaction references its
+  uid (`transactions.category_uid` is scanned).
+- A category's type cannot be changed (issue #185), whether or not
+  transactions use it: a `PUT` with a different `type` returns **422** with
+  code `category_type_immutable` and a `type` field error. To fix a category
+  created with the wrong type, create a new category of the right type, move
+  its transactions to it, and delete the old one.
 - When a transaction is created or updated, its `category_uid` must be one of
   the **current user's** categories with a matching type. Otherwise the
   request fails with 422.
