@@ -126,8 +126,11 @@ func writeBalanceError(c *gin.Context, err error) {
 	writeError(c, err, "balance", balanceErrorCases...)
 }
 
-// categoryErrorCases: 409 duplicate name, limit reached, or in use.
+// categoryErrorCases: 409 duplicate name, limit reached, or in use; 422
+// type change (the type is fixed at creation, issue #185).
 var categoryErrorCases = []errorCase{
+	{store.ErrCategoryTypeImmutable, http.StatusUnprocessableEntity, withText("category_type_immutable",
+		map[string]string{"type": "cannot be changed after the category is created; create a new category and delete this one"})},
 	{store.ErrDuplicateCategory, http.StatusConflict, fixed(errorBody{
 		Error:  "a category with this name and type already exists",
 		Fields: map[string]string{"name": "is already used by another category of this type (names are case-insensitive)"},

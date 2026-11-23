@@ -54,7 +54,7 @@ only on validation and conflict errors.
 | POST   | `/api/categories`      | 201 + category, `Location: /api/categories/<uid>` | Adds to the logged-in user's categories. 422 on validation errors, 409 duplicate name within the type or 500-category limit reached, 400 malformed JSON / unknown fields |
 | GET    | `/api/categories`      | 200 `{"categories":[...],"count":n}` | The logged-in user's categories. Expense first, then income, by name. Optional `type=expense\|income` (400 if invalid) |
 | GET    | `/api/categories/:uid` | 200 + category | 400 if not UUID-shaped, 404 if missing or another user's |
-| PUT    | `/api/categories/:uid` | 200 + updated category | Full replace (omitted description clears it). 409 duplicate name, or type change while referenced by transactions |
+| PUT    | `/api/categories/:uid` | 200 + updated category | Full replace (omitted description clears it). `type` must be the category's current type: the type is fixed at creation, so a different type is a 422 `category_type_immutable` (create a new category and delete this one instead). 409 duplicate name |
 | DELETE | `/api/categories/:uid` | 204 | 409 if any transaction references it; 404 if missing |
 | POST   | `/api/auth/register`   | 201 + user | `username`, `password`, optional `display_name`. Anyone on first run (does not log in; use `/api/auth/login`); afterwards only when logged in (403 `registration_closed`) |
 | POST   | `/api/auth/login`      | 200 + user, `Set-Cookie: session=…` | Generic 401 `invalid username or password`; 429 after 5 failures (username + IP) for 5 min |

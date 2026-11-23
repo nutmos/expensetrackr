@@ -70,11 +70,11 @@ func TestCategoriesArePerUser(t *testing.T) {
 	if rec.Code != 201 {
 		t.Fatalf("alice tx: %d %v", rec.Code, b)
 	}
-	// In use: delete and type change are 409.
+	// In use: delete is 409; a type change is always 422.
 	if rec, _ := do(t, alice, "DELETE", path, ""); rec.Code != 409 {
 		t.Errorf("delete in use: %d", rec.Code)
 	}
-	if rec, _ := do(t, alice, "PUT", path, `{"name":"Food","type":"income"}`); rec.Code != 409 {
+	if rec, _ := do(t, alice, "PUT", path, `{"name":"Food","type":"income"}`); rec.Code != 422 {
 		t.Errorf("type change in use: %d", rec.Code)
 	}
 }

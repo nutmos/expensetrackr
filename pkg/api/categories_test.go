@@ -80,9 +80,12 @@ func TestCategoriesCRUD(t *testing.T) {
 	if rec, _ := putMerged(t, h, path, `{"name":"transport"}`); rec.Code != 409 {
 		t.Errorf("rename dup: %d", rec.Code)
 	}
-	// Unreferenced type change is allowed.
-	if rec, b := putMerged(t, h, path, `{"type":"income"}`); rec.Code != 200 || b["type"] != "income" {
+	// The type is fixed at creation (issue #185), even while unreferenced.
+	if rec, b := putMerged(t, h, path, `{"type":"income"}`); rec.Code != 422 || b["code"] != "category_type_immutable" || fieldsOf(b)["type"] == nil {
 		t.Errorf("type change: %d %v", rec.Code, b)
+	}
+	if _, g := do(t, h, "GET", path, ""); g["type"] != "expense" {
+		t.Errorf("type changed: %v", g)
 	}
 	if rec, _ := do(t, h, "DELETE", path, ""); rec.Code != 204 {
 		t.Errorf("delete: %d", rec.Code)
@@ -151,12 +154,12 @@ func TestTransactionCategories(t *testing.T) {
 		t.Errorf("bad category filter: %d", rec.Code)
 	}
 
-	// Referenced category: delete and type change rejected with 409; rename ok
+	// Referenced category: delete rejected with 409, type change with 422; rename ok
 	// (the transaction only holds the uid, so it follows the category).
 	if rec, _ := do(t, h, "DELETE", "/api/categories/"+food, ""); rec.Code != 409 {
 		t.Errorf("delete referenced: %d", rec.Code)
 	}
-	if rec, _ := putMerged(t, h, "/api/categories/"+food, `{"type":"income"}`); rec.Code != 409 {
+	if rec, _ := putMerged(t, h, "/api/categories/"+food, `{"type":"income"}`); rec.Code != 422 {
 		t.Errorf("type change referenced: %d", rec.Code)
 	}
 	if rec, _ := putMerged(t, h, "/api/categories/"+food, `{"name":"Meals"}`); rec.Code != 200 {

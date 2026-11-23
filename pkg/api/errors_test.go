@@ -69,6 +69,7 @@ func TestErrorMapping(t *testing.T) {
 		{"category limit", writeCategoryError, store.ErrCategoryLimit, 409, store.ErrCategoryLimit.Error(), "", ""},
 		{"category in use", writeCategoryError, fmt.Errorf("%w (1 transaction(s)); it cannot be deleted", store.ErrCategoryInUse), 409,
 			"category is used by transactions (1 transaction(s)); it cannot be deleted; move those transactions to another category first", "", ""},
+		{"category type immutable", writeCategoryError, store.ErrCategoryTypeImmutable, 422, store.ErrCategoryTypeImmutable.Error(), "category_type_immutable", "type"},
 		// users
 		{"username taken", writeUserError, store.ErrDuplicateUsername, 409, store.ErrDuplicateUsername.Error(), "", "username"},
 		{"email taken", writeUserError, store.ErrDuplicateEmail, 409, store.ErrDuplicateEmail.Error(), "", "email"},
