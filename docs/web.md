@@ -15,15 +15,23 @@ path, and `router.js` shows the view for `location.pathname`:
 
 | URL                          | Page |
 |------------------------------|------|
-| `/`, `/transactions`         | Transactions list (browse only). Date filters live in the query: `/transactions?from=2026-10-01&to=2026-10-31`; they are whole days in the device's current time zone (sent to the API as `tz=<IANA zone>`) |
+| `/`, `/transactions`         | Transactions list (browse only). Date filters live in the query: `/transactions?from=2026-10-01&to=2026-10-31`; they are whole days in the device's current time zone (sent to the API as `tz=<IANA zone>`). Without a range in the URL the list shows the current month, or the date range last applied on any transaction list within the past 24 hours (see below) |
 | `/transactions/new`          | Add a transaction, step 1: pick the type (Expense, Income, Transfer, Asset Purchase, Return on Investment, Asset Sale, Repay Debt) |
 | `/transactions/new?type=<type>` | Add a transaction, step 2: the form with that type selected (it can still be changed there). An unknown `type` shows the picker |
 | `/transactions/<uid>/edit`   | Edit a transaction (same form) |
 | `/balances`, `/balances/new`, `/balances/<uid>/edit` | Balances list / add / edit. `/balances?hidden=1` also lists hidden balances (the **Show hidden** box) |
-| `/balances/<uid>`, `/balances/<uid>?from=…&to=…` | One balance's transactions (opened by clicking its name in the list); the only filter is a date range |
+| `/balances/<uid>`, `/balances/<uid>?from=…&to=…` | One balance's transactions (opened by clicking its name in the list); the only filter is a date range, defaulting like the transactions list |
 | `/categories`, `/categories/new`, `/categories/<uid>/edit` | Categories list / add / edit |
 | `/reports`, `/reports/income-expense?from=…&to=…`, `/reports/assets-liabilities`, `/reports/balance-transactions?balance=…&from=…&to=…` | Reports with bar charts (see [docs/reports.md](reports.md)); `/reports` opens Income & expenses |
 | `/swagger/`                  | API documentation (Swagger UI; opens in a new tab from the header) |
+
+**Default date range (issue #183).** The transactions list and a balance's
+transactions page open on the current month (first to last day, device time
+zone). When the user applies a date filter on either page (**Filter**, or
+**Clear** for all time), the choice is saved in the browser's `localStorage`
+(`expensetrackr.dateFilter`) for 24 hours and used by both pages whenever
+their URL has no `from`/`to`. A range in the URL always wins; once the 24
+hours pass, the default is the current month again.
 
 Old hash links (`/#balances`, `/#categories`, `/#transactions`) are rewritten
 to the matching path.

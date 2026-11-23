@@ -324,7 +324,50 @@
     if (to) params.set("to", stamp(to, 23, 59, 59));
   }
 
+  // ---- Default date filter (issue #183) ------------------------------------
+  // Transaction lists (/transactions and /balances/<uid>) open on the current
+  // month. When the user applies a date filter (including Clear = all time),
+  // that choice is remembered for 24 hours in this browser and used by every
+  // transaction list whose URL names no range. A range in the URL always wins.
+  const DATE_FILTER_KEY = "expensetrackr.dateFilter";
+  const DATE_FILTER_TTL = 24 * 60 * 60 * 1000;
+  const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
+  const ymdOrEmpty = (v) => (YMD_RE.test(v || "") ? v : "");
+
+  // First and last day of this month in the device's time zone.
+  function currentMonthRange(now = new Date()) {
+    const p2 = (n) => String(n).padStart(2, "0");
+    const y = now.getFullYear(), m = now.getMonth();
+    const last = new Date(y, m + 1, 0).getDate();
+    return { from: `${y}-${p2(m + 1)}-01`, to: `${y}-${p2(m + 1)}-${p2(last)}` };
+  }
+
+  function cachedDateFilter() {
+    try {
+      const v = JSON.parse(localStorage.getItem(DATE_FILTER_KEY) || "null");
+      if (!v || typeof v.at !== "number" || Date.now() - v.at > DATE_FILTER_TTL || v.at > Date.now()) return null;
+      return { from: ymdOrEmpty(v.from), to: ymdOrEmpty(v.to) };
+    } catch (_) { return null; }
+  }
+
+  // The date range a transaction list should show for this URL query:
+  // the URL's own range, else the remembered choice, else this month.
+  function dateFilter(query) {
+    if (query && (query.has("from") || query.has("to"))) {
+      return { from: ymdOrEmpty(query.get("from")), to: ymdOrEmpty(query.get("to")) };
+    }
+    return cachedDateFilter() || currentMonthRange();
+  }
+
+  // Remember a date range the user applied (empty strings = no bound).
+  function rememberDateFilter(from, to) {
+    try {
+      localStorage.setItem(DATE_FILTER_KEY, JSON.stringify({ from: ymdOrEmpty(from), to: ymdOrEmpty(to), at: Date.now() }));
+    } catch (_) { /* storage unavailable: the URL still carries the range */ }
+  }
+
   window.App = {
+    dateFilter, rememberDateFilter, currentMonthRange,
     setDateRange, labelCells, loadCurrencies, currencyText, setCurrency, fillCurrencySelect, fmtAmount, fmtDateTime,
     $, cell, button, link, clearErrors, showFieldErrors, setStatus,
     setFlash, takeFlash, route, navigate, returnToList, replaceQuery, ifMatch, showConflict, hideConflict,

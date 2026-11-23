@@ -880,10 +880,13 @@
   }
 
   // Filters live in the URL (?from=YYYY-MM-DD&to=YYYY-MM-DD) so they survive
-  // add/edit round trips, reloads and the back button.
+  // add/edit round trips, reloads and the back button. Without a range in the
+  // URL the list shows the date range last applied on any transaction list
+  // (within 24 hours), else the current month (issue #183).
   async function enterList(_params, query) {
-    $("#filter-from").value = /^\d{4}-\d{2}-\d{2}$/.test(query.get("from") || "") ? query.get("from") : "";
-    $("#filter-to").value = /^\d{4}-\d{2}-\d{2}$/.test(query.get("to") || "") ? query.get("to") : "";
+    const range = App.dateFilter(query);
+    $("#filter-from").value = range.from;
+    $("#filter-to").value = range.to;
     const ft = query.get("type") || "";
     $("#filter-type").value = [...$("#filter-type").options].some((o) => o.value === ft) ? ft : "";
     const highlight = App.takeFlash("transactions");
@@ -891,6 +894,7 @@
   }
 
   function applyFilters() {
+    App.rememberDateFilter($("#filter-from").value, $("#filter-to").value);
     const q = new URLSearchParams();
     if ($("#filter-from").value) q.set("from", $("#filter-from").value);
     if ($("#filter-to").value) q.set("to", $("#filter-to").value);

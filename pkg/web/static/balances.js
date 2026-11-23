@@ -384,7 +384,8 @@
   // Every transaction that moved the balance (GET /api/reports/balance-
   // transactions), newest first, with money in / out and the amount after
   // each one. The only filter is a date range, kept in the URL
-  // (?from=YYYY-MM-DD&to=YYYY-MM-DD); none = all transactions.
+  // (?from=YYYY-MM-DD&to=YYYY-MM-DD); without one it defaults to the shared
+  // remembered range or the current month (App.dateFilter).
 
   const bdBody = $("#bd-body");
   const bdStatus = $("#bd-status");
@@ -394,7 +395,6 @@
     return_on_investment: "Return on Investment", asset_sale: "Asset Sale", repay_debt: "Repay Debt",
     balance_adjustment: "Balance Adjustment", beginning_balance: "Beginning Balance",
   };
-  const isYMD = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v || "");
   const pad2 = (n) => String(n).padStart(2, "0");
   // A local date ("YYYY-MM-DD") at h:m:s as RFC 3339 with the device's offset
   // for that date, so the range covers whole days in the viewer's time zone.
@@ -420,8 +420,11 @@
 
   async function enterDetail(params, query) {
     detailUID = params.uid;
-    $("#bd-from").value = isYMD(query.get("from")) ? query.get("from") : "";
-    $("#bd-to").value = isYMD(query.get("to")) ? query.get("to") : "";
+    // URL range, else the range last applied on a transaction list (24 h),
+    // else the current month (issue #183).
+    const range = App.dateFilter(query);
+    $("#bd-from").value = range.from;
+    $("#bd-to").value = range.to;
     $("#bd-title").textContent = "Balance";
     $("#bd-meta").textContent = "";
     $("#bd-edit").hidden = true;
@@ -550,6 +553,7 @@
   }
 
   function applyDetailFilter() {
+    App.rememberDateFilter($("#bd-from").value, $("#bd-to").value);
     const q = new URLSearchParams();
     if ($("#bd-from").value) q.set("from", $("#bd-from").value);
     if ($("#bd-to").value) q.set("to", $("#bd-to").value);
