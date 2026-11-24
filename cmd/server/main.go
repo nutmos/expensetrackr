@@ -57,6 +57,9 @@ func newHTTPServer(addr string, h http.Handler) *http.Server {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == resetPasswordCmd {
+		os.Exit(runResetPassword(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+	}
 	addr := flag.String("addr", envOr("EXPENSE_ADDR", "127.0.0.1:8080"), "listen address (env EXPENSE_ADDR); use :8080 to listen on all interfaces")
 	dbURL := flag.String("database-url", envOr("EXPENSE_DATABASE_URL", ""), "Postgres connection URL, e.g. postgres://user:pass@host:5432/db?sslmode=disable (env EXPENSE_DATABASE_URL; required)")
 	fxURL := flag.String("fx-url", envOr("EXPENSE_FX_URL", fx.DefaultBaseURL), "Frankfurter exchange-rate API base URL (env EXPENSE_FX_URL)")

@@ -450,6 +450,33 @@
         </div>
       </form>
     </section>
+    <section class="card form-card" id="password-card">
+      <h2>Password</h2>
+      <p class="muted">Changing your password logs you out on every other device. Forgot it? Someone with access to the server can run <code>expense-server reset-password</code>.</p>
+      <form id="password-form" novalidate>
+        <!-- For password managers: which account this password belongs to. -->
+        <input id="p-username" name="username" type="text" autocomplete="username" hidden readonly>
+        <div class="grid">
+          <label>Current password
+            <input id="p-current" name="current_password" type="password" autocomplete="current-password" required>
+            <small class="err" data-for="current_password"></small>
+          </label>
+          <label>New password
+            <input id="p-new" name="new_password" type="password" autocomplete="new-password" required minlength="8">
+            <small class="muted">8 to 72 bytes.</small>
+            <small class="err" data-for="new_password"></small>
+          </label>
+          <label>Repeat new password
+            <input id="p-confirm" name="confirm_password" type="password" autocomplete="new-password" required>
+            <small class="err" data-for="confirm_password"></small>
+          </label>
+        </div>
+        <div class="actions">
+          <button type="submit" id="p-submit-btn">Change password</button>
+          <span id="p-form-status" role="status"></span>
+        </div>
+      </form>
+    </section>
     <section class="card form-card" id="tokens-card">
       <h2>API tokens</h2>
       <p class="muted">Personal tokens let scripts and AI agents call the API as you, with <code>Authorization: Bearer &lt;token&gt;</code>. Tokens cannot manage tokens or change your password.</p>

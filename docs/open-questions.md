@@ -6,7 +6,8 @@ Ideas and decisions that are still open.
 
 - Authentication: username/password login exists (docs/auth.md). Transactions,
   balances and categories are per user, and each user manages only their own
-  account. Follow-ups: SSO; roles (admin accounts); password reset.
+  account. Follow-ups: SSO; roles (admin accounts); password reset by email or
+  admin (only the server-side `reset-password` command exists).
 - Currency conversion and reporting currency (e.g. totals in THB or SGD), and
   where exchange rates would come from.
 - Categories/tags, receipts or attachments; an edit history / audit log

@@ -162,8 +162,18 @@ func lockLoginUsers(ctx context.Context, tx *sql.Tx) error {
 	return err
 }
 
+// ResetPassword sets a new hash and deletes every session of the user, in
+// one transaction (the offline `expense-server reset-password` command). API
+// tokens are kept.
+func (s *Store) ResetPassword(ctx context.Context, uid, hash string) error {
+	if hash == "" {
+		return errors.New("reset password: empty hash")
+	}
+	return s.ChangePassword(ctx, uid, hash, "")
+}
+
 // ChangePassword sets a new hash and deletes all of the user's sessions
-// except keepTokenHash, in one transaction.
+// except keepTokenHash ("" keeps none), in one transaction.
 func (s *Store) ChangePassword(ctx context.Context, uid, hash, keepTokenHash string) error {
 	return s.inTx(ctx, "change password", func(tx *sql.Tx) error {
 		now := ts(time.Now())
