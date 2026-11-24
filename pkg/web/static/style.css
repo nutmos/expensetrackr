@@ -1,4 +1,4 @@
-:root { --fg: #1d2330; --muted: #6b7280; --border: #d9dee7; --accent: #2563eb; --err: #b91c1c; --bg: #f5f7fb; --ok: #15803d; }
+:root { --fg: #1d2330; --muted: #6b7280; --border: #d9dee7; --accent: #2563eb; --err: #b91c1c; --bg: #f5f7fb; --ok: #15803d; --debt: #b45309; }
 * { box-sizing: border-box; }
 body { margin: 0; font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--fg); background: var(--bg); }
 main { max-width: 1080px; margin: 0 auto; padding: 24px 16px 48px; }
@@ -69,7 +69,8 @@ select { font: inherit; font-weight: 400; padding: 8px 10px; border: 1px solid v
 h3 { margin: 18px 0 6px; font-size: 1rem; }
 .small { font-size: 0.85rem; margin: 0 0 6px; }
 .group-empty { color: var(--muted); margin: 4px 0 8px; font-size: 0.9rem; }
-td.neg { color: var(--err); }
+/* Liability debts (issue #188): amber, owed amounts shown positive. */
+.debt-text { color: var(--debt); }
 .badge { display: inline-block; font-size: 0.72rem; font-weight: 600; padding: 1px 6px; border-radius: 999px; margin-left: 6px; vertical-align: middle; }
 .badge.over { background: #fee2e2; color: var(--err); }
 #b-totals td, #b-totals th { white-space: nowrap; }
