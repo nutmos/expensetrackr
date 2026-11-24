@@ -189,8 +189,41 @@ CREATE INDEX idx_api_tokens_user_uid ON api_tokens (user_uid);
    as "set up" and cannot log in; a new account cannot reuse their username
    (409) — rename or delete such a profile first.
 
-Forgot the only password? There is no reset flow yet; with shell access,
-`UPDATE users SET password_hash = NULL` re-opens first-run registration.
+## Changing a password
+
+Logged in, the **Password** card on the **Settings** page (`/settings`)
+calls `PUT /api/auth/password` with the current password and the new one
+(typed twice; only the browser compares the two). A wrong current password,
+a rule violation or the throttle shows inline. On success every other
+session of the user is logged out; this one stays.
+
+## Forgotten password
+
+There is no email, so there is no "send me a reset link". Instead, someone
+with access to the server (and therefore the database) runs the
+`reset-password` subcommand of the server binary:
+
+```sh
+# Generates a random password and prints it (only it) on stdout.
+expense-server reset-password alice
+
+# Or choose it: the first line of stdin (nothing is echoed).
+printf '%s\n' 'my new password' | expense-server reset-password -password-stdin alice
+
+# In Docker: the container already has EXPENSE_DATABASE_URL.
+docker compose exec app expense-server reset-password alice      # compose.yaml
+sudo docker exec expensetrackr-app expense-server reset-password alice   # Lightsail
+```
+
+- The username is case-insensitive; `-database-url` (or
+  `EXPENSE_DATABASE_URL`) picks the database. The same password rules apply.
+- It replaces the hash and logs **every** session of that user out. API
+  tokens keep working (revoke them on the Settings page if needed).
+- It does not enable a disabled account (it says so), and it can't clear a
+  running server's in-memory login throttle: after several wrong attempts,
+  logins may still be refused for up to 5 minutes.
+- Exit status 0 = done, 1 = failed (e.g. unknown user), 2 = bad usage.
+- After logging in with a generated password, change it on the Settings page.
 
 ## Web page
 
@@ -205,7 +238,8 @@ Forgot the only password? There is no reset flow yet; with shell access,
 
 `pkg/auth` (hashing, rules, tokens, throttle), `pkg/store/sessions_test.go`
 (register first-run rule, sessions,
-password change) and `pkg/api/auth_test.go` (first-run register, login
+password change and reset), `cmd/server/resetpw_test.go` (the
+`reset-password` command) and `pkg/api/auth_test.go` (first-run register, login
 success/failure, disabled user, throttle, sliding expiry, logout, every
 protected route → 401, password change invalidates other sessions, CSRF).
 Other API tests run as a seeded logged-in user (`loggedIn` helper adds the
@@ -230,5 +264,5 @@ their own account.
 
 - **SSO** (Sign in with Apple / Google) using `user_identities`.
 - Roles / admin (who may create users or edit others' profiles), disabling users via API.
-- Password reset (needs email or an admin), "log out everywhere", session list.
+- Self-service password reset by email, or by an admin (needs roles); "log out everywhere", session list.
 - Persistent / global rate limiting (the throttle is per process and in memory).

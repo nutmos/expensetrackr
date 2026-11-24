@@ -116,7 +116,8 @@ Each user has their own preferences, stored as **one JSON object** in
   `/api/auth/me`) includes `preferences` too.
 - **Web UI:** the **Settings** tab (`/settings`) edits the base currency
   with the searchable currency dropdown. The **Add balance** form preselects
-  it as the new balance's currency (it can still be changed).
+  it as the new balance's currency (it can still be changed). Below it, the
+  **Password** card changes your password (docs/auth.md).
 
 Example:
 

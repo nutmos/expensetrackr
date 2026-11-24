@@ -62,3 +62,49 @@ func TestRegisterAndSessions(t *testing.T) {
 		t.Error("expired session not pruned")
 	}
 }
+
+// TestResetPassword: the offline reset replaces the hash and ends every
+// session of that user (none is kept), but not other users' sessions.
+func TestResetPassword(t *testing.T) {
+	ctx := context.Background()
+	st := openTestStore(t)
+	u := user.User{Username: strp("alice"), DisplayName: "Alice"}
+	if err := st.RegisterUser(ctx, &u, "$2a$04$old", true); err != nil {
+		t.Fatal(err)
+	}
+	other := user.User{Username: strp("bob"), DisplayName: "Bob"}
+	if err := st.RegisterUser(ctx, &other, "$2a$04$bob", false); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	a, b, c := strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64)
+	for h, uid := range map[string]string{a: u.UID, b: u.UID, c: other.UID} {
+		if err := st.CreateSession(ctx, &Session{TokenHash: h, UserUID: uid, CreatedAt: now, ExpiresAt: now.Add(time.Hour), LastSeenAt: now}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.ResetPassword(ctx, u.UID, "$2a$04$new"); err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range []string{a, b} {
+		if _, err := st.GetSession(ctx, h); !errors.Is(err, ErrNotFound) {
+			t.Errorf("session %.1s… survived the reset: %v", h, err)
+		}
+	}
+	if _, err := st.GetSession(ctx, c); err != nil {
+		t.Errorf("other user's session removed: %v", err)
+	}
+	got, err := st.GetUserByUID(ctx, u.UID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PasswordHash == nil || *got.PasswordHash != "$2a$04$new" || got.PasswordUpdated == nil {
+		t.Errorf("hash not replaced: %+v", got)
+	}
+	if err := st.ResetPassword(ctx, "00000000-0000-4000-8000-000000000000", "$2a$04$x"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown uid: %v", err)
+	}
+	if err := st.ResetPassword(ctx, u.UID, ""); err == nil {
+		t.Error("empty hash accepted")
+	}
+}

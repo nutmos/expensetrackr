@@ -20,6 +20,7 @@
     try {
       const me = await fetch("/api/auth/me").then((r) => (r.ok ? r.json() : Promise.reject(new Error(`status ${r.status}`))));
       path = `/api/users/${encodeURIComponent(me.uid)}/preferences`;
+      $("#p-username").value = me.username || "";
       const [res] = await Promise.all([fetch(path), App.fillCurrencySelect(sel)]);
       const prefs = await res.json().catch(() => ({}));
       if (my !== gen) return;
@@ -63,6 +64,65 @@
   });
 
   Combobox.enhance(sel);
+
+  // ---- Password (PUT /api/auth/password) -----------------------------------
+  // The server checks the current password and the rules; the two new-password
+  // fields are only compared here. Other sessions end; this one stays.
+  const pForm = $("#password-form");
+  const pwFields = ["#p-current", "#p-new", "#p-confirm"];
+
+  function setPwStatus(text, kind) { App.setStatus($("#p-form-status"), text, kind); }
+
+  function resetPasswordForm() {
+    for (const id of pwFields) $(id).value = "";
+    clearErrors(pForm);
+    setPwStatus("");
+  }
+
+  pForm.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    clearErrors(pForm);
+    const current = $("#p-current").value;
+    const next = $("#p-new").value;
+    const fields = {};
+    if (!current) fields.current_password = "is required";
+    if (!next) fields.new_password = "is required";
+    else if (next !== $("#p-confirm").value) fields.confirm_password = "does not match the new password";
+    if (Object.keys(fields).length) {
+      showFieldErrors(pForm, fields);
+      setPwStatus("");
+      return;
+    }
+    const btn = $("#p-submit-btn");
+    btn.disabled = true;
+    setPwStatus("Changing…");
+    try {
+      const res = await fetch("/api/auth/password", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ current_password: current, new_password: next }),
+      });
+      if (res.ok) {
+        resetPasswordForm();
+        setPwStatus("Password changed. Other devices were logged out.", "ok");
+        return;
+      }
+      const body = await res.json().catch(() => ({}));
+      showFieldErrors(pForm, body.fields);
+      if (res.status === 429) {
+        const secs = Number(res.headers.get("Retry-After"));
+        const wait = secs > 0 ? ` Try again in ${Math.ceil(secs / 60)} minute${secs > 60 ? "s" : ""}.` : " Try again later.";
+        setPwStatus("Too many wrong passwords." + wait, "bad");
+      } else {
+        setPwStatus(body.error || `Could not change the password (${res.status})`, "bad");
+      }
+      $("#p-current").value = "";
+    } catch (err) {
+      setPwStatus("Network error: " + err.message, "bad");
+    } finally {
+      btn.disabled = false;
+    }
+  });
 
   // ---- API tokens (GET/POST /api/tokens, DELETE /api/tokens/:uid) ----------
   // Token uids are only used in request URLs, never shown. The plaintext is
@@ -184,6 +244,7 @@
     $("#t-new-value").value = "";
     clearErrors(tForm);
     setTokenStatus("");
+    resetPasswordForm();
     await Promise.all([enter(), loadTokens()]);
   }
 
