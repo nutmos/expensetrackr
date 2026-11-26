@@ -246,10 +246,10 @@
     await loadBalances(App.takeFlash("balances"));
   }
 
-  function moneyCell(value) {
-    const td = cell(App.fmtAmount(value ?? ""), "num");
-    if (value && value.startsWith("-")) td.classList.add("neg");
-    return td;
+  // An amount cell (issue #188): negatives in brackets, never red; a
+  // liability's debt (debt = true) in the debt colour, owed amounts positive.
+  function moneyCell(value, debt) {
+    return cell(App.fmtBalance(value ?? ""), debt ? "num debt-text" : "num");
   }
 
   function renderGroups(items, highlightUID) {
@@ -312,7 +312,7 @@
         if (t.kind === "asset") {
           tr.append(moneyCell(b.balance));
         } else {
-          tr.append(moneyCell(b.debt), moneyCell(b.limit), moneyCell(b.available));
+          tr.append(moneyCell(b.debt, true), moneyCell(b.limit), moneyCell(b.available));
         }
         tr.append(cell(b.description || "", "note"));
         const actions = document.createElement("td");
@@ -349,7 +349,7 @@
     }
     for (const t of totals) {
       const tr = document.createElement("tr");
-      tr.append(cell(App.currencyText(t.currency)), moneyCell(t.assets), moneyCell(t.liabilities), moneyCell(t.net),
+      tr.append(cell(App.currencyText(t.currency)), moneyCell(t.assets), moneyCell(t.liabilities, true), moneyCell(t.net),
         moneyCell(t.credit_limit), moneyCell(t.available_credit));
       totalsBody.append(tr);
     }
@@ -406,7 +406,7 @@
     return `${t.getFullYear()}-${pad2(t.getMonth() + 1)}-${pad2(t.getDate())}T${pad2(h)}:${pad2(m)}:${pad2(sec)}` +
       `${sign}${pad2(Math.floor(Math.abs(off) / 60))}:${pad2(Math.abs(off) % 60)}`;
   }
-  const negText = (v) => (String(v).startsWith("-") ? "−" + App.fmtAmount(String(v).slice(1)) : App.fmtAmount(v));
+  const negText = App.fmtBalance;
   function rangeText(from, to) {
     // "06 Oct 2026": the date part of the app's DD MMM YYYY HH:mm format.
     const day = (v) => { const [y, m, d] = v.split("-").map(Number); return App.fmtDateTime(new Date(y, m - 1, d)).slice(0, 11); };
@@ -489,10 +489,11 @@
       summary.append(d);
     };
     item("Period", rangeText(from, to));
-    item(`Opening ${what.toLowerCase()}`, negText(body.opening_amount));
+    const amtCls = liability ? "debt-text" : "";
+    item(`Opening ${what.toLowerCase()}`, negText(body.opening_amount), amtCls);
     item(liability ? "In (payments)" : "Money in", App.fmtAmount(body.money_in), "pos-text");
     item(liability ? "Out (charges)" : "Money out", App.fmtAmount(body.money_out), "neg-text");
-    item(`Closing ${what.toLowerCase()}`, negText(body.closing_amount));
+    item(`Closing ${what.toLowerCase()}`, negText(body.closing_amount), amtCls);
     bdBody.append(summary);
 
     const list = (body.transactions || []).slice().reverse(); // newest first
@@ -537,7 +538,7 @@
       tr.append(det);
       tr.append(cell(e.money_in ? App.fmtAmount(e.money_in) : "", "num pos-text"));
       tr.append(cell(e.money_out ? App.fmtAmount(e.money_out) : "", "num neg-text"));
-      tr.append(cell(negText(e.amount_after), "num"));
+      tr.append(cell(negText(e.amount_after), liability ? "num debt-text" : "num"));
       const actions = document.createElement("td");
       actions.className = "actions-cell";
       actions.append(link("Edit", `/transactions/${encodeURIComponent(e.uid)}/edit`, "button edit"));

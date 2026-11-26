@@ -191,8 +191,10 @@ confirmations use human labels instead. For example, an edit page is titled
 
 - The list is grouped by type, with counts. Assets show their balance.
   Liabilities show debt, limit and available. A red "over limit" badge marks
-  debt above the limit, and negative amounts are red. There is also a
-  per-currency totals table.
+  debt above the limit. Asset amounts are shown in black and liability debts
+  in amber, with the amount owed as a positive number; any negative amount
+  (an overdrawn account, a card in credit) is shown in brackets, e.g.
+  `(1,234.50)` (issue #188). There is also a per-currency totals table.
 - Clicking a balance's name opens its transactions page (`/balances/<uid>`,
   issue #175): every transaction that moved the balance (as source or
   destination), newest first, with **In** / **Out** in the balance's currency

@@ -269,15 +269,19 @@
   // Minor-unit digits per currency code, from GET /api/currencies (scale).
   let currencyScale = new Map();
 
-  // Amount shown in a balance option (issue #28): assets show their balance,
-  // liabilities show what is owed as a negative amount.
+  // Amount shown in a balance option (issues #28, #188): assets show their
+  // balance, liabilities their debt as a positive amount; negatives (an
+  // overdrawn account, a card in credit) in brackets.
   function balanceAmountText(b) {
-    let v = String((LIABILITY.has(b.type) ? b.debt : b.balance) ?? "0").trim() || "0";
-    if (LIABILITY.has(b.type) && !/^-?0*\.?0*$/.test(v)) v = v.startsWith("-") ? v.slice(1) : "-" + v;
+    const v = String((LIABILITY.has(b.type) ? b.debt : b.balance) ?? "0").trim() || "0";
     const scale = currencyScale.get(b.currency);
     const opts = { style: "currency", currency: b.currency };
     if (Number.isInteger(scale)) { opts.minimumFractionDigits = scale; opts.maximumFractionDigits = scale; }
-    try { return new Intl.NumberFormat(undefined, opts).format(v); } catch (_) { return v; }
+    const neg = v.startsWith("-") && !/^-0*\.?0*$/.test(v);
+    const abs = v.replace(/^[-+]/, "");
+    let text;
+    try { text = new Intl.NumberFormat(undefined, opts).format(abs); } catch (_) { text = abs; }
+    return neg ? `(${text})` : text;
   }
   // Plural headings for <optgroup>s in the balance dropdowns, matching
   // the Balances list page. Empty types are omitted.

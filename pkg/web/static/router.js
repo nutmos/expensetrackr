@@ -278,6 +278,16 @@
     try { return m[1] + new Intl.NumberFormat(undefined, opts).format(m[2]); } catch (_) { return s; }
   }
 
+  // A balance amount for display (issue #188): "-1234.50" -> "(1,234.50)",
+  // accounting style; a non-negative amount is fmtAmount. Colour is up to the
+  // caller (assets plain, liability debts in .debt-text).
+  function fmtBalance(v) {
+    const s = String(v ?? "").trim();
+    const m = /^[-\u2212](\d+(?:\.\d+)?)$/.exec(s);
+    if (!m) return fmtAmount(s);
+    return /^0*\.?0*$/.test(m[1]) ? fmtAmount(m[1]) : `(${fmtAmount(m[1])})`;
+  }
+
   // "06 Oct 2026 21:06" (DD MMM YYYY HH:mm) in the device's time zone, for any
   // value Date accepts (RFC 3339 string, Date). The raw value if unparsable
   // (issue #163: one friendly date-time format across the web UI).
@@ -368,7 +378,7 @@
 
   window.App = {
     dateFilter, rememberDateFilter, currentMonthRange,
-    setDateRange, labelCells, loadCurrencies, currencyText, setCurrency, fillCurrencySelect, fmtAmount, fmtDateTime,
+    setDateRange, labelCells, loadCurrencies, currencyText, setCurrency, fillCurrencySelect, fmtAmount, fmtBalance, fmtDateTime,
     $, cell, button, link, clearErrors, showFieldErrors, setStatus,
     setFlash, takeFlash, route, navigate, returnToList, replaceQuery, ifMatch, showConflict, hideConflict,
     isUUID: (s) => UUID_RE.test(s),
