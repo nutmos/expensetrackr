@@ -610,6 +610,31 @@
     }
   }
 
+  // ---- Signed amount inputs (issue #196) ----------------------------------
+  // Mobile decimal keypads (inputmode="decimal") have no minus key, so the
+  // inputs that accept negatives (gain/loss, balance, debt) have a ± button
+  // that flips the leading minus sign. It fires "input" so live previews
+  // update, and keeps focus (and the on-screen keyboard) on the input.
+  function toggleSign(v) {
+    const t = v.trim();
+    if (t.startsWith("-") || t.startsWith("−")) return t.slice(1);
+    return "-" + t;
+  }
+  document.addEventListener("mousedown", (ev) => {
+    if (ev.target.closest && ev.target.closest(".sign-toggle")) ev.preventDefault();
+  });
+  document.addEventListener("click", (ev) => {
+    const btn = ev.target.closest && ev.target.closest(".sign-toggle");
+    if (!btn) return;
+    ev.preventDefault();
+    const input = document.getElementById(btn.dataset.signFor);
+    if (!input || input.disabled || input.readOnly) return;
+    input.value = toggleSign(input.value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.focus();
+    try { input.setSelectionRange(input.value.length, input.value.length); } catch (_) { /* not a text input */ }
+  });
+
   // Start once every script has registered its routes.
   document.addEventListener("DOMContentLoaded", boot);
 })();

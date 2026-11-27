@@ -397,3 +397,8 @@ input[type="date"], input[type="time"] { min-width: 0; max-width: 100%; }
   /* No calendar icon on iOS, so the formatted label can use the full width. */
   .picker-field .picker-text { right: 10px; }
 }
+/* Signed amount inputs (issue #196): mobile decimal keypads have no minus
+   key, so a ± button next to the input flips its sign. */
+.signed-row { display: flex; gap: 6px; }
+.signed-row input { flex: 1 1 auto; min-width: 0; }
+.signed-row .sign-toggle { flex: 0 0 auto; min-width: 44px; padding: 4px 10px; font-size: 1.2rem; line-height: 1; font-weight: 600; }
