@@ -174,8 +174,11 @@ like other rows, and are **excluded from the expense/income totals** (like
 transfers). The list has a Type filter. The edit form of an adjustment keeps
 its type (shown, not changeable) and has a **Direction** field (Increase /
 Decrease, with a hint saying whether it moves the balance or the debt); the
-adjusted balance may be any balance. Deleting one asks for confirmation and
-says that its change will be reverted.
+adjusted balance may be any balance. An adjustment can be deleted from the
+transactions list, from its edit page (**Delete** next to Cancel) and from
+its balance's transactions page (`/balances/<uid>`); each asks for
+confirmation and says that its change will be reverted (issue #194). A
+beginning balance has no Delete: it goes only together with its balance.
 
 ## 2a. Beginning Balance
 
@@ -308,12 +311,15 @@ curl -s -X PUT http://127.0.0.1:8080/api/balances/$UID \
 
 ### Web UI
 
-The edit pages send `If-Match` with the version they loaded, and the list
-pages send it with Delete. On a 409:
+The edit pages send `If-Match` with the version they loaded, with Save and
+with the transaction edit page's Delete, and the list pages send it with
+Delete (except a balance's transactions page, whose rows carry no version).
+On a 409:
 - **Edit page:** shows *"…was changed after you opened this page (for example
   by a transaction or in another tab), so your changes were not saved. It now
   has …"* and a **Reload latest** button. The button reloads the record and
-  discards the unsaved edits.
+  discards the unsaved edits. Delete on the transaction edit page shows the
+  same box, saying nothing was deleted.
 - **List page:** an alert explains that nothing was deleted, and the list is
   refreshed.
 

@@ -542,6 +542,9 @@
       const actions = document.createElement("td");
       actions.className = "actions-cell";
       actions.append(link("Edit", `/transactions/${encodeURIComponent(e.uid)}/edit`, "button edit"));
+      // Delete here too (balance adjustments included, issue #194); a
+      // beginning balance goes only together with its balance.
+      if (e.type !== "beginning_balance") actions.append(button("Delete", "danger", () => deleteEntry(e, b)));
       tr.append(actions);
       tbody.append(tr);
     }
@@ -551,6 +554,30 @@
     wrap.className = "table-wrap";
     wrap.append(table);
     bdBody.append(wrap);
+  }
+
+  // Deletes one of the balance's transactions and reloads the page. The
+  // statement rows carry no version, so this DELETE is sent without If-Match.
+  async function deleteEntry(e, b) {
+    const adj = e.type === "balance_adjustment";
+    const revert = adj
+      ? `\n\nThis balance adjustment ${e.money_in ? (b.kind === "liability" ? "lowered the debt of" : "raised") : (b.kind === "liability" ? "raised the debt of" : "lowered")} ${b.name}; deleting it reverts that change.`
+      : "";
+    const what = adj ? "balance adjustment" : (TX_TYPE_LABEL[e.type] || e.type).toLowerCase();
+    if (!confirm(`Delete this ${what} of ${e.amount} ${e.currency} at ${App.fmtDateTime(e.spent_at)}?${revert}`)) return;
+    let res;
+    try {
+      res = await fetch(`/api/transactions/${encodeURIComponent(e.uid)}`, { method: "DELETE" });
+    } catch (err) {
+      alert("Network error: " + err.message);
+      return;
+    }
+    if (!res.ok && res.status !== 404) {
+      alert("Delete failed (" + res.status + ")");
+      return;
+    }
+    App.setFlash("balances", `Deleted ${e.amount} ${e.currency} (${TX_TYPE_LABEL[e.type] || e.type}).`);
+    await loadDetail(App.takeFlash(["balances"], "balance-detail"));
   }
 
   function applyDetailFilter() {
