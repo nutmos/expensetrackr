@@ -18,6 +18,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/nutmos/expensetrackr/pkg/fieldcrypt"
 )
 
 // ErrNotFound is returned when the requested row does not exist (or belongs
@@ -55,6 +57,8 @@ type WriteOptions struct {
 type Store struct {
 	db  *sql.DB
 	now func() time.Time // clock for created_at/updated_at; tests may override
+	// keys encrypts personal data at rest (encryption.go); nil = off.
+	keys *fieldcrypt.Keyring
 }
 
 // Connection pool limits. The app is small; a handful of connections serve
@@ -65,6 +69,7 @@ const (
 	maxIdleConns    = 5
 	connMaxIdleTime = 5 * time.Minute
 	openTimeout     = 10 * time.Second
+	encryptTimeout  = 30 * time.Minute // first encryption or key rotation at Open
 )
 
 // nowRFC3339 is the current time from s.now, in UTC, formatted for storage.
@@ -75,7 +80,12 @@ func (s *Store) nowRFC3339() string { return ts(s.now()) }
 // up to date (see migrate). A database from a newer build fails with
 // ErrUnsupportedSchema and is not modified. A search_path in url selects the
 // schema (tests use one schema each).
-func Open(url string) (*Store, error) {
+//
+// With WithKeyring, personal data is encrypted at rest (encryption.go): the
+// first Open with a key encrypts the existing rows, and an encrypted
+// database fails with ErrEncryptionKeyRequired or ErrWrongEncryptionKey
+// without the right key.
+func Open(url string, opts ...Option) (*Store, error) {
 	cfg, err := pgx.ParseConfig(url)
 	if err != nil {
 		return nil, fmt.Errorf("database url: %w", err)
@@ -94,7 +104,18 @@ func Open(url string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("database %s: %w", describe(cfg), err)
 	}
-	return &Store{db: db, now: time.Now}, nil
+	s := &Store{db: db, now: time.Now}
+	for _, o := range opts {
+		o(s)
+	}
+	// Encrypting an existing database touches every row: give it longer.
+	ectx, ecancel := context.WithTimeout(context.Background(), encryptTimeout)
+	defer ecancel()
+	if err := s.prepareEncryption(ectx); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("database %s: %w", describe(cfg), err)
+	}
+	return s, nil
 }
 
 // describe names a database for error messages without its password.

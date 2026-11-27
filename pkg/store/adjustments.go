@@ -61,7 +61,7 @@ func adjustmentFor(cur, next balance.Balance) (adjustment, bool) {
 // transaction. The edit already set the new value, so the row's effect is
 // not applied again; it is stored as applied (balance_applied = true), so a
 // later edit or delete of the adjustment moves the balance by the difference. spentAt comes from the store clock (with its local UTC offset).
-func recordBalanceAdjustment(ctx context.Context, tx *sql.Tx, userUID string, cur, next balance.Balance, createdAt string, spentAt time.Time) error {
+func (s *Store) recordBalanceAdjustment(ctx context.Context, tx *sql.Tx, userUID string, cur, next balance.Balance, createdAt string, spentAt time.Time) error {
 	a, ok := adjustmentFor(cur, next)
 	if !ok {
 		return nil
@@ -73,10 +73,17 @@ func recordBalanceAdjustment(ctx context.Context, tx *sql.Tx, userUID string, cu
 	at := spentAt.Truncate(time.Second)
 	note := fmt.Sprintf("Manual edit of %s: %s → %s", a.field,
 		money.FormatAmount(a.old, next.Scale), money.FormatAmount(a.new, next.Scale))
+	if note, err = s.seal(note); err != nil {
+		return err
+	}
+	name, err := s.seal(next.Name)
+	if err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO transactions (uid, user_uid, type, amount_minor, amount_scale, currency, balance_uid, account, spent_at, spent_at_utc, note, created_at, version, balance_applied, adjustment_direction)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 1, true, $13)`,
-		uid, userUID, string(transaction.BalanceAdjustment), a.amount, next.Scale, next.Currency, cur.UID, next.Name,
+		uid, userUID, string(transaction.BalanceAdjustment), a.amount, next.Scale, next.Currency, cur.UID, name,
 		at.Format(time.RFC3339), at.UTC(), note, createdAt, string(a.direction)); err != nil {
 		return fmt.Errorf("record balance adjustment: %w", err)
 	}

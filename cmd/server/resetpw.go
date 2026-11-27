@@ -33,6 +33,7 @@ func runResetPassword(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 	fs := flag.NewFlagSet(resetPasswordCmd, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dbURL := fs.String("database-url", envOr("EXPENSE_DATABASE_URL", ""), "Postgres connection URL (env EXPENSE_DATABASE_URL; required)")
+	keyFile := fs.String("encryption-key-file", envOr("EXPENSE_ENCRYPTION_KEY_FILE", ""), keyFileUsage)
 	fromStdin := fs.Bool("password-stdin", false, "read the new password from the first line of standard input instead of generating one")
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, `Usage: expense-server %s [flags] USERNAME
@@ -84,7 +85,12 @@ Flags:
 		return 1
 	}
 
-	st, err := store.Open(*dbURL)
+	keys, err := keyringFromEnv(*keyFile)
+	if err != nil {
+		fmt.Fprintf(stderr, "reset-password: encryption key: %v\n", err)
+		return 2
+	}
+	st, err := store.Open(*dbURL, store.WithKeyring(keys))
 	if err != nil {
 		fmt.Fprintf(stderr, "reset-password: open database: %v\n", err)
 		return 1

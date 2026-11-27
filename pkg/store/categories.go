@@ -48,15 +48,24 @@ type rowQueryer interface {
 
 // readUserCategories returns the stored categories of a user and the row
 // version (0 = no row yet, i.e. no categories).
-func readUserCategories(ctx context.Context, q rowQueryer, userUID string) ([]category.Category, int64, error) {
-	var raw string
+func (s *Store) readUserCategories(ctx context.Context, q rowQueryer, userUID string) ([]category.Category, int64, error) {
+	var raw, typ string
 	var version int64
-	err := q.QueryRowContext(ctx, `SELECT categories, version FROM user_categories WHERE user_uid = $1`, userUID).Scan(&raw, &version)
+	// Encrypted, the array is stored as a jsonb string of its sealed JSON
+	// text (encryption.go); #>> '{}' unwraps that string.
+	err := q.QueryRowContext(ctx, `SELECT jsonb_typeof(categories),
+		CASE jsonb_typeof(categories) WHEN 'string' THEN categories #>> '{}' ELSE categories::text END, version
+		FROM user_categories WHERE user_uid = $1`, userUID).Scan(&typ, &raw, &version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return []category.Category{}, 0, nil
 	}
 	if err != nil {
 		return nil, 0, fmt.Errorf("read categories: %w", err)
+	}
+	if typ == "string" {
+		if err := s.open(&raw, "categories of user "+userUID); err != nil {
+			return nil, 0, err
+		}
 	}
 	cats := []category.Category{}
 	if err := json.Unmarshal([]byte(raw), &cats); err != nil {
@@ -68,19 +77,30 @@ func readUserCategories(ctx context.Context, q rowQueryer, userUID string) ([]ca
 // writeUserCategories stores cats for the user if the row is still at
 // version (0: the row must not exist yet). Returns errCategoryRowConflict
 // otherwise.
-func writeUserCategories(ctx context.Context, tx *sql.Tx, userUID string, cats []category.Category, version int64) error {
+func (s *Store) writeUserCategories(ctx context.Context, tx *sql.Tx, userUID string, cats []category.Category, version int64) error {
 	b, err := json.Marshal(cats)
 	if err != nil {
 		return err
+	}
+	doc := string(b)
+	if s.keys.Enabled() {
+		sealed, err := s.seal(doc)
+		if err != nil {
+			return err
+		}
+		if b, err = json.Marshal(sealed); err != nil { // a jsonb string
+			return err
+		}
+		doc = string(b)
 	}
 	now := ts(time.Now())
 	var res sql.Result
 	if version == 0 {
 		res, err = tx.ExecContext(ctx, `INSERT INTO user_categories (user_uid, categories, version, created_at)
-			VALUES ($1, $2, 1, $3) ON CONFLICT (user_uid) DO NOTHING`, userUID, string(b), now)
+			VALUES ($1, $2, 1, $3) ON CONFLICT (user_uid) DO NOTHING`, userUID, doc, now)
 	} else {
 		res, err = tx.ExecContext(ctx, `UPDATE user_categories SET categories = $1, version = version + 1, updated_at = $2
-			WHERE user_uid = $3 AND version = $4`, string(b), now, userUID, version)
+			WHERE user_uid = $3 AND version = $4`, doc, now, userUID, version)
 	}
 	// A concurrent writer that committed after our read leaves the version
 	// changed (UPDATE matches no row) or the row already present (INSERT does
@@ -119,7 +139,7 @@ func (s *Store) modifyCategoriesOnce(ctx context.Context, userUID string, fn fun
 		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext('expensetrackr.categories.' || $1))`, userUID); err != nil {
 			return fmt.Errorf("categories: lock: %w", err)
 		}
-		cats, version, err := readUserCategories(ctx, tx, userUID)
+		cats, version, err := s.readUserCategories(ctx, tx, userUID)
 		if err != nil {
 			return err
 		}
@@ -130,7 +150,7 @@ func (s *Store) modifyCategoriesOnce(ctx context.Context, userUID string, fn fun
 		if err != nil {
 			return err
 		}
-		if err := writeUserCategories(ctx, tx, userUID, next, version); err != nil {
+		if err := s.writeUserCategories(ctx, tx, userUID, next, version); err != nil {
 			return err
 		}
 		return nil
@@ -207,7 +227,7 @@ func sortCategories(cats []category.Category) {
 // ListCategories returns the user's categories (expense first, then income),
 // by name. typ "" means all.
 func (s *Store) ListCategories(ctx context.Context, userUID string, typ category.Type) ([]category.Category, error) {
-	cats, _, err := readUserCategories(ctx, s.db, userUID)
+	cats, _, err := s.readUserCategories(ctx, s.db, userUID)
 	if err != nil {
 		return nil, err
 	}
@@ -224,7 +244,7 @@ func (s *Store) ListCategories(ctx context.Context, userUID string, typ category
 // GetCategoryByUID returns one of the user's categories or ErrNotFound
 // (also when the uid belongs to another user).
 func (s *Store) GetCategoryByUID(ctx context.Context, userUID string, uid common_type.UID) (category.Category, error) {
-	cats, _, err := readUserCategories(ctx, s.db, userUID)
+	cats, _, err := s.readUserCategories(ctx, s.db, userUID)
 	if err != nil {
 		return category.Category{}, err
 	}

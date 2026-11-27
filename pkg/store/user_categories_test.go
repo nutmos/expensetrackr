@@ -171,9 +171,23 @@ func TestUserCategoriesVersionConflictRetry(t *testing.T) {
 	testHookCategoryRead = func(_ *sql.Tx, userUID string) {
 		calls++
 		if calls == 1 {
-			if _, err := other.Exec(`UPDATE user_categories SET version = version + 1,
-				categories = categories || '[{"uid":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","name":"Other","type":"expense","description":"","created_at":"2026-01-01T00:00:00Z","updated_at":null}]'::jsonb
-				WHERE user_uid = $1`, userUID); err != nil {
+			// Through the store's own read and write, so the row stays
+			// encrypted when the tests run with a key.
+			otx, err := other.BeginTx(ctx, nil)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			defer func() { _ = otx.Rollback() }()
+			cats, version, err := st.readUserCategories(ctx, otx, userUID)
+			if err == nil {
+				cats = append(cats, category.Category{UID: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", Name: "Other", Type: category.TypeExpense, CreatedAt: "2026-01-01T00:00:00Z"})
+				err = st.writeUserCategories(ctx, otx, userUID, cats, version)
+			}
+			if err == nil {
+				err = otx.Commit()
+			}
+			if err != nil {
 				t.Error(err)
 			}
 		}

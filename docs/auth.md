@@ -217,6 +217,9 @@ sudo docker exec expensetrackr-app expense-server reset-password alice   # Light
 
 - The username is case-insensitive; `-database-url` (or
   `EXPENSE_DATABASE_URL`) picks the database. The same password rules apply.
+  An [encrypted](encryption.md) database needs its key here too
+  (`EXPENSE_ENCRYPTION_KEY`, or `-encryption-key-file`); the containers
+  already have it.
 - It replaces the hash and logs **every** session of that user out. API
   tokens keep working (revoke them on the Settings page if needed).
 - It does not enable a disabled account (it says so), and it can't clear a

@@ -76,10 +76,14 @@ func (s *Store) CreateUser(ctx context.Context, u *user.User) error {
 	if u.Status == "" {
 		u.Status = user.StatusActive
 	}
+	displayName, err := s.seal(u.DisplayName)
+	if err != nil {
+		return err
+	}
 	err = s.db.QueryRowContext(ctx,
 		`INSERT INTO users (uid, username, email, display_name, preferences, status, created_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-		u.UID, nullStr(u.Username), nullStr(u.Email), u.DisplayName, u.Preferences.StoredJSON(), string(u.Status), u.CreatedAt).Scan(&u.ID)
+		u.UID, nullStr(u.Username), nullStr(u.Email), displayName, u.Preferences.StoredJSON(), string(u.Status), u.CreatedAt).Scan(&u.ID)
 	if err != nil {
 		if m := mapUserErr(err); m != err {
 			return m
@@ -98,7 +102,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]user.User, error) {
 	defer rows.Close()
 	out := []user.User{}
 	for rows.Next() {
-		u, err := scanUser(rows)
+		u, err := s.scanUser(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -109,7 +113,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]user.User, error) {
 
 // GetUserByUID returns one user or ErrNotFound.
 func (s *Store) GetUserByUID(ctx context.Context, uid string) (user.User, error) {
-	u, err := scanUser(s.db.QueryRowContext(ctx, `SELECT `+userCols+` FROM users WHERE uid = $1`, uid))
+	u, err := s.scanUser(s.db.QueryRowContext(ctx, `SELECT `+userCols+` FROM users WHERE uid = $1`, uid))
 	if errors.Is(err, sql.ErrNoRows) || isInvalidText(err) { // not a UUID: no such user
 		return user.User{}, ErrNotFound
 	}
@@ -123,7 +127,7 @@ func (s *Store) GetUserByUID(ctx context.Context, uid string) (user.User, error)
 func (s *Store) UpdateUser(ctx context.Context, id int64, fn func(cur user.User) (user.User, error)) (user.User, error) {
 	var saved user.User
 	err := s.inTx(ctx, "update user", func(tx *sql.Tx) error {
-		cur, err := scanUser(tx.QueryRowContext(ctx, `SELECT `+userCols+` FROM users WHERE id = $1 FOR UPDATE`, id))
+		cur, err := s.scanUser(tx.QueryRowContext(ctx, `SELECT `+userCols+` FROM users WHERE id = $1 FOR UPDATE`, id))
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -146,10 +150,14 @@ func (s *Store) UpdateUser(ctx context.Context, id int64, fn func(cur user.User)
 		if next.HasPassword && (next.Username == nil || *next.Username == "") {
 			return ErrUsernameRequired
 		}
+		displayName, err := s.seal(next.DisplayName)
+		if err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE users SET username = $1, email = $2, email_verified_at = $3, display_name = $4, preferences = $5, updated_at = $6
 		 WHERE id = $7`,
-			nullStr(next.Username), nullStr(next.Email), nullStr(next.EmailVerifiedAt), next.DisplayName, next.Preferences.StoredJSON(), now, id); err != nil {
+			nullStr(next.Username), nullStr(next.Email), nullStr(next.EmailVerifiedAt), displayName, next.Preferences.StoredJSON(), now, id); err != nil {
 			if m := mapUserErr(err); m != err {
 				return m
 			}
@@ -310,7 +318,7 @@ func (s *Store) ListIdentities(ctx context.Context, userUID string) ([]user.Iden
 // FindUserByIdentity returns the user linked to (provider, subject), or
 // ErrNotFound. For the future SSO sign-in.
 func (s *Store) FindUserByIdentity(ctx context.Context, provider user.Provider, subject string) (user.User, error) {
-	u, err := scanUser(s.db.QueryRowContext(ctx,
+	u, err := s.scanUser(s.db.QueryRowContext(ctx,
 		`SELECT `+prefixed("u.", userCols)+` FROM users u
 		 JOIN user_identities i ON i.user_uid = u.uid
 		 WHERE i.provider = $1 AND i.provider_subject = $2`, string(provider), subject))
@@ -336,7 +344,7 @@ func strPtr(n sql.NullString) *string {
 	return &s
 }
 
-func scanUser(r scanner) (user.User, error) {
+func (s *Store) scanUser(r scanner) (user.User, error) {
 	var u user.User
 	var username, email, hash sql.NullString
 	var verified, pwUpdated, lastLogin, updated sql.NullTime
@@ -349,6 +357,9 @@ func scanUser(r scanner) (user.User, error) {
 			return u, err
 		}
 		return u, fmt.Errorf("scan user: %w", err)
+	}
+	if err = s.open(&u.DisplayName, "display name"); err != nil {
+		return u, fmt.Errorf("scan user %d: %w", u.ID, err)
 	}
 	u.Username, u.Email, u.EmailVerifiedAt = strPtr(username), strPtr(email), nullTS(verified)
 	u.PasswordHash, u.PasswordUpdated, u.LastLoginAt, u.UpdatedAt = strPtr(hash), nullTS(pwUpdated), nullTS(lastLogin), nullTS(updated)

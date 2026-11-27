@@ -8,7 +8,8 @@ HTML + vanilla JS web page and a JSON API, and stores data in **Postgres**
 Status: prototype for local use. It listens on 127.0.0.1 by default and
 requires a username/password login (server-side sessions); see
 [Authentication](docs/auth.md). Each user's transactions, balances and
-categories are private to them.
+categories are private to them, and can be stored encrypted in the database
+([Encryption at rest](docs/encryption.md)).
 
 ## Features
 
@@ -62,6 +63,7 @@ Run the tests with `make test`. Details, flags and requirements:
 | [AI agents](docs/agents.md) | Agent skills (run the server, use the API, log a transaction) and API tokens |
 | [MCP server](docs/mcp.md) | `expense-mcp`: read and update transactions and balances from Claude, Cursor and other MCP clients |
 | [Authentication](docs/auth.md) | Login, sessions, API tokens, CSRF, throttling |
+| [Encryption at rest](docs/encryption.md) | Encrypting notes, names and categories in the database (`EXPENSE_ENCRYPTION_KEY`), key rotation |
 | [Balances](docs/balances.md) · [Categories](docs/categories.md) · [User profiles](docs/user-profile.md) | Details of each resource |
 | [Reports](docs/reports.md) | Income & expenses, assets & liabilities and balance transactions reports (web page and API, PDF export) |
 | [Exchange rates](docs/exchange-rates.md) · [Currencies](docs/currencies.md) · [Bulk import](docs/bulk-import.md) | Cross-currency transfers, currency codes, importing statements |

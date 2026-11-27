@@ -21,6 +21,10 @@ name: Deploy (Lightsail)
 #   CLOUDFLARE_ORIGIN_CERT  optional secrets; a Cloudflare Origin CA
 #   CLOUDFLARE_ORIGIN_KEY   certificate (PEM) and its private key, served
 #                           instead of Let's Encrypt (SSL/TLS "Full (strict)")
+#   EXPENSE_ENCRYPTION_KEY  optional secret; encrypts personal data in the
+#                           database (docs/encryption.md). Keep a copy: the
+#                           data cannot be read without it.
+#   EXPENSE_ENCRYPTION_OLD_KEYS  optional secret; earlier keys while rotating
 on:
   workflow_call:
     inputs:
@@ -102,6 +106,8 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CF_ORIGIN_CERT: ${{ secrets.CLOUDFLARE_ORIGIN_CERT }}
           CF_ORIGIN_KEY: ${{ secrets.CLOUDFLARE_ORIGIN_KEY }}
+          ENCRYPTION_KEY: ${{ secrets.EXPENSE_ENCRYPTION_KEY }}
+          ENCRYPTION_OLD_KEYS: ${{ secrets.EXPENSE_ENCRYPTION_OLD_KEYS }}
         run: |
           # Values go over stdin, so the token stays out of the remote
           # process list and shell history.
@@ -111,6 +117,8 @@ jobs:
             printf 'export CLOUDFLARE=%q\n' "$CLOUDFLARE"
             printf 'export CF_ORIGIN_CERT=%q\n' "$CF_ORIGIN_CERT"
             printf 'export CF_ORIGIN_KEY=%q\n' "$CF_ORIGIN_KEY"
+            printf 'export EXPENSE_ENCRYPTION_KEY=%q\n' "$ENCRYPTION_KEY"
+            printf 'export EXPENSE_ENCRYPTION_OLD_KEYS=%q\n' "$ENCRYPTION_OLD_KEYS"
             printf 'export GHCR_USER=%q\n' "${{ github.actor }}"
             printf 'export GHCR_TOKEN=%q\n' "$GHCR_TOKEN"
             printf 'exec ~/%s/deploy.sh\n' "$REMOTE_DIR"

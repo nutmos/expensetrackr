@@ -40,7 +40,7 @@ func (s *Store) HasPasswordUser(ctx context.Context) (bool, error) {
 
 // GetUserByUsername looks a user up by (already lowercased) username.
 func (s *Store) GetUserByUsername(ctx context.Context, username string) (user.User, error) {
-	u, err := scanUser(s.db.QueryRowContext(ctx, `SELECT `+userCols+` FROM users WHERE lower(username) = lower($1)`, username))
+	u, err := s.scanUser(s.db.QueryRowContext(ctx, `SELECT `+userCols+` FROM users WHERE lower(username) = lower($1)`, username))
 	if errors.Is(err, sql.ErrNoRows) {
 		return user.User{}, ErrNotFound
 	}
@@ -56,6 +56,10 @@ func (s *Store) RegisterUser(ctx context.Context, u *user.User, hash string, fir
 		return err
 	}
 	now := ts(time.Now())
+	displayName, err := s.seal(u.DisplayName)
+	if err != nil {
+		return err
+	}
 	var id int64
 	err = s.inTx(ctx, "register", func(tx *sql.Tx) error {
 		if firstRun {
@@ -75,7 +79,7 @@ func (s *Store) RegisterUser(ctx context.Context, u *user.User, hash string, fir
 		err := tx.QueryRowContext(ctx,
 			`INSERT INTO users (uid, username, email, display_name, preferences, password_hash, password_updated_at, status, created_at)
 			 VALUES ($1, $2, NULL, $3, $4, $5, $6, 'active', $7) RETURNING id`,
-			uid, nullStr(u.Username), u.DisplayName, u.Preferences.StoredJSON(), hash, now, now).Scan(&id)
+			uid, nullStr(u.Username), displayName, u.Preferences.StoredJSON(), hash, now, now).Scan(&id)
 		if err != nil {
 			if m := mapUserErr(err); m != err {
 				return m

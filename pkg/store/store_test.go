@@ -108,8 +108,8 @@ func TestFreshDatabaseGetsBaseline(t *testing.T) {
 	}
 	st.Close()
 
-	if SchemaVersion != 9 {
-		t.Errorf("SchemaVersion = %d, want 9", SchemaVersion)
+	if SchemaVersion != 10 {
+		t.Errorf("SchemaVersion = %d, want 10", SchemaVersion)
 	}
 	if v := schemaVersion(t, url); v != SchemaVersion {
 		t.Errorf("schema version = %d, want %d", v, SchemaVersion)
@@ -122,7 +122,7 @@ func TestFreshDatabaseGetsBaseline(t *testing.T) {
 		}
 	}
 	slices.Sort(tables)
-	want := slices.Clone(baselineTables)
+	want := append(slices.Clone(baselineTables), "encryption_state") // v10
 	slices.Sort(want)
 	if !slices.Equal(tables, want) {
 		t.Errorf("tables = %v, want %v", tables, want)
