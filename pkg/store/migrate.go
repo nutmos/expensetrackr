@@ -23,6 +23,7 @@ import (
 //	v7  balances can be hidden (migrate_v7.go)
 //	v8  transaction type asset_sale with gain/loss (migrate_v8.go)
 //	v9  transaction type beginning_balance, one per balance (migrate_v9.go)
+//	v10 encryption at rest: encryption_state, encrypted categories (migrate_v10.go)
 //
 // All pending steps run in one SQL transaction (Postgres DDL is
 // transactional), so a failed upgrade leaves the database as it was. The
@@ -68,6 +69,8 @@ var migrations = []migration{
 	addAssetSale,
 	// 8 -> 9: beginning_balance type; one per existing balance.
 	addBeginningBalance,
+	// 9 -> 10: encryption_state; categories may be a sealed jsonb string.
+	addEncryptionState,
 }
 
 // SchemaVersion is the version a fully migrated database has.

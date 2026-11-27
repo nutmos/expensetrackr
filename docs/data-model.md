@@ -430,6 +430,11 @@ versioning lives in `pkg/store/migrate.go`.
   server applies every pending step in **one SQL transaction** under an
   advisory lock, so servers starting together migrate once and a failed
   upgrade changes nothing. Logged as `store: migrated schema from version N to M`.
+- **Encryption at rest** (optional, v10): with `EXPENSE_ENCRYPTION_KEY` set,
+  transaction notes and account names, balance names and descriptions, the
+  category list and display names are stored AES-256-GCM encrypted
+  (`enc1:<key id>:…`); amounts, dates and ids stay in clear. See
+  [Encryption at rest](encryption.md).
 - **Database from a newer build:** startup fails with `unsupported database
   schema` and the database is not modified.
 - **Concurrency:** writes run on a small connection pool. Writes that read and
@@ -448,6 +453,7 @@ versioning lives in `pkg/store/migrate.go`.
 | 7       | balances can be hidden: adds `balances.hidden boolean NOT NULL DEFAULT false` |
 | 8       | transaction type `asset_sale`: widens `transactions_type_check`, adds `transactions.gain_loss_minor`, `entire_asset_sale`, `transactions_sale_result_check`, `transactions_sale_proceeds_check` and `transactions_sale_category_check` |
 | 9       | transaction type `beginning_balance`: widens `transactions_type_check`, lets `transactions_amount_minor_check` accept 0 on it, replaces the baseline direction check with `transactions_direction_check`, adds `transactions_beginning_balance_check` (no destination, category or import ref) and the unique index `transactions_beginning_balance_uq` (one per balance), and records one for every existing balance: its current amount minus what its transactions did, dated at its earliest transaction (or its creation) |
+| 10      | encryption at rest ([encryption.md](encryption.md)): adds the table `encryption_state` (one row once the database is encrypted: key id and a check value) and lets `user_categories_categories_check` accept a jsonb string (the encrypted list) as well as an array. Encrypting the existing values happens at startup with a key, not in the migration |
 
 **Coming from SQLite?** Earlier versions stored everything in
 `data/expenses.db`. That data is **not migrated**: the Postgres version starts

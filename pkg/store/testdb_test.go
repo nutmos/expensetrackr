@@ -4,6 +4,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/nutmos/expensetrackr/pkg/fieldcrypt"
 	"github.com/nutmos/expensetrackr/pkg/transaction"
 )
 
@@ -33,7 +34,7 @@ func testURL(t testing.TB) string {
 // openTestStore returns a store in a fresh schema, closed when the test ends.
 func openTestStore(t testing.TB) *Store {
 	t.Helper()
-	st, err := Open(testURL(t))
+	st, err := Open(testURL(t), WithKeyring(testKeyring(t)))
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
@@ -51,4 +52,14 @@ func withoutBeginning(items []transaction.Transaction, err error) ([]transaction
 		}
 	}
 	return out, err
+}
+
+// testKeyring is storetest.TestKeyring for this package's own tests.
+func testKeyring(t testing.TB) *fieldcrypt.Keyring {
+	t.Helper()
+	k, err := fieldcrypt.ParseKeyring(os.Getenv("EXPENSE_TEST_ENCRYPTION_KEY"), "")
+	if err != nil {
+		t.Fatalf("EXPENSE_TEST_ENCRYPTION_KEY: %v", err)
+	}
+	return k
 }

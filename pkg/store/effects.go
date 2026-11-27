@@ -30,31 +30,31 @@ import (
 // longer exists (deleted) is skipped. See transaction.Effects for the sign
 // rules; a balance adjustment's effect (Effect.ByAmount) is converted to a
 // value change with the locked balance's kind.
-func applyBalanceEffects(ctx context.Context, tx *sql.Tx, userUID string, old, next *transaction.Transaction, now string) error {
+func (s *Store) applyBalanceEffects(ctx context.Context, tx *sql.Tx, userUID string, old, next *transaction.Transaction, now string) error {
 	var olds []*transaction.Transaction
 	if old != nil {
 		olds = []*transaction.Transaction{old}
 	}
-	return applyEffects(ctx, tx, userUID, olds, next, now)
+	return s.applyEffects(ctx, tx, userUID, olds, next, now)
 }
 
 // reverseBalanceEffects reverses the effects of several removed transactions
 // at once (see applyBalanceEffects), summed per balance so each touched
 // balance is written once. Balances that no longer exist are skipped.
-func reverseBalanceEffects(ctx context.Context, tx *sql.Tx, userUID string, olds []*transaction.Transaction, now string) error {
-	return applyEffects(ctx, tx, userUID, olds, nil, now)
+func (s *Store) reverseBalanceEffects(ctx context.Context, tx *sql.Tx, userUID string, olds []*transaction.Transaction, now string) error {
+	return s.applyEffects(ctx, tx, userUID, olds, nil, now)
 }
 
 // applyEffects is applyBalanceEffects for any number of reversed
 // transactions (olds) and at most one applied one (next).
-func applyEffects(ctx context.Context, tx *sql.Tx, userUID string, olds []*transaction.Transaction, next *transaction.Transaction, now string) error {
+func (s *Store) applyEffects(ctx context.Context, tx *sql.Tx, userUID string, olds []*transaction.Transaction, next *transaction.Transaction, now string) error {
 	// Lock every balance this write touches before reading any of them, in
 	// one statement and in uid order: concurrent writes to the same balance
 	// then queue instead of losing an update (the reads below are followed by
 	// absolute writes), and a fixed order rules out deadlocks between them.
 	// The locked rows are returned and used below; they can't change until
 	// this transaction ends.
-	locked, err := lockBalances(ctx, tx, userUID, append(olds[:len(olds):len(olds)], next)...)
+	locked, err := s.lockBalances(ctx, tx, userUID, append(olds[:len(olds):len(olds)], next)...)
 	if err != nil {
 		return err
 	}
@@ -145,7 +145,7 @@ func effectCurrency(e transaction.Transaction, ef transaction.Effect) string {
 // lockBalances takes row locks (SELECT ... FOR UPDATE) on the user's
 // balances referenced by txs, in uid order, and returns them by uid. Missing
 // balances are simply absent; the caller reports them.
-func lockBalances(ctx context.Context, tx *sql.Tx, userUID string, txs ...*transaction.Transaction) (map[string]balance.Balance, error) {
+func (s *Store) lockBalances(ctx context.Context, tx *sql.Tx, userUID string, txs ...*transaction.Transaction) (map[string]balance.Balance, error) {
 	var uids []string
 	for _, e := range txs {
 		if e == nil {
@@ -155,13 +155,13 @@ func lockBalances(ctx context.Context, tx *sql.Tx, userUID string, txs ...*trans
 			uids = append(uids, string(ef.BalanceUID))
 		}
 	}
-	return lockBalanceUIDs(ctx, tx, userUID, uids)
+	return s.lockBalanceUIDs(ctx, tx, userUID, uids)
 }
 
 // lockBalanceUIDs takes row locks on the user's balances with the given uids
 // (duplicates allowed), in uid order, and returns them by uid. Missing
 // balances are simply absent.
-func lockBalanceUIDs(ctx context.Context, tx *sql.Tx, userUID string, list []string) (map[string]balance.Balance, error) {
+func (s *Store) lockBalanceUIDs(ctx context.Context, tx *sql.Tx, userUID string, list []string) (map[string]balance.Balance, error) {
 	seen := map[string]bool{}
 	var uids []string
 	for _, u := range list {
@@ -182,7 +182,7 @@ func lockBalanceUIDs(ctx context.Context, tx *sql.Tx, userUID string, list []str
 	}
 	defer rows.Close()
 	for rows.Next() {
-		b, err := scanBalance(rows)
+		b, err := s.scanBalance(rows)
 		if err != nil {
 			return nil, fmt.Errorf("lock balances: %w", err)
 		}
@@ -191,8 +191,8 @@ func lockBalanceUIDs(ctx context.Context, tx *sql.Tx, userUID string, list []str
 	return out, rows.Err()
 }
 
-func balanceByUIDTx(ctx context.Context, tx *sql.Tx, userUID, uid string) (balance.Balance, error) {
-	b, err := scanBalance(tx.QueryRowContext(ctx, `SELECT `+balanceCols+` FROM balances WHERE uid = $1 AND user_uid = $2`, uid, userUID))
+func (s *Store) balanceByUIDTx(ctx context.Context, tx *sql.Tx, userUID, uid string) (balance.Balance, error) {
+	b, err := s.scanBalance(tx.QueryRowContext(ctx, `SELECT `+balanceCols+` FROM balances WHERE uid = $1 AND user_uid = $2`, uid, userUID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return balance.Balance{}, ErrNotFound
 	}

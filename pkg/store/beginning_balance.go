@@ -42,17 +42,21 @@ func startOf(b balance.Balance) (int64, transaction.Direction) {
 // inside the caller's database transaction. b already holds the amount, so
 // the row is stored as applied without moving b again (like a balance
 // adjustment). spentAt comes from the store clock (with its local UTC offset).
-func recordBeginningBalance(ctx context.Context, tx *sql.Tx, userUID string, b balance.Balance, createdAt string, spentAt time.Time) error {
+func (s *Store) recordBeginningBalance(ctx context.Context, tx *sql.Tx, userUID string, b balance.Balance, createdAt string, spentAt time.Time) error {
 	uid, err := common_type.NewUID()
 	if err != nil {
 		return err
 	}
 	amt, dir := startOf(b)
 	at := spentAt.Truncate(time.Second)
+	name, err := s.seal(b.Name)
+	if err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO transactions (uid, user_uid, type, amount_minor, amount_scale, currency, balance_uid, account, spent_at, spent_at_utc, note, created_at, version, balance_applied, adjustment_direction)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, '', $11, 1, true, $12)`,
-		uid, userUID, string(transaction.BeginningBalance), amt, b.Scale, b.Currency, b.UID, b.Name,
+		uid, userUID, string(transaction.BeginningBalance), amt, b.Scale, b.Currency, b.UID, name,
 		at.Format(time.RFC3339), at.UTC(), createdAt, string(dir)); err != nil {
 		return fmt.Errorf("record beginning balance: %w", err)
 	}
@@ -62,13 +66,17 @@ func recordBeginningBalance(ctx context.Context, tx *sql.Tx, userUID string, b b
 // resetBeginningBalance rewrites the beginning balance of b after a currency
 // change (only possible while it is b's only transaction): it takes b's new
 // currency and its new amount, which is all b has ever held.
-func resetBeginningBalance(ctx context.Context, tx *sql.Tx, userUID string, b balance.Balance, now string) error {
+func (s *Store) resetBeginningBalance(ctx context.Context, tx *sql.Tx, userUID string, b balance.Balance, now string) error {
 	amt, dir := startOf(b)
+	name, err := s.seal(b.Name)
+	if err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE transactions SET amount_minor = $1, amount_scale = $2, currency = $3, adjustment_direction = $4, account = $5,
 		        updated_at = $6, version = version + 1
 		 WHERE user_uid = $7 AND balance_uid = $8 AND type = $9`,
-		amt, b.Scale, b.Currency, string(dir), b.Name, now, userUID, b.UID, string(transaction.BeginningBalance)); err != nil {
+		amt, b.Scale, b.Currency, string(dir), name, now, userUID, b.UID, string(transaction.BeginningBalance)); err != nil {
 		return fmt.Errorf("reset beginning balance: %w", err)
 	}
 	return nil

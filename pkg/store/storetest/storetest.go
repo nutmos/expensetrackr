@@ -11,6 +11,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/nutmos/expensetrackr/pkg/fieldcrypt"
 	"github.com/nutmos/expensetrackr/pkg/store"
 )
 
@@ -43,10 +44,25 @@ func URL(t testing.TB) string {
 // Open returns a store in a fresh schema, closed when the test ends.
 func Open(t testing.TB) *store.Store {
 	t.Helper()
-	st, err := store.Open(URL(t))
+	st, err := store.Open(URL(t), store.WithKeyring(TestKeyring(t)))
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
 	return st
+}
+
+// EnvKey names the variable holding an encryption key for test stores: set
+// it to run the database tests with encryption at rest on (CI does both).
+const EnvKey = "EXPENSE_TEST_ENCRYPTION_KEY"
+
+// TestKeyring is the keyring Open gives test stores: from EnvKey, or nil
+// (encryption off) when it is unset.
+func TestKeyring(t testing.TB) *fieldcrypt.Keyring {
+	t.Helper()
+	k, err := fieldcrypt.ParseKeyring(os.Getenv(EnvKey), "")
+	if err != nil {
+		t.Fatalf("%s: %v", EnvKey, err)
+	}
+	return k
 }
