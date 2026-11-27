@@ -610,31 +610,29 @@
     }
   }
 
-  // ---- Signed amount inputs (issue #196) ----------------------------------
-  // Mobile decimal keypads (inputmode="decimal") have no minus key, so the
-  // inputs that accept negatives (gain/loss, balance, debt) have a ± button
-  // that flips the leading minus sign. It fires "input" so live previews
-  // update, and keeps focus (and the on-screen keyboard) on the input.
-  function toggleSign(v) {
-    const t = v.trim();
-    if (t.startsWith("-") || t.startsWith("−")) return t.slice(1);
-    return "-" + t;
+  // Signed amount fields (issue #196): inputmode="decimal" gives phones a
+  // keypad with no minus key (notably iOS), so inputs marked data-signed get a
+  // "±" button that flips the leading "-". It fires "input" so live previews
+  // (e.g. the asset sale total) update as if typed.
+  function addSignToggles() {
+    document.querySelectorAll("input[data-signed]").forEach((input) => {
+      const row = document.createElement("span");
+      row.className = "signed-row";
+      input.parentNode.insertBefore(row, input);
+      row.appendChild(input);
+      const b = button("±", "secondary sign-toggle", () => {
+        const v = input.value.trim();
+        input.value = v.startsWith("-") ? v.slice(1) : "-" + v;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.focus();
+      });
+      b.setAttribute("aria-label", "Toggle negative");
+      b.title = "Make negative / positive";
+      row.appendChild(b);
+    });
   }
-  document.addEventListener("mousedown", (ev) => {
-    if (ev.target.closest && ev.target.closest(".sign-toggle")) ev.preventDefault();
-  });
-  document.addEventListener("click", (ev) => {
-    const btn = ev.target.closest && ev.target.closest(".sign-toggle");
-    if (!btn) return;
-    ev.preventDefault();
-    const input = document.getElementById(btn.dataset.signFor);
-    if (!input || input.disabled || input.readOnly) return;
-    input.value = toggleSign(input.value);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.focus();
-    try { input.setSelectionRange(input.value.length, input.value.length); } catch (_) { /* not a text input */ }
-  });
 
   // Start once every script has registered its routes.
+  document.addEventListener("DOMContentLoaded", addSignToggles);
   document.addEventListener("DOMContentLoaded", boot);
 })();

@@ -214,10 +214,7 @@
           </div>
           <div class="field" id="sale-field" hidden>
             <span class="field-label">Gain / loss (optional)</span>
-            <span class="signed-row">
-              <input id="gain_loss" name="gain_loss" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 50 or -20" aria-label="Gain or loss">
-              <button type="button" class="secondary sign-toggle" data-sign-for="gain_loss" aria-label="Switch between gain and loss (plus / minus)" title="Switch between gain and loss (plus / minus)">±</button>
-            </span>
+            <input id="gain_loss" data-signed name="gain_loss" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 50 or -20" aria-label="Gain or loss">
             <small class="muted">Positive for a gain, negative for a loss. The asset goes down by the principal; the account receives the principal plus the gain (or minus the loss). Counted as income or expense in reports. <span id="sale-total"></span></small>
             <small class="err" data-for="gain_loss"></small>
           </div>
@@ -360,17 +357,11 @@
             <small class="err" data-for="currency"></small>
           </label>
           <label class="asset-only">Balance
-            <span class="signed-row">
-              <input id="b-balance" name="balance" type="text" inputmode="decimal" placeholder="15000.00 (negative if overdrawn)" autocomplete="off">
-              <button type="button" class="secondary sign-toggle" data-sign-for="b-balance" aria-label="Switch between positive and negative" title="Switch between positive and negative">±</button>
-            </span>
+            <input id="b-balance" data-signed name="balance" type="text" inputmode="decimal" placeholder="15000.00 (negative if overdrawn)" autocomplete="off">
             <small class="err" data-for="balance"></small>
           </label>
           <label class="liability-only" hidden>Debt
-            <span class="signed-row">
-              <input id="b-debt" name="debt" type="text" inputmode="decimal" placeholder="2500.00 (negative if in credit)" autocomplete="off">
-              <button type="button" class="secondary sign-toggle" data-sign-for="b-debt" aria-label="Switch between positive and negative" title="Switch between positive and negative">±</button>
-            </span>
+            <input id="b-debt" data-signed name="debt" type="text" inputmode="decimal" placeholder="2500.00 (negative if in credit)" autocomplete="off">
             <small class="err" data-for="debt"></small>
           </label>
           <label class="liability-only" hidden>Limit
