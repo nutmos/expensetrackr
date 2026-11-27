@@ -591,6 +591,7 @@
     form.reset();
     App.clearErrors(form);
     App.hideConflict(conflictBox);
+    $("#delete-btn").hidden = true; // shown once an existing transaction loads
     setStatus("");
     form.hidden = false;
     $("#submit-btn").disabled = false;
@@ -660,6 +661,9 @@
       ? "A beginning balance keeps its type and balance. It must not be dated after the balance's other transactions; an earlier transaction moves it back."
       : "A balance adjustment keeps its type.";
     $("#balance_uid").disabled = isBegin;
+    // Deletable from here too (balance adjustments included, issue #194);
+    // a beginning balance goes only together with its balance.
+    $("#delete-btn").hidden = isBegin;
     if (isAdj) $("#adjustment_direction").value = e.adjustment_direction === "decrease" ? "decrease" : "increase";
     // Stored conversion: shown as saved; it is kept unless the amount, date
     // or balances change (then the market rate is looked up again) or the
@@ -778,6 +782,40 @@
   }
 
   function cancelForm() { App.returnToList(LIST, App.BALANCE_PAGE_RE); }
+
+  // Delete the transaction being edited (Delete on the edit page).
+  async function deleteFromForm() {
+    const e = editing;
+    if (!e) return;
+    const acct = accountText(e) || "unknown account";
+    const revert = e.type === "balance_adjustment"
+      ? `\n\nThis balance adjustment ${e.adjustment_direction === "decrease" ? "lowered" : "raised"} ${acct}; deleting it reverts that change.` : "";
+    if (!confirm(`Delete ${e.amount} ${e.currency} (${acct}) at ${shownTime(e.spent_at)}?${revert}`)) return;
+    const btn = $("#delete-btn");
+    btn.disabled = true;
+    setStatus("");
+    try {
+      const res = await fetch(`/api/transactions/${encodeURIComponent(e.uid)}`, { method: "DELETE", headers: App.ifMatch(e.version) });
+      if (res.status === 409) {
+        App.showConflict(conflictBox,
+          "This transaction was changed after you opened this page (in another tab or by someone else), so it was not deleted. Reload to see the latest values, then delete again if you still want to.",
+          () => enterForm({ uid: e.uid }));
+        setStatus("Not deleted: changed elsewhere.", "bad");
+        return;
+      }
+      if (!res.ok && res.status !== 404) {
+        setStatus(`Delete failed (${res.status})`, "bad");
+        return;
+      }
+      App.setFlash("transactions", `Deleted ${e.amount} ${e.currency} (${TYPE_LABEL[e.type] || e.type}).`);
+      editing = null;
+      App.returnToList(LIST, App.BALANCE_PAGE_RE);
+    } catch (err) {
+      setStatus("Network error: " + err.message, "bad");
+    } finally {
+      btn.disabled = false;
+    }
+  }
 
   // ---- List page: /transactions ---------------------------------------------
 
@@ -1160,6 +1198,7 @@
   });
   $("#now-btn").addEventListener("click", setNow);
   $("#cancel-btn").addEventListener("click", cancelForm);
+  $("#delete-btn").addEventListener("click", deleteFromForm);
   form.addEventListener("submit", submitTransaction);
   $("#filter-form").addEventListener("submit", (ev) => { ev.preventDefault(); applyFilters(); });
   $("#filter-clear").addEventListener("click", () => {
