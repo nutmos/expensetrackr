@@ -610,6 +610,29 @@
     }
   }
 
+  // Signed amount fields (issue #196): inputmode="decimal" gives phones a
+  // keypad with no minus key (notably iOS), so inputs marked data-signed get a
+  // "±" button that flips the leading "-". It fires "input" so live previews
+  // (e.g. the asset sale total) update as if typed.
+  function addSignToggles() {
+    document.querySelectorAll("input[data-signed]").forEach((input) => {
+      const row = document.createElement("span");
+      row.className = "signed-row";
+      input.parentNode.insertBefore(row, input);
+      row.appendChild(input);
+      const b = button("±", "secondary sign-toggle", () => {
+        const v = input.value.trim();
+        input.value = v.startsWith("-") ? v.slice(1) : "-" + v;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.focus();
+      });
+      b.setAttribute("aria-label", "Toggle negative");
+      b.title = "Make negative / positive";
+      row.appendChild(b);
+    });
+  }
+
   // Start once every script has registered its routes.
+  document.addEventListener("DOMContentLoaded", addSignToggles);
   document.addEventListener("DOMContentLoaded", boot);
 })();
