@@ -1,0 +1,63 @@
+name: Clean up branch
+
+# Deletes a pull request's branch once the pull request is merged (issue #203).
+#
+# Skipped (branch kept) when:
+# - the pull request was closed without merging;
+# - the branch lives in a fork (GITHUB_TOKEN cannot delete it there);
+# - the branch is the default branch or another protected branch;
+# - another open pull request targets the branch as its base (deleting it
+#   would close that pull request).
+# A branch that is already gone (deleted by hand or by the repository's
+# "Automatically delete head branches" setting) is not an error.
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write # delete the branch
+  pull-requests: read # look for open pull requests based on it
+
+jobs:
+  delete-branch:
+    name: Delete merged branch
+    runs-on: ubuntu-latest
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref != github.event.repository.default_branch
+    steps:
+      - name: Delete branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+
+          # URL-encode the branch name, keeping "/" as a path separator.
+          enc=$(jq -rn --arg b "$BRANCH" '$b | @uri | gsub("%2F"; "/")')
+
+          if ! info=$(gh api "repos/$REPO/branches/$enc" 2>/dev/null); then
+            echo "Branch '$BRANCH' no longer exists; nothing to do."
+            exit 0
+          fi
+          if [ "$(jq -r '.protected' <<<"$info")" = "true" ]; then
+            echo "Branch '$BRANCH' is protected; keeping it."
+            exit 0
+          fi
+
+          open=$(gh api "repos/$REPO/pulls?state=open&base=$enc&per_page=100" --jq 'length')
+          if [ "$open" -gt 0 ]; then
+            echo "Branch '$BRANCH' is the base of $open open pull request(s); keeping it."
+            exit 0
+          fi
+
+          if out=$(gh api -X DELETE "repos/$REPO/git/refs/heads/$enc" 2>&1); then
+            echo "Deleted branch '$BRANCH'."
+          elif grep -q "Reference does not exist" <<<"$out"; then
+            echo "Branch '$BRANCH' was already deleted."
+          else
+            echo "$out" >&2
+            exit 1
+          fi
