@@ -26,6 +26,7 @@ select:disabled { opacity: 0.7; cursor: not-allowed; background: var(--bg); }
 .filters label { font-size: 0.8rem; }
 .filters input { padding: 5px 8px; }
 .filters button { padding: 5px 10px; }
+.filters .filter-search input { width: 16em; }
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; margin-top: 8px; }
 th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
@@ -213,7 +214,8 @@ td.acct, td.cat { min-width: 7em; }
   .list-header h2 { flex: 1; }
   .list-header .filters { order: 1; width: 100%; }
   .filters label { flex: 1 1 40%; }
-  .filters input, .filters select { width: 100%; }
+  .filters .filter-search { flex-basis: 100%; }
+  .filters input, .filters select, .filters .filter-search input { width: 100%; }
   /* Transaction cards: Edit/Delete sit at the right, beside category and note. */
   #transaction-table tr { grid-template-areas: "time amount" "type amount" "acct cur" "cat actions" "note actions"; }
   #transaction-table td.actions-cell { margin-top: 0; align-self: end; text-align: right; }

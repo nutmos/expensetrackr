@@ -102,6 +102,9 @@ type ListFilter struct {
 	// BalanceUID matches transactions that use the balance as source
 	// (balance_uid) or destination (to_balance_uid). "" = all.
 	BalanceUID common_type.UID
+	// Search is free text (see SearchTerms): every word must appear in at
+	// least one searchable field of the transaction. "" = all.
+	Search string
 	// After continues a listing: only rows strictly after this position in
 	// the list order (spent_at_utc DESC, id DESC). nil = from the start.
 	After *ListCursor
@@ -182,6 +185,9 @@ func (s *Store) List(ctx context.Context, userUID string, f ListFilter) ([]trans
 		p := arg(f.BalanceUID)
 		query += ` AND (balance_uid = ` + p + ` OR to_balance_uid = ` + p + `)`
 	}
+	for _, term := range SearchTerms(f.Search) {
+		query += ` AND ` + searchCond(term, arg)
+	}
 	if f.After != nil {
 		query += ` AND (spent_at_utc, id) < (` + arg(time.Unix(f.After.SpentAtUnix, 0).UTC()) + `, ` + arg(f.After.ID) + `)`
 	}
@@ -204,6 +210,76 @@ func (s *Store) List(ctx context.Context, userUID string, f ListFilter) ([]trans
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// MaxSearchTerms is the most words a search may have.
+const MaxSearchTerms = 10
+
+// SearchTerms splits a search string into its words (separated by
+// whitespace). Every word must match for a transaction to be found.
+func SearchTerms(q string) []string {
+	return strings.Fields(q)
+}
+
+// likeEscaper escapes the LIKE wildcards (and the escape character itself)
+// so a search word matches literally.
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+// searchNumber reports whether term is a plain decimal number (commas as
+// thousands separators allowed, e.g. "1,250.50") and returns it without
+// the commas.
+func searchNumber(term string) (string, bool) {
+	n := strings.ReplaceAll(term, ",", "")
+	if n == "" || len(n) > 30 {
+		return "", false
+	}
+	dot := false
+	digits := 0
+	for i, r := range n {
+		switch {
+		case r >= '0' && r <= '9':
+			digits++
+		case r == '.' && !dot:
+			dot = true
+		case r == '-' && i == 0:
+		default:
+			return "", false
+		}
+	}
+	return n, digits > 0
+}
+
+// searchCond is the SQL condition for one search word (case-insensitive
+// substring match): the note, the balance names (the snapshot on the row and
+// the balance's current name, source or destination), the category name, the
+// import reference, the type (e.g. "asset sale") and the currency codes. A
+// word that is a number also matches the amount, the amount received and the
+// foreign currency amount exactly (120 finds 120.00). Placeholders are added
+// with arg; $1 is the user uid.
+func searchCond(term string, arg func(any) string) string {
+	p := arg("%" + likeEscaper.Replace(term) + "%")
+	like := func(col string) string { return col + ` ILIKE ` + p + ` ESCAPE '\'` }
+	conds := []string{
+		like(`note`),
+		like(`account`),
+		like(`to_account`),
+		like(`import_ref`),
+		like(`replace(type, '_', ' ')`),
+		like(`currency`),
+		like(`to_currency`),
+		like(`foreign_currency`),
+		`EXISTS (SELECT 1 FROM balances b WHERE b.user_uid = $1 AND b.uid IN (transactions.balance_uid, transactions.to_balance_uid) AND ` + like(`b.name`) + `)`,
+		`category_uid::text IN (SELECT c->>'uid' FROM user_categories uc CROSS JOIN LATERAL jsonb_array_elements(uc.categories) c WHERE uc.user_uid = $1 AND ` + like(`c->>'name'`) + `)`,
+	}
+	if n, ok := searchNumber(term); ok {
+		v := arg(n) + `::numeric`
+		conds = append(conds,
+			`amount_minor::numeric / power(10::numeric, amount_scale) = `+v,
+			`to_amount_minor::numeric / power(10::numeric, to_amount_scale) = `+v,
+			`foreign_amount_minor::numeric / power(10::numeric, foreign_amount_scale) = `+v,
+		)
+	}
+	return `(` + strings.Join(conds, ` OR `) + `)`
 }
 
 // ListPage is List for one page of at most f.Limit rows (f.Limit must be >

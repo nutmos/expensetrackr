@@ -826,6 +826,8 @@
     // Date filters are whole days in this device's time zone.
     App.setDateRange(params, from, to);
     if ($("#filter-type").value) params.set("type", $("#filter-type").value);
+    const q = $("#filter-q").value.trim();
+    if (q) params.set("q", q);
     return params;
   }
 
@@ -931,6 +933,7 @@
     $("#filter-to").value = range.to;
     const ft = query.get("type") || "";
     $("#filter-type").value = [...$("#filter-type").options].some((o) => o.value === ft) ? ft : "";
+    $("#filter-q").value = query.get("q") || "";
     const highlight = App.takeFlash("transactions");
     await loadTransactions(highlight);
   }
@@ -941,6 +944,7 @@
     if ($("#filter-from").value) q.set("from", $("#filter-from").value);
     if ($("#filter-to").value) q.set("to", $("#filter-to").value);
     if ($("#filter-type").value) q.set("type", $("#filter-type").value);
+    if ($("#filter-q").value.trim()) q.set("q", $("#filter-q").value.trim());
     App.replaceQuery(q.toString());
     $("#flash-transactions").hidden = true;
     loadTransactions();
@@ -1058,8 +1062,9 @@
   }
 
   function showListState() {
+    const searching = $("#filter-q").value.trim() !== "";
     if (loaded.length === 0) {
-      listStatus.textContent = "No transactions yet.";
+      listStatus.textContent = searching ? "No transactions match the search." : "No transactions yet.";
     } else if (nextCursor) {
       listStatus.textContent = `Showing the ${loaded.length} most recent transactions, newest first.`;
     } else {
@@ -1205,6 +1210,7 @@
     $("#filter-from").value = "";
     $("#filter-to").value = "";
     $("#filter-type").value = "";
+    $("#filter-q").value = "";
     applyFilters();
   });
 

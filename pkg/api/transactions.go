@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/nutmos/expensetrackr/pkg/balance"
 	"github.com/nutmos/expensetrackr/pkg/common_type"
@@ -216,8 +217,11 @@ func (s *Server) listTransactions(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"transactions": items, "count": len(items), "next_cursor": nextCursor})
 }
 
+// maxSearchLen is the longest ?q= accepted, in characters.
+const maxSearchLen = 200
+
 // parseListFilter reads the GET /api/transactions query (from, to, type,
-// category_uid, balance_uid, limit, cursor) into a store.ListFilter. Invalid parameters are
+// category_uid, balance_uid, q, limit, cursor) into a store.ListFilter. Invalid parameters are
 // returned as field messages (the handler answers 400 with them).
 func parseListFilter(c *gin.Context) (store.ListFilter, map[string]string) {
 	fields := map[string]string{}
@@ -246,6 +250,17 @@ func parseListFilter(c *gin.Context) (store.ListFilter, map[string]string) {
 			f.BalanceUID = raw
 		} else {
 			fields["balance_uid"] = "must be a UUID"
+		}
+	}
+
+	if raw := strings.TrimSpace(c.Query("q")); raw != "" {
+		switch {
+		case utf8.RuneCountInString(raw) > maxSearchLen:
+			fields["q"] = fmt.Sprintf("must be at most %d characters", maxSearchLen)
+		case len(store.SearchTerms(raw)) > store.MaxSearchTerms:
+			fields["q"] = fmt.Sprintf("must have at most %d words", store.MaxSearchTerms)
+		default:
+			f.Search = raw
 		}
 	}
 

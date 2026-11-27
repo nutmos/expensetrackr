@@ -257,6 +257,7 @@ func listTransactionsTool(c *Client) Tool {
 			"type":         enum("Only this type.", append(append([]string{}, writableTypes...), "balance_adjustment", "beginning_balance")...),
 			"category_uid": str("Only transactions in this category (uid from list_categories)."),
 			"balance_uid":  str("Only transactions from or to this balance (uid from list_balances)."),
+			"q":            str("Search words (case-insensitive, at most 10 words, 200 characters). Every word must appear in the note, a balance name, the category name, the import_ref, the type or a currency code; a word that is a number (e.g. 120.50) also matches the amount, to_amount or foreign_amount exactly."),
 			"limit":        map[string]any{"type": "integer", "minimum": 1, "maximum": maxListLimit, "description": fmt.Sprintf("Page size, default %d, at most %d.", defaultListLimit, maxListLimit)},
 			"cursor":       str("next_cursor from the previous page (keep the other filters the same)."),
 		}),
@@ -270,6 +271,7 @@ func listTransactionsTool(c *Client) Tool {
 				Type        string `json:"type"`
 				CategoryUID string `json:"category_uid"`
 				BalanceUID  string `json:"balance_uid"`
+				Q           string `json:"q"`
 				Limit       *int   `json:"limit"`
 				Cursor      string `json:"cursor"`
 			}
@@ -294,6 +296,7 @@ func listTransactionsTool(c *Client) Tool {
 			setIf(q, "type", a.Type)
 			setIf(q, "category_uid", a.CategoryUID)
 			setIf(q, "balance_uid", a.BalanceUID)
+			setIf(q, "q", a.Q)
 			setIf(q, "cursor", a.Cursor)
 			v, _, err := c.getJSON(ctx, "/api/transactions", q)
 			return v, err

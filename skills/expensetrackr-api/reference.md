@@ -214,6 +214,7 @@ existed; editing/deleting those doesn't move balances.
 | `tz` | Time zone for date-only `from`/`to`: IANA name (`Asia/Bangkok`) or offset (`+07:00`); default UTC |
 | `type` | `expense`, `income`, `transfer`, `asset_purchase`, `return_on_investment`, `asset_sale`, `repay_debt`, `balance_adjustment`, `beginning_balance` |
 | `category_uid` | one category |
+| `q` | search words (≤ 10 words, ≤ 200 chars, case-insensitive); every word must appear in the note, a balance name, the category name, `import_ref`, the type or a currency code; a number (`120.50`) also matches the amount exactly |
 | `limit` | 1–5000, default 500 |
 
 Newest first by `spent_at` instant. Response `{"transactions":[…],"count":n}`.
