@@ -62,6 +62,7 @@ func (in Input) Validate() (User, error) {
 		return User{}, err
 	}
 	u.Preferences = prefs
+
 	u.SetStatus(StatusActive)
 
 	if len(fieldsErr) > 0 {

@@ -91,9 +91,8 @@ func (u *User) SetEmail(email *string) error {
 	return nil
 }
 
-func (u *User) SetStatus(s Status) error {
+func (u *User) SetStatus(s Status) {
 	u.Status = StatusActive
-	return nil
 }
 
 // NormalizeEmail trims and lowercases an address and checks it is a bare
