@@ -312,16 +312,16 @@ curl -s -X PUT http://127.0.0.1:8080/api/balances/$UID \
 ### Web UI
 
 The edit pages send `If-Match` with the version they loaded, with Save and
-with the transaction edit page's Delete, and the list pages send it with
-Delete (except a balance's transactions page, whose rows carry no version).
+with the edit pages' Delete (and Hide instead), and the list pages send it
+with their row actions (except a balance's transactions page, whose rows carry no version).
 On a 409:
 - **Edit page:** shows *"…was changed after you opened this page (for example
   by a transaction or in another tab), so your changes were not saved. It now
   has …"* and a **Reload latest** button. The button reloads the record and
-  discards the unsaved edits. Delete on the transaction edit page shows the
-  same box, saying nothing was deleted.
-- **List page:** an alert explains that nothing was deleted, and the list is
-  refreshed.
+  discards the unsaved edits. Delete (or Hide instead) on an edit page shows
+  the same box, saying nothing was deleted (or hidden).
+- **List page:** an alert explains that nothing was changed (e.g. a hidden
+  balance's Show), and the list is refreshed.
 
 ## 4. Schema
 
@@ -358,8 +358,9 @@ account or a paid-off loan whose history you want to keep.
 - Nothing else changes: its amount and transactions stay, the reports still
   count it, it can be edited (a PUT keeps it hidden; `hidden` is not a PUT
   field), and transactions may still use it.
-- Web page: hiding is offered from the **Delete** dialog (**Hide instead**;
-  the list has no separate Hide button, issue #177). A hidden balance gets a
+- Web page: hiding is offered from the **Delete** dialog on the balance's
+  edit page (**Hide instead**; the list has no separate Hide button, issue
+  #177). A hidden balance gets a
   **Show** button on the list. A **Show hidden** box
   (`/balances?hidden=1`) that lists hidden balances with a *hidden* badge, and
   the transaction form offers a hidden balance only when the transaction being
@@ -379,8 +380,11 @@ linked to it, its balance adjustments and its beginning balance).
   stale one is 409 and nothing is deleted.
 - Response: **200** `{"deleted_transactions": n}` (it used to be 204 with the
   transactions left behind).
-- Web page: **Delete** asks first, saying how many transactions will go, and
-  offers **Hide instead**.
+- Web page: **Delete** is on the balance's edit page, next to Cancel (the
+  list has no Delete, issue #226). It asks first, saying how many
+  transactions will go, and offers **Hide instead**. A balance changed after
+  the edit page was opened is not deleted or hidden: the page shows the
+  conflict box with **Reload latest values**.
 
 ## Follow-ups
 

@@ -45,6 +45,7 @@
     $("#b-type-note").hidden = true;
     $("#b-edit-hint").hidden = true;
     $("#b-new-hint").hidden = false;
+    $("#b-delete-btn").hidden = true; // shown once an existing balance loads
     App.hideConflict(conflictBox);
     syncTypeFields();
     App.clearErrors(form);
@@ -109,6 +110,7 @@
     $("#b-limit").value = b.limit ?? "";
     $("#b-edit-hint").hidden = false;
     $("#b-new-hint").hidden = true;
+    $("#b-delete-btn").hidden = false; // Delete lives here, not on the list (issue #226)
     syncTypeFields();
     $("#b-name").focus();
   }
@@ -176,15 +178,9 @@
 
   function cancelForm() { App.returnToList(LIST, App.BALANCE_PAGE_RE); }
 
-  // ---- List page: /balances ---------------------------------------------------
+  // ---- Delete (edit page only, issue #226) ------------------------------------
 
-  const showHidden = $("#b-show-hidden");
   const deleteDialog = $("#b-delete-dialog");
-
-  // A 409 on a list action: the balance changed after the list was loaded.
-  function staleAlert(b, what) {
-    alert(`“${b.name}” changed after this list was loaded (for example by a transaction), so it was not ${what}. The list has been refreshed; check it and try again if you still want to.`);
-  }
 
   // How many transactions use the balance (they are deleted with it); null if
   // unknown. Counts up to the API's page limit, then reports "more than".
@@ -216,20 +212,58 @@
     });
   }
 
-  async function remove(b) {
-    const choice = await askDelete(b, await transactionCount(b));
-    if (choice === "hide") return setHidden(b, true);
-    if (choice !== "delete") return;
-    const res = await fetch(`/api/balances/${b.uid}`, { method: "DELETE", headers: App.ifMatch(b.version) });
-    const body = await res.json().catch(() => ({}));
-    if (res.status === 409) staleAlert(b, "deleted");
-    else if (!res.ok && res.status !== 404) alert("Delete failed (" + res.status + ")");
-    else if (res.ok) {
+  // Delete (or hide) the balance being edited. A change made after the page
+  // was opened (409) shows the conflict box and nothing is changed.
+  async function deleteFromForm() {
+    const b = editing;
+    if (!b) return;
+    const btn = $("#b-delete-btn");
+    btn.disabled = true;
+    App.hideConflict(conflictBox);
+    setStatus("");
+    try {
+      const choice = await askDelete(b, await transactionCount(b));
+      if (editing !== b || (choice !== "hide" && choice !== "delete")) return;
+      const hide = choice === "hide";
+      const res = await fetch(hide ? `/api/balances/${b.uid}/hide` : `/api/balances/${b.uid}`,
+        { method: hide ? "POST" : "DELETE", headers: App.ifMatch(b.version) });
+      const body = await res.json().catch(() => ({}));
+      if (res.status === 409) {
+        App.showConflict(conflictBox,
+          `“${b.name}” was changed after you opened this page (for example by a transaction or in another tab), so it was not ${hide ? "hidden" : "deleted"}. ` +
+          `Reload to see the latest values, then try again if you still want to.`,
+          () => enterForm({ uid: b.uid }));
+        setStatus(`Not ${hide ? "hidden" : "deleted"}: changed elsewhere.`, "bad");
+        return;
+      }
+      if (!res.ok && res.status !== 404) {
+        setStatus(body.error || `${hide ? "Hide" : "Delete"} failed (${res.status})`, "bad");
+        return;
+      }
+      editing = null;
+      if (hide) {
+        App.setFlash("balances", `Hid “${b.name}”. Its transactions are kept; tick “Show hidden” to see it again.`, b.uid);
+        App.returnToList(LIST, App.BALANCE_PAGE_RE);
+        return;
+      }
       const n = body.deleted_transactions || 0;
       App.setFlash("balances", `Deleted “${b.name}”` + (n ? ` and ${n} transaction${n === 1 ? "" : "s"}.` : "."));
+      // Not back to the balance's own transactions page: it is gone.
+      App.returnToList(LIST);
+    } catch (err) {
+      setStatus("Network error: " + err.message, "bad");
+    } finally {
+      btn.disabled = false;
     }
-    $("#flash-balances").hidden = true;
-    await loadBalances(App.takeFlash("balances"));
+  }
+
+  // ---- List page: /balances ---------------------------------------------------
+
+  const showHidden = $("#b-show-hidden");
+
+  // A 409 on a list action: the balance changed after the list was loaded.
+  function staleAlert(b, what) {
+    alert(`“${b.name}” changed after this list was loaded (for example by a transaction), so it was not ${what}. The list has been refreshed; check it and try again if you still want to.`);
   }
 
   // Hide (or show again) a balance; its transactions are kept.
@@ -319,10 +353,10 @@
         actions.className = "actions-cell";
         actions.append(
           link("Edit", `/balances/${encodeURIComponent(b.uid)}/edit`, "button edit"),
-          // Hiding is offered from the Delete dialog; only a hidden balance
-          // (listed with "Show hidden") gets a button of its own, to show it.
+          // Delete (and Hide, offered from its dialog) is on the edit page
+          // (issue #226); only a hidden balance (listed with "Show hidden")
+          // gets a button here, to show it again.
           ...(b.hidden ? [button("Show", "edit", () => setHidden(b, false))] : []),
-          button("Delete", "danger", () => remove(b)),
         );
         tr.append(actions);
         // Column names for the narrow-screen card layout (style.css).
@@ -596,6 +630,7 @@
   Combobox.enhance($("#b-currency")); // issue #25: searchable currency
   form.addEventListener("submit", submit);
   $("#b-cancel-btn").addEventListener("click", cancelForm);
+  $("#b-delete-btn").addEventListener("click", deleteFromForm);
   syncTypeFields();
 
   // "Show hidden" lives in the URL (?hidden=1) so it survives edits and reloads.

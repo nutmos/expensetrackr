@@ -94,7 +94,8 @@ confirmations use human labels instead. For example, an edit page is titled
 **Navigation**
 
 - List pages are browse-only: list, filters, totals, and per-row **Edit** /
-  **Delete** actions. There is no inline form.
+  **Delete** actions (balances: **Edit** only; Delete is on the balance's
+  edit page, issue #226). There is no inline form.
 - The **+ Add …** button at the top right of each list opens its add page.
   **Edit** on a row opens the edit page. Both are real links, so they can also
   open in a new tab.
