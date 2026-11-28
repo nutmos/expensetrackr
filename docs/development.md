@@ -20,7 +20,7 @@ dev/             files for the local stack (Postgres init script)
 cmd/server/      the expense-server binary (main package)
 cmd/mcp/         the expense-mcp binary: MCP server (stdio) for LLM clients
 pkg/             library packages (api, store, transaction, balance, category, user,
-                 money, validate), pkg/web (embedded web page) and pkg/apidoc
+                 money, validate, helper), pkg/web (embedded web page) and pkg/apidoc
                  (embedded OpenAPI spec + offline Swagger UI)
 docs/            project documentation (non-code)
 skills/          AI-agent skills (SKILL.md): run the server, use the API, log a transaction, raise a PR
@@ -139,6 +139,7 @@ pkg/money/                         exact amounts: decimal string <-> integer min
   currency.go                      ISO 4217 codes -> minor-unit digits
   decimal.go                       DecimalInput (JSON string or number, kept as text)
 pkg/validate/                      ValidationError (422) and RequestError (400)
+pkg/helper/                        small shared helpers with no project deps (WithSearchPath)
 pkg/transaction/                   transaction domain model + validation (no I/O)
   transaction.go                   Transaction, CreateInput, Validate, ParseTimestamp
   transfer.go                      ConvertTransfer: cross-currency fields of a transfer (rate lookup injected)
