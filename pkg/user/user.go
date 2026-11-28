@@ -14,6 +14,7 @@ import (
 	"net/mail"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/nutmos/expensetrackr/pkg/helper"
 	"github.com/nutmos/expensetrackr/pkg/validate"
@@ -57,6 +58,44 @@ type User struct {
 	UpdatedAt       *string     `json:"updated_at"`
 }
 
+func (u *User) SetDisplayName(displayName string) error {
+	name := strings.TrimSpace(displayName)
+	if name == "" {
+		return fmt.Errorf("is required")
+	} else if utf8.RuneCountInString(name) > MaxDisplayNameLen {
+		return fmt.Errorf("must be at most %d characters", MaxDisplayNameLen)
+	}
+	u.DisplayName = name
+	return nil
+}
+
+func (u *User) SetUsername(username *string) error {
+	if username != nil {
+		if v, msg := NormalizeUsername(*username); msg != "" {
+			return fmt.Errorf("%s", msg)
+		} else if v != "" {
+			u.Username = &v
+		}
+	}
+	return nil
+}
+
+func (u *User) SetEmail(email *string) error {
+	if email != nil {
+		if v, msg := NormalizeEmail(*email); msg != "" {
+			return fmt.Errorf("%s", msg)
+		} else if v != "" {
+			u.Email = &v
+		}
+	}
+	return nil
+}
+
+func (u *User) SetStatus(s Status) error {
+	u.Status = StatusActive
+	return nil
+}
+
 // NormalizeEmail trims and lowercases an address and checks it is a bare
 // addr-spec (no display name). "" means "no email".
 func NormalizeEmail(s string) (string, string) {
@@ -75,7 +114,7 @@ func NormalizeEmail(s string) (string, string) {
 }
 
 // NormalizeUsername lowercases and checks a username. "" means "none".
-func NormalizeUsername(s string) (string, string) {
+func NormalizeUsername(s string) (username string, errorMsg string) {
 	u := helper.Normalize(s)
 	if u == "" {
 		return "", ""

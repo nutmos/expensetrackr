@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/nutmos/expensetrackr/pkg/validate"
 )
@@ -35,31 +34,21 @@ type Input struct {
 // Validate checks the input and returns a normalized User (no IDs/times;
 // Status active). Username/email "" or null are stored as NULL.
 func (in Input) Validate() (User, error) {
-	fields := map[string]string{}
+	fieldsErr := map[string]string{}
 	var u User
 
-	name := strings.TrimSpace(in.DisplayName)
-	if name == "" {
-		fields["display_name"] = "is required"
-	} else if utf8.RuneCountInString(name) > MaxDisplayNameLen {
-		fields["display_name"] = fmt.Sprintf("must be at most %d characters", MaxDisplayNameLen)
+	if err := u.SetDisplayName(in.DisplayName); err != nil {
+		fieldsErr["display_name"] = err.Error()
 	}
-	u.DisplayName = name
 
-	if in.Username != nil {
-		if v, msg := NormalizeUsername(*in.Username); msg != "" {
-			fields["username"] = msg
-		} else if v != "" {
-			u.Username = &v
-		}
+	if err := u.SetUsername(in.Username); err != nil {
+		fieldsErr["username"] = err.Error()
 	}
-	if in.Email != nil {
-		if v, msg := NormalizeEmail(*in.Email); msg != "" {
-			fields["email"] = msg
-		} else if v != "" {
-			u.Email = &v
-		}
+
+	if err := u.SetEmail(in.Email); err != nil {
+		fieldsErr["email"] = err.Error()
 	}
+
 	prefs, err := DecodePreferences(in.Preferences)
 	var ve *validate.ValidationError
 	if errors.As(err, &ve) {
@@ -67,16 +56,16 @@ func (in Input) Validate() (User, error) {
 			if k != "preferences" {
 				k = "preferences." + k
 			}
-			fields[k] = v
+			fieldsErr[k] = v
 		}
 	} else if err != nil {
 		return User{}, err
 	}
 	u.Preferences = prefs
-	u.Status = StatusActive
+	u.SetStatus(StatusActive)
 
-	if len(fields) > 0 {
-		return User{}, &validate.ValidationError{Fields: fields}
+	if len(fieldsErr) > 0 {
+		return User{}, &validate.ValidationError{Fields: fieldsErr}
 	}
 	return u, nil
 }
