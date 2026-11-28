@@ -169,7 +169,7 @@
             <small class="err" data-for="adjustment_direction"></small>
           </label>
           <label><span id="amount-label">Amount</span>
-            <input id="amount" name="amount" type="text" inputmode="decimal" placeholder="120.50" autocomplete="off" required>
+            <input id="amount" data-calc="keypad" name="amount" type="text" inputmode="decimal" placeholder="120.50" autocomplete="off" required>
             <small class="err" data-for="amount"></small>
           </label>
           <label>Currency
@@ -197,7 +197,7 @@
             <small class="err" data-for="to_balance_uid"></small>
           </label>
           <label id="fx-field" hidden><span>Received amount (<span id="fx-currency"></span>)</span>
-            <input id="to_amount" name="to_amount" type="text" inputmode="decimal" autocomplete="off" placeholder="Amount received">
+            <input id="to_amount" data-calc="keypad" name="to_amount" type="text" inputmode="decimal" autocomplete="off" placeholder="Amount received">
             <small class="muted"><span id="fx-rate"></span> <button type="button" class="linklike" id="fx-reset" hidden>Use market rate</button></small>
             <span id="fx-conv" class="fx-conv" hidden aria-live="polite"></span>
             <small class="err" data-for="to_amount"></small>
@@ -206,8 +206,8 @@
           <div class="field" id="charges-field" hidden>
             <span class="field-label">Interest and fees (optional)</span>
             <div class="charges-row">
-              <input id="interest_amount" name="interest_amount" type="text" inputmode="decimal" autocomplete="off" placeholder="Interest" aria-label="Interest">
-              <input id="fee_amount" name="fee_amount" type="text" inputmode="decimal" autocomplete="off" placeholder="Fees" aria-label="Other fees">
+              <input id="interest_amount" data-calc name="interest_amount" type="text" inputmode="decimal" autocomplete="off" placeholder="Interest" aria-label="Interest">
+              <input id="fee_amount" data-calc name="fee_amount" type="text" inputmode="decimal" autocomplete="off" placeholder="Fees" aria-label="Other fees">
             </div>
             <small class="muted">Paid from the account on top of the principal; only the principal lowers the debt. Counted as expenses in reports. <span id="charges-total"></span></small>
             <small class="err" data-for="interest_amount"></small>
@@ -215,14 +215,14 @@
           </div>
           <div class="field" id="sale-field" hidden>
             <span class="field-label">Gain / loss (optional)</span>
-            <input id="gain_loss" data-signed name="gain_loss" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 50 or -20" aria-label="Gain or loss">
+            <input id="gain_loss" data-signed data-calc name="gain_loss" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 50 or -20" aria-label="Gain or loss">
             <small class="muted">Positive for a gain, negative for a loss. The asset goes down by the principal; the account receives the principal plus the gain (or minus the loss). Counted as income or expense in reports. <span id="sale-total"></span></small>
             <small class="err" data-for="gain_loss"></small>
           </div>
           <div class="field" id="foreign-field" hidden>
             <span class="field-label">Foreign currency amount (optional)</span>
             <div class="foreign-row">
-              <input id="foreign_amount" name="foreign_amount" type="text" inputmode="decimal" autocomplete="off" placeholder="25.00" aria-label="Foreign currency amount">
+              <input id="foreign_amount" data-calc name="foreign_amount" type="text" inputmode="decimal" autocomplete="off" placeholder="25.00" aria-label="Foreign currency amount">
               <select id="foreign_currency" name="foreign_currency" aria-label="Foreign currency"><option value="">Currency…</option></select>
             </div>
             <small class="muted">What it cost or paid in another currency, e.g. a USD purchase charged to a THB card. For reference only: balances and totals use the amount above.</small>
@@ -586,6 +586,7 @@
     </div>
   </main>
   <script src="/static/router.js"></script>
+  <script src="/static/calc.js"></script>
   <script src="/static/combobox.js"></script>
   <script src="/static/transactions.js"></script>
   <script src="/static/balances.js"></script>

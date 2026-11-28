@@ -268,6 +268,15 @@
   const LIABILITY = new Set(["credit_card", "other_liability"]);
   // Minor-unit digits per currency code, from GET /api/currencies (scale).
   let currencyScale = new Map();
+  // Decimals a calculated amount (issue #206) is rounded to: the currency of
+  // the field (received amount: the destination's; foreign amount: the
+  // chosen foreign currency; otherwise the transaction's), else 2.
+  App.calcScale = (input) => {
+    let cur = $("#currency").value;
+    if (input.id === "to_amount") { const p = fxPair(); if (p) cur = p.to; }
+    else if (input.id === "foreign_amount") cur = $("#foreign_currency").value;
+    return currencyScale.get(String(cur || "").toUpperCase()) ?? 2;
+  };
 
   // Amount shown in a balance option (issues #28, #188): assets show their
   // balance, liabilities their debt as a positive amount; negatives (an
@@ -609,6 +618,7 @@
     $("#fee_amount").value = "";
     $("#gain_loss").value = "";
     $("#entire_asset_sale").checked = false;
+    Calc.reset(form);
     fxManual = false;
     fxQuote = null;
     renderConversion(null);
