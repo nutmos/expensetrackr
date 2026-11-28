@@ -58,6 +58,18 @@ td.note { color: var(--muted); min-width: 10em; max-width: 280px; overflow-wrap:
 .signed-row input { flex: 1 1 auto; min-width: 0; }
 .signed-row .sign-toggle { flex: 0 0 auto; min-width: 44px; padding: 4px 10px; font-size: 1.2rem; line-height: 1; font-weight: 600; }
 .charges-row input { flex: 1 1 50%; min-width: 0; }
+/* Calculator amount fields (issue #206): input + keypad toggle, keypad,
+   and the "= result" preview while an expression is typed. */
+.calc-row { display: flex; gap: 6px; }
+.calc-row input { flex: 1 1 auto; min-width: 0; }
+.calc-row .calc-toggle { flex: 0 0 auto; min-width: 44px; padding: 4px 8px; font-size: 0.85rem; letter-spacing: 0.02em; }
+.calc-row .calc-toggle.active { background: var(--accent); color: #fff; }
+.calc-keypad { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; max-width: 320px; margin-top: 2px; }
+.calc-keypad[hidden] { display: none; }
+.calc-keypad button { min-height: 44px; padding: 6px 0; font-size: 1.1rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.calc-keypad .calc-op { background: #eef2ff; }
+.calc-preview { font-variant-numeric: tabular-nums; min-height: 0; }
+.calc-preview:empty { display: none; }
 .inline-check { display: flex; flex-direction: row; align-items: center; gap: 6px; font-weight: 400; min-height: 38px; }
 .inline-check input { width: auto; margin: 0; }
 .foreign-amt { display: block; font-size: 0.8rem; font-weight: 400; color: var(--muted); white-space: nowrap; }

@@ -61,6 +61,14 @@ func TestEmbeddedAssets(t *testing.T) {
 			t.Errorf("transactions.js sends conversion_rates (%q); it is response-only", bad)
 		}
 	}
+	// Calculator amount fields (issue #206): calc.js loads before
+	// transactions.js (which sets App.calcScale) and the amount has a keypad.
+	if i, j := strings.Index(html, `src="/static/calc.js"`), strings.Index(html, `src="/static/transactions.js"`); i < 0 || i > j {
+		t.Error("index.html must load calc.js before transactions.js")
+	}
+	if !regexp.MustCompile(`<input id="amount" data-calc="keypad"`).MatchString(html) {
+		t.Error("#amount is not a calculator field (data-calc=\"keypad\")")
+	}
 	// Absolute asset paths, so nested page URLs (/x/<uid>/edit) load them.
 	if strings.Contains(html, `src="static/`) || strings.Contains(html, `href="static/`) {
 		t.Error("relative static path in index.html")
