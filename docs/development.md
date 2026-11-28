@@ -73,10 +73,6 @@ and never touch the development data. Without `EXPENSE_TEST_DATABASE_URL`
 (e.g. plain `go test` without the Makefile) those tests are **skipped** with a
 message; in CI (`CI=true`) a missing URL is a failure instead.
 
-Set `EXPENSE_TEST_ENCRYPTION_KEY` (e.g. `"$(openssl rand -base64 32)"`) to
-run the same tests with [encryption at rest](encryption.md) on; CI runs the
-store and API tests both ways.
-
 ## Container image (CI)
 
 [`.github/workflows/publish-image.yml`](../.github/workflows/publish-image.yml)
@@ -100,6 +96,15 @@ can `docker pull ghcr.io/nutmos/expensetrackr:latest` without logging in.
 Visibility is managed in the package settings (your profile → Packages →
 `expensetrackr` → Package settings), not by the workflow.
 
+## Branch cleanup (CI)
+
+[`.github/workflows/cleanup-branch.yml`](../.github/workflows/cleanup-branch.yml)
+deletes a pull request's branch when the pull request is **merged**. It keeps
+the branch when the pull request was closed without merging, when the branch
+is in a fork, is the default or a protected branch, or is the base of another
+open pull request. A branch that is already gone is not an error. It uses the
+built-in `GITHUB_TOKEN` (`contents: write`); no secrets are needed.
+
 ## Code layout
 
 Paths are relative to the repo root (the module root).
@@ -112,7 +117,6 @@ pkg/money/                         exact amounts: decimal string <-> integer min
   currency.go                      ISO 4217 codes -> minor-unit digits
   decimal.go                       DecimalInput (JSON string or number, kept as text)
 pkg/validate/                      ValidationError (422) and RequestError (400)
-pkg/fieldcrypt/                    AES-256-GCM encryption of single values (Keyring: Seal, Open, key rotation); docs/encryption.md
 pkg/transaction/                   transaction domain model + validation (no I/O)
   transaction.go                   Transaction, CreateInput, Validate, ParseTimestamp
   transfer.go                      ConvertTransfer: cross-currency fields of a transfer (rate lookup injected)
@@ -124,7 +128,6 @@ pkg/balance/                       balance domain model + per-type validation (n
 pkg/report/                        reports (no I/O): Catalog, BuildIncomeExpense, BuildAssetsLiabilities, BuildBalanceTransactions (docs/reports.md)
 pkg/store/                         persistence (Postgres via pgx, database/sql)
   store.go                         Store, Open, Close; errors shared by every table (ErrNotFound, ErrVersionConflict, ...), WriteOptions
-  encryption.go                    encryption at rest: WithKeyring, seal/open helpers, encrypting / re-encrypting existing rows at Open
   transactions.go                  table "transactions": Create, List, Get(ByUID), UpdateWith, DeleteWith
   effects.go                       applyBalanceEffects: move balances for a transaction write (same DB transaction)
   reports.go                       SumFlows: aggregate income / expense rows for the income & expense report

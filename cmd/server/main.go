@@ -60,14 +60,10 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == resetPasswordCmd {
 		os.Exit(runResetPassword(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
-	if len(os.Args) > 1 && os.Args[1] == generateKeyCmd {
-		os.Exit(runGenerateKey(os.Stdout, os.Stderr))
-	}
 	addr := flag.String("addr", envOr("EXPENSE_ADDR", "127.0.0.1:8080"), "listen address (env EXPENSE_ADDR); use :8080 to listen on all interfaces")
 	dbURL := flag.String("database-url", envOr("EXPENSE_DATABASE_URL", ""), "Postgres connection URL, e.g. postgres://user:pass@host:5432/db?sslmode=disable (env EXPENSE_DATABASE_URL; required)")
 	fxURL := flag.String("fx-url", envOr("EXPENSE_FX_URL", fx.DefaultBaseURL), "Frankfurter exchange-rate API base URL (env EXPENSE_FX_URL)")
 	trusted := flag.String("trusted-proxies", envOr("EXPENSE_TRUSTED_PROXIES", ""), "comma-separated IPs/CIDR ranges of reverse proxies whose X-Real-IP/X-Forwarded-For and X-Forwarded-Proto headers are trusted, e.g. the Docker network Caddy runs on (env EXPENSE_TRUSTED_PROXIES; empty = none)")
-	keyFile := flag.String("encryption-key-file", envOr("EXPENSE_ENCRYPTION_KEY_FILE", ""), keyFileUsage)
 	flag.Parse()
 
 	proxies, err := api.ParseTrustedProxies(*trusted)
@@ -78,16 +74,7 @@ func main() {
 	if *dbURL == "" {
 		log.Fatal("no database: set -database-url or EXPENSE_DATABASE_URL (make db-up starts a local Postgres; see docs/getting-started.md)")
 	}
-	keys, err := keyringFromEnv(*keyFile)
-	if err != nil {
-		log.Fatalf("encryption key: %v", err)
-	}
-	if keys.Enabled() {
-		log.Printf("encryption at rest: on (key id %s)", keys.PrimaryID())
-	} else {
-		log.Print("encryption at rest: off; set EXPENSE_ENCRYPTION_KEY to encrypt personal data in the database (docs/encryption.md)")
-	}
-	st, err := store.Open(*dbURL, store.WithKeyring(keys))
+	st, err := store.Open(*dbURL)
 	if err != nil {
 		log.Fatalf("open store: %v", err)
 	}

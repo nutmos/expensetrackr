@@ -69,13 +69,7 @@ func TestListSearch(t *testing.T) {
 	pay := searchTx(t, st, me, transaction.CreateInput{Type: "income", Amount: "3000", Currency: "THB", CategoryUID: string(salary.UID), ImportRef: &ref}, f.pay, nil)
 
 	// A renamed balance is found by its old (snapshot) and its new name.
-	// (Sealed like the store writes it, so this also runs with encryption at
-	// rest on.)
-	bullion, err := st.seal("Bullion")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.db.Exec(`UPDATE balances SET name = $1 WHERE uid = $2`, bullion, f.gold.UID); err != nil {
+	if _, err := st.db.Exec(`UPDATE balances SET name = 'Bullion' WHERE uid = $1`, f.gold.UID); err != nil {
 		t.Fatal(err)
 	}
 

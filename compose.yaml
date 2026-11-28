@@ -40,9 +40,6 @@ services:
       # "db" is the Postgres service above, on the compose network.
       EXPENSE_DATABASE_URL: postgres://expense:expense@db:5432/expense?sslmode=disable
       EXPENSE_FX_URL: ${EXPENSE_FX_URL:-https://api.frankfurter.dev/v1}
-      # Optional encryption at rest (docs/encryption.md): EXPENSE_ENCRYPTION_KEY=... make up
-      EXPENSE_ENCRYPTION_KEY: ${EXPENSE_ENCRYPTION_KEY:-}
-      EXPENSE_ENCRYPTION_OLD_KEYS: ${EXPENSE_ENCRYPTION_OLD_KEYS:-}
     ports:
       - "127.0.0.1:${EXPENSE_PORT:-8080}:8080"
     depends_on:
