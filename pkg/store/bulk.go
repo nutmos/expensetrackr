@@ -8,6 +8,7 @@ import (
 
 	"github.com/nutmos/expensetrackr/pkg/balance"
 	"github.com/nutmos/expensetrackr/pkg/transaction"
+	"github.com/nutmos/expensetrackr/pkg/validate"
 )
 
 // DuplicateImportRefError reports that a transaction with the same
@@ -77,6 +78,16 @@ func writeChecked(ctx context.Context, tx *sql.Tx, e transaction.Transaction, op
 	return fmt.Errorf("%s: %w", op, werr)
 }
 
+// isBulkItemError reports whether err, from checking or inserting one bulk
+// item, is a failure of that item (bad input: a validation error, a request
+// error or a read-only type) rather than an unexpected error. Only these are
+// reported per item; anything else aborts the whole batch.
+func isBulkItemError(err error) bool {
+	var ve *validate.ValidationError
+	var re *validate.RequestError
+	return errors.As(err, &ve) || errors.As(err, &re) || errors.Is(err, ErrReadOnly)
+}
+
 // BulkOptions controls CreateBulk.
 type BulkOptions struct {
 	// Atomic: if any item fails, nothing is written (all items still get a
@@ -127,8 +138,10 @@ type BulkOutcome struct {
 // item inside a savepoint so a failing item (e.g. currency mismatch) is
 // undone on its own. An item whose (balance_uid, import_ref) already exists,
 // in the database or earlier in the same batch, is skipped with the existing
-// uid. With opts.Atomic any failure rolls back everything; with opts.DryRun
-// everything is always rolled back. No network calls happen here: FX rates
+// uid. With opts.Atomic any item failure rolls back everything; with
+// opts.DryRun everything is always rolled back. Only bad input (see
+// isBulkItemError) is an item failure: any other error rolls back the whole
+// batch and is returned, whatever the options. No network calls happen here: FX rates
 // must already be resolved on the items.
 func (s *Store) CreateBulk(ctx context.Context, userUID string, items []BulkItem, opts BulkOptions) (BulkOutcome, error) {
 	out := BulkOutcome{Results: make([]BulkResult, len(items))}
@@ -168,9 +181,9 @@ func (s *Store) CreateBulk(ctx context.Context, userUID string, items []BulkItem
 				err = checkSaleResult(e)
 			}
 			if err != nil {
-				r.Status, r.Err = BulkFailed, err
-				failed++
-				continue
+				// The API validates items before they get here, so a failed
+				// invariant check is a bug, not bad input: abort the batch.
+				return fmt.Errorf("bulk insert: item %d: %w", i, err)
 			}
 			if e.ImportRef != nil {
 				uid, err := existingImportRef(ctx, tx, string(e.BalanceUID), *e.ImportRef)
@@ -196,6 +209,12 @@ func (s *Store) CreateBulk(ctx context.Context, userUID string, items []BulkItem
 				if errors.As(err, &dup) {
 					r.Status, r.ExistingUID = BulkSkipped, dup.ExistingUID
 					continue
+				}
+				if !isBulkItemError(err) {
+					// Unexpected (database, encryption, ...): fail the request
+					// and roll back the whole batch, even when not atomic, so
+					// a 500 never hides rows that were written.
+					return fmt.Errorf("bulk insert: item %d: %w", i, err)
 				}
 				r.Status, r.Err = BulkFailed, err
 				failed++

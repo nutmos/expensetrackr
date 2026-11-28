@@ -56,3 +56,35 @@ func TestCreateBulkStore(t *testing.T) {
 		t.Errorf("rows %d, want 1", len(list))
 	}
 }
+
+// TestCreateBulkUnexpectedItemError: an item error that is not bad input
+// (here an unknown currency, which the API rejects before the store) fails
+// the whole call and writes nothing, even when the batch is not atomic, so
+// the caller's 500 never hides rows that were committed.
+func TestCreateBulkUnexpectedItemError(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	odd := f.tx("expense", "1", "THB", f.pay, nil)
+	odd.Currency = "XXX"
+	payBefore, _ := f.amount(f.pay)
+	for _, opts := range []BulkOptions{{Atomic: false}, {Atomic: true}, {DryRun: true}} {
+		items := []BulkItem{{Tx: f.tx("expense", "10", "THB", f.pay, nil)}, {Tx: odd}, {Tx: f.tx("expense", "11", "THB", f.pay, nil)}}
+		out, err := f.st.CreateBulk(ctx, f.userUID, items, opts)
+		if err == nil || out.Committed {
+			t.Errorf("%+v: committed %v err %v, want an error", opts, out.Committed, err)
+		}
+		if now, _ := f.amount(f.pay); now != payBefore {
+			t.Errorf("%+v: balance moved %s -> %s", opts, payBefore, now)
+		}
+	}
+	// A failed invariant check is unexpected too.
+	badFX := f.tx("expense", "1", "THB", f.pay, nil)
+	rate := "1"
+	badFX.ExchangeRate = &rate
+	if _, err := f.st.CreateBulk(ctx, f.userUID, []BulkItem{{Tx: f.tx("expense", "10", "THB", f.pay, nil)}, {Tx: badFX}}, BulkOptions{}); err == nil {
+		t.Error("invariant failure: want an error")
+	}
+	if list, _ := withoutBeginning(f.st.List(ctx, f.userUID, ListFilter{})); len(list) != 0 {
+		t.Errorf("rows %d, want 0", len(list))
+	}
+}

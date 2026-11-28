@@ -164,10 +164,13 @@ confirmations use human labels instead. For example, an edit page is titled
   switching it on (or picking another asset while it is on) fills in the
   **Principal** with the asset's current balance, which can still be changed;
   saving hides the asset (see [Balances](balances.md)). The principal is what
-  the asset goes down by. An optional **Gain / loss** input follows the
-  currency (positive for a gain, negative such as `-20` for a loss), with the
-  amount received underneath. The list shows the gain or loss, and "entire
-  asset", under the amount.
+  the asset goes down by. A **Total received** input and an optional
+  **Gain / loss** input follow the currency (positive for a gain, negative
+  such as `-20` for a loss). They fill each other in (total received =
+  principal + gain / loss): type the money received to get the gain or loss,
+  or type the gain or loss to see the total. Changing the principal keeps the
+  one typed last and recomputes the other. Only the gain / loss is saved. The
+  list shows the gain or loss, and "entire asset", under the amount.
 - **Category** is required (except for transfers, where it is hidden, and
   debt repayments, where it appears as an optional "Category of interest &
   fees" only once interest or fees are filled in, and asset sales, where it

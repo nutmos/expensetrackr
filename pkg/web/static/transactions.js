@@ -189,25 +189,43 @@
   // Gain / loss typed into the form (asset sales only); a leading "-" is a loss.
   function hasGainLoss() { return /[1-9]/.test($("#gain_loss").value); }
   function isLoss() { return $("#gain_loss").value.trim().startsWith("-"); }
-  // "Received: …" line under the gain/loss input: principal + gain_loss,
-  // exact via BigInt.
-  function updateSaleTotal() {
-    const out = $("#sale-total");
-    out.textContent = "";
-    if (currentType() !== "asset_sale" || !hasGainLoss()) return;
-    const parts = [$("#amount").value, $("#gain_loss").value].map((v) => v.trim());
-    if (!/^\d+(\.\d+)?$/.test(parts[0]) || !/^-?\d+(\.\d+)?$/.test(parts[1])) return;
-    const cur = $("#currency").value.toUpperCase();
-    const scale = Math.max(currencyScale.get(cur) ?? 0, ...parts.map((v) => (v.split(".")[1] || "").length));
-    const minor = (v) => {
-      const neg = v.startsWith("-");
-      const [i, f = ""] = v.replace("-", "").split(".");
-      const n = BigInt(i + f.padEnd(scale, "0"));
-      return neg ? -n : n;
-    };
-    const total = minor(parts[0]) + minor(parts[1]);
+  // Total received and gain / loss of an asset sale fill each other in
+  // (issue #204): received = principal + gain_loss. saleFrom is the input
+  // the user typed in last; changing the principal (or the currency) keeps
+  // that one and recomputes the other. Exact via BigInt minor units.
+  let saleFrom = "gain";
+  function saleMinor(v, scale) {
+    const neg = v.startsWith("-");
+    const [i, f = ""] = v.replace("-", "").split(".");
+    const n = BigInt(i + f.padEnd(scale, "0"));
+    return neg ? -n : n;
+  }
+  function saleFormat(n, scale) { return (n < 0n ? "-" : "") + formatMinor(n < 0n ? -n : n, scale); }
+  function syncSale() {
+    const recv = $("#sale_received"), gain = $("#gain_loss"), err = $("#sale-received-err");
+    err.textContent = "";
+    if (currentType() !== "asset_sale") return;
+    const p = $("#amount").value.trim();
+    const g = gain.value.trim();
+    const r = recv.value.trim().replace(/[,\s]/g, "");
+    const principalOK = /^\d+(\.\d+)?$/.test(p);
+    const scaleOf = (...vs) => Math.max(currencyScale.get($("#currency").value.toUpperCase()) ?? 0, ...vs.map((v) => (v.split(".")[1] || "").length));
+    if (saleFrom === "received") {
+      if (!r) { if (gain.value) { gain.value = ""; fillCategories(currentType()); } return; }
+      if (!/^\d+(\.\d+)?$/.test(r)) { err.textContent = "Enter a positive amount, e.g. 1050.00."; return; }
+      if (!principalOK) return;
+      const scale = scaleOf(p, r);
+      const diff = saleMinor(r, scale) - saleMinor(p, scale);
+      const next = diff === 0n ? "" : saleFormat(diff, scale);
+      if (gain.value !== next) { gain.value = next; fillCategories(currentType()); }
+      return;
+    }
+    recv.value = "";
+    if (!principalOK || (g && !/^-?\d+(\.\d+)?$/.test(g))) return;
+    const scale = scaleOf(p, g);
+    const total = saleMinor(p, scale) + (g ? saleMinor(g, scale) : 0n);
     if (total < 0n) return; // the server explains: a loss can't exceed the principal
-    out.textContent = `Received: ${fmtAmount(formatMinor(total, scale))}${cur ? " " + cur : ""}.`;
+    recv.value = formatMinor(total, scale);
   }
   // Entire asset sale: switching it on (or picking another asset while it is
   // on) fills in the principal with the asset's current balance (what is
@@ -218,7 +236,7 @@
     const v = b ? String(b.balance ?? "").trim() : "";
     if (/^\d+(\.\d+)?$/.test(v) && /[1-9]/.test(v)) {
       $("#amount").value = v;
-      updateSaleTotal();
+      syncSale();
     }
   }
   // Interest / fees typed into the form (debt repayments only).
@@ -512,6 +530,7 @@
     $("#foreign-field").hidden = !FOREIGN_TYPES.has(t);
     $("#charges-field").hidden = t !== "repay_debt";
     $("#sale-field").hidden = t !== "asset_sale";
+    $("#received-field").hidden = t !== "asset_sale";
     $("#entire-field").hidden = t !== "asset_sale";
     // An asset sale starts from the asset: "Asset sold" and the "Entire
     // asset sale" switch come before the principal they fill in. Every other
@@ -527,7 +546,7 @@
     else $("#to-field").before($("#category-field"));
     $("#amount-label").textContent = t === "repay_debt" || t === "asset_sale" ? "Principal" : "Amount";
     updateChargesTotal();
-    updateSaleTotal();
+    syncSale();
     $("#direction-field").hidden = !SERVER_TYPES.has(t);
     updateDirectionHint();
     updateFx();
@@ -617,6 +636,8 @@
     $("#interest_amount").value = "";
     $("#fee_amount").value = "";
     $("#gain_loss").value = "";
+    $("#sale_received").value = "";
+    saleFrom = "gain";
     $("#entire_asset_sale").checked = false;
     Calc.reset(form);
     fxManual = false;
@@ -682,6 +703,7 @@
     $("#interest_amount").value = e.interest_amount || "";
     $("#fee_amount").value = e.fee_amount || "";
     $("#gain_loss").value = e.gain_loss || "";
+    saleFrom = "gain";
     $("#entire_asset_sale").checked = !!e.entire_asset_sale;
     applyType(e.balance_uid, e.to_balance_uid || "");
     fillCategories(currentType(), e.category_uid || "");
@@ -1189,12 +1211,13 @@
     $(id).addEventListener("input", () => { fillCategories(currentType()); updateChargesTotal(); });
   }
   $("#amount").addEventListener("input", updateChargesTotal);
-  $("#amount").addEventListener("input", updateSaleTotal);
-  $("#gain_loss").addEventListener("input", () => { fillCategories(currentType()); updateSaleTotal(); });
+  $("#amount").addEventListener("input", syncSale);
+  $("#gain_loss").addEventListener("input", () => { saleFrom = "gain"; fillCategories(currentType()); syncSale(); });
+  $("#sale_received").addEventListener("input", () => { saleFrom = "received"; syncSale(); });
   $("#entire_asset_sale").addEventListener("change", principalFromAsset);
   $("#to_balance_uid").addEventListener("change", principalFromAsset);
   $("#currency").addEventListener("change", updateChargesTotal);
-  $("#currency").addEventListener("change", updateSaleTotal);
+  $("#currency").addEventListener("change", syncSale);
   $("#amount").addEventListener("input", () => { if (fxManual) { const p = fxPair(); if (p) showManualRate(p); } else updateFx(); });
   // The market rate depends on the date only.
   spentDateInput.addEventListener("change", () => { updatePreview(); if (!fxManual) updateFx(); });
