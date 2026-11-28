@@ -254,12 +254,11 @@ func parseListFilter(c *gin.Context) (store.ListFilter, map[string]string) {
 	}
 
 	if raw := strings.TrimSpace(c.Query("q")); raw != "" {
-		switch {
-		case utf8.RuneCountInString(raw) > maxSearchLen:
+		if utf8.RuneCountInString(raw) > maxSearchLen {
 			fields["q"] = fmt.Sprintf("must be at most %d characters", maxSearchLen)
-		case len(store.SearchTerms(raw)) > store.MaxSearchTerms:
+		} else if len(store.SearchTerms(raw)) > store.MaxSearchTerms {
 			fields["q"] = fmt.Sprintf("must have at most %d words", store.MaxSearchTerms)
-		default:
+		} else {
 			f.Search = raw
 		}
 	}

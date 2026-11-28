@@ -94,10 +94,9 @@ func BuildBalanceTransactions(b balance.Balance, inRange, after []transaction.Tr
 	}
 
 	var current big.Int
-	switch {
-	case b.BalanceMinor != nil:
+	if b.BalanceMinor != nil {
 		current.SetInt64(*b.BalanceMinor)
-	case b.DebtMinor != nil:
+	} else if b.DebtMinor != nil {
 		current.SetInt64(-*b.DebtMinor)
 	}
 
@@ -147,11 +146,10 @@ func BuildBalanceTransactions(b balance.Balance, inRange, after []transaction.Tr
 				e.CategoryName = &n
 			}
 		}
-		switch {
-		case tx.BalanceUID == b.UID && tx.ToAccount != nil:
+		if tx.BalanceUID == b.UID && tx.ToAccount != nil {
 			n := *tx.ToAccount
 			e.Counterparty = &n
-		case tx.BalanceUID != b.UID:
+		} else if tx.BalanceUID != b.UID {
 			n := tx.Account
 			e.Counterparty = &n
 		}

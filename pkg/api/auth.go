@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nutmos/expensetrackr/pkg/auth"
+	"github.com/nutmos/expensetrackr/pkg/helper"
 	"github.com/nutmos/expensetrackr/pkg/store"
 	"github.com/nutmos/expensetrackr/pkg/user"
 
@@ -107,7 +108,7 @@ func csrfGuard(c *gin.Context) {
 		}
 	}
 	if c.Request.ContentLength != 0 && c.Request.Body != nil && c.Request.Body != http.NoBody {
-		ct := strings.ToLower(strings.TrimSpace(strings.SplitN(c.GetHeader("Content-Type"), ";", 2)[0]))
+		ct := helper.Normalize(strings.SplitN(c.GetHeader("Content-Type"), ";", 2)[0])
 		if ct != "application/json" {
 			c.AbortWithStatusJSON(http.StatusUnsupportedMediaType, errorBody{Error: "Content-Type must be application/json"})
 			return
@@ -333,7 +334,7 @@ func (s *Server) login(c *gin.Context) {
 	if !decodeBody(c, &in, true) {
 		return
 	}
-	username := strings.ToLower(strings.TrimSpace(in.Username))
+	username := helper.Normalize(in.Username)
 	key := username + "|" + c.ClientIP()
 	if s.throttled(c, key) {
 		return

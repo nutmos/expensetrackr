@@ -18,6 +18,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/nutmos/expensetrackr/pkg/helper"
 )
 
 // ErrNotFound is returned when the requested row does not exist (or belongs
@@ -141,23 +143,7 @@ func CreateTestSchema(url string) (schemaURL string, drop func() error, err erro
 		_, err = c.Exec(ctx, "DROP SCHEMA "+schema+" CASCADE")
 		return err
 	}
-	return withSearchPath(url, schema), drop, nil
-}
-
-// withSearchPath adds search_path=schema to a postgres URL or key=value
-// connection string.
-func withSearchPath(url, schema string) string {
-	if len(url) > 11 && (url[:11] == "postgres://" || (len(url) > 13 && url[:13] == "postgresql://")) {
-		sep := "?"
-		for _, r := range url {
-			if r == '?' {
-				sep = "&"
-				break
-			}
-		}
-		return url + sep + "search_path=" + schema
-	}
-	return url + " search_path=" + schema
+	return helper.WithSearchPath(url, schema), drop, nil
 }
 
 // Close closes the database.
