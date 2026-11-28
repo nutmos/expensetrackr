@@ -189,8 +189,17 @@ func (s *Store) List(ctx context.Context, userUID string, f ListFilter) ([]trans
 		p := arg(f.BalanceUID)
 		query += ` AND (balance_uid = ` + p + ` OR to_balance_uid = ` + p + `)`
 	}
-	for _, term := range SearchTerms(f.Search) {
-		query += ` AND ` + searchCond(term, arg)
+	if terms := SearchTerms(f.Search); len(terms) > 0 {
+		var enc *encryptedSearch
+		if s.keys.Enabled() {
+			var err error
+			if enc, err = s.loadEncryptedSearch(ctx, userUID); err != nil {
+				return nil, fmt.Errorf("list transactions: %w", err)
+			}
+		}
+		for _, term := range terms {
+			query += ` AND ` + searchCond(term, arg, enc)
+		}
 	}
 	if f.After != nil {
 		query += ` AND (spent_at_utc, id) < (` + arg(time.Unix(f.After.SpentAtUnix, 0).UTC()) + `, ` + arg(f.After.ID) + `)`
@@ -260,20 +269,36 @@ func searchNumber(term string) (string, bool) {
 // word that is a number also matches the amount, the amount received and the
 // foreign currency amount exactly (120 finds 120.00). Placeholders are added
 // with arg; $1 is the user uid.
-func searchCond(term string, arg func(any) string) string {
+//
+// With encryption at rest the note, the balance names and the categories are
+// ciphertext the database cannot match, so enc (non-nil exactly then) matches
+// them in Go and the condition tests the resulting ids instead.
+func searchCond(term string, arg func(any) string, enc *encryptedSearch) string {
 	p := arg("%" + likeEscaper.Replace(term) + "%")
 	like := func(col string) string { return col + ` ILIKE ` + p + ` ESCAPE '\'` }
 	conds := []string{
-		like(`note`),
-		like(`account`),
-		like(`to_account`),
 		like(`import_ref`),
 		like(`replace(type, '_', ' ')`),
 		like(`currency`),
 		like(`to_currency`),
 		like(`foreign_currency`),
-		`EXISTS (SELECT 1 FROM balances b WHERE b.user_uid = $1 AND b.uid IN (transactions.balance_uid, transactions.to_balance_uid) AND ` + like(`b.name`) + `)`,
-		`category_uid::text IN (SELECT c->>'uid' FROM user_categories uc CROSS JOIN LATERAL jsonb_array_elements(uc.categories) c WHERE uc.user_uid = $1 AND ` + like(`c->>'name'`) + `)`,
+	}
+	if enc == nil {
+		conds = append(conds,
+			like(`note`),
+			like(`account`),
+			like(`to_account`),
+			`EXISTS (SELECT 1 FROM balances b WHERE b.user_uid = $1 AND b.uid IN (transactions.balance_uid, transactions.to_balance_uid) AND `+like(`b.name`)+`)`,
+			`category_uid::text IN (SELECT c->>'uid' FROM user_categories uc CROSS JOIN LATERAL jsonb_array_elements(uc.categories) c WHERE uc.user_uid = $1 AND `+like(`c->>'name'`)+`)`,
+		)
+	} else {
+		ids, balances, cats := enc.match(term)
+		conds = append(conds,
+			`id = ANY(`+arg(ids)+`::bigint[])`,
+			`balance_uid::text = ANY(`+arg(balances)+`::text[])`,
+			`to_balance_uid::text = ANY(`+arg(balances)+`::text[])`,
+			`category_uid::text = ANY(`+arg(cats)+`::text[])`,
+		)
 	}
 	if n, ok := searchNumber(term); ok {
 		v := arg(n) + `::numeric`
