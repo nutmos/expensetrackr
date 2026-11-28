@@ -23,7 +23,7 @@ func sp(s string) *string { return &s }
 func TestValidate(t *testing.T) {
 	u, err := Input{DisplayName: "  Nat  ", Username: sp(" Nat.E "), Email: sp(" Nat@Example.COM ")}.Validate()
 	if err != nil || u.DisplayName != "Nat" || *u.Username != "nat.e" || *u.Email != "nat@example.com" ||
-		u.Preferences != (Preferences{}) || u.Status != StatusActive {
+		u.Preferences != (UserPreferences{}) || u.Status != StatusActive {
 		t.Fatalf("normalize: %+v %v", u, err)
 	}
 	// "" username/email mean none.
@@ -75,7 +75,7 @@ func TestApplyPatch(t *testing.T) {
 	}
 	in = stored.Input()
 	_ = in.ApplyPatch(patchOf(t, `{"preferences":null,"email":null,"username":""}`))
-	if u, err := in.Validate(); err != nil || u.Preferences != (Preferences{}) || u.Email != nil || u.Username != nil {
+	if u, err := in.Validate(); err != nil || u.Preferences != (UserPreferences{}) || u.Email != nil || u.Username != nil {
 		t.Errorf("null/empty clears: %+v %v", u, err)
 	}
 	in = stored.Input()

@@ -46,20 +46,20 @@ var usernameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{2,31}$`)
 
 // User is a stored profile. PasswordHash is never serialized.
 type User struct {
-	ID              int64       `json:"-"`   // internal row id; the API uses UID
-	UID             string      `json:"uid"` // server-assigned UUID v4; immutable
-	Username        *string     `json:"username"`
-	Email           *string     `json:"email"`
-	EmailVerifiedAt *string     `json:"email_verified_at"` // set by a future verification flow
-	DisplayName     string      `json:"display_name"`
-	Preferences     Preferences `json:"preferences"` // stored as one JSON object
-	Status          Status      `json:"status"`
-	HasPassword     bool        `json:"has_password"` // derived: PasswordHash != nil
-	PasswordHash    *string     `json:"-"`            // bcrypt hash (pkg/auth); NEVER exposed
-	PasswordUpdated *string     `json:"password_updated_at"`
-	LastLoginAt     *string     `json:"last_login_at"`
-	CreatedAt       string      `json:"created_at"`
-	UpdatedAt       *string     `json:"updated_at"`
+	ID              int64           `json:"-"`   // internal row id; the API uses UID
+	UID             string          `json:"uid"` // server-assigned UUID v4; immutable
+	Username        *string         `json:"username"`
+	Email           *string         `json:"email"`
+	EmailVerifiedAt *string         `json:"email_verified_at"` // set by a future verification flow
+	DisplayName     string          `json:"display_name"`
+	Preferences     UserPreferences `json:"preferences"` // stored as one JSON object
+	Status          Status          `json:"status"`
+	HasPassword     bool            `json:"has_password"` // derived: PasswordHash != nil
+	PasswordHash    *string         `json:"-"`            // bcrypt hash (pkg/auth); NEVER exposed
+	PasswordUpdated *string         `json:"password_updated_at"`
+	LastLoginAt     *string         `json:"last_login_at"`
+	CreatedAt       string          `json:"created_at"`
+	UpdatedAt       *string         `json:"updated_at"`
 }
 
 // Input is the payload for POST /api/users and PUT /api/users/:uid (and the

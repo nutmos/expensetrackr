@@ -13,23 +13,23 @@ func TestDecodePreferences(t *testing.T) {
 	tests := []struct {
 		name      string
 		in        string
-		want      Preferences
+		want      UserPreferences
 		wantField string // "" = valid
 	}{
-		{"absent", ``, Preferences{}, ""},
-		{"null", `null`, Preferences{}, ""},
-		{"empty object", `{}`, Preferences{}, ""},
-		{"base currency", `{"base_currency":"EUR"}`, Preferences{BaseCurrency: "EUR"}, ""},
-		{"normalized code", `{ "base_currency" : " jpy " }`, Preferences{BaseCurrency: "JPY"}, ""},
-		{"empty code means default", `{"base_currency":""}`, Preferences{}, ""},
-		{"unknown currency", `{"base_currency":"ABC"}`, Preferences{}, "base_currency"},
-		{"testing code excluded", `{"base_currency":"XTS"}`, Preferences{}, "base_currency"},
-		{"wrong type", `{"base_currency":42}`, Preferences{}, "base_currency"},
-		{"unknown key", `{"theme":"dark"}`, Preferences{}, "preferences"},
-		{"array", `[1,2]`, Preferences{}, "preferences"},
-		{"string", `"x"`, Preferences{}, "preferences"},
-		{"number", `42`, Preferences{}, "preferences"},
-		{"too big", `{"base_currency":"` + strings.Repeat("x", MaxPreferencesSize) + `"}`, Preferences{}, "preferences"},
+		{"absent", ``, UserPreferences{}, ""},
+		{"null", `null`, UserPreferences{}, ""},
+		{"empty object", `{}`, UserPreferences{}, ""},
+		{"base currency", `{"base_currency":"EUR"}`, UserPreferences{BaseCurrency: "EUR"}, ""},
+		{"normalized code", `{ "base_currency" : " jpy " }`, UserPreferences{BaseCurrency: "JPY"}, ""},
+		{"empty code means default", `{"base_currency":""}`, UserPreferences{}, ""},
+		{"unknown currency", `{"base_currency":"ABC"}`, UserPreferences{}, "base_currency"},
+		{"testing code excluded", `{"base_currency":"XTS"}`, UserPreferences{}, "base_currency"},
+		{"wrong type", `{"base_currency":42}`, UserPreferences{}, "base_currency"},
+		{"unknown key", `{"theme":"dark"}`, UserPreferences{}, "preferences"},
+		{"array", `[1,2]`, UserPreferences{}, "preferences"},
+		{"string", `"x"`, UserPreferences{}, "preferences"},
+		{"number", `42`, UserPreferences{}, "preferences"},
+		{"too big", `{"base_currency":"` + strings.Repeat("x", MaxPreferencesSize) + `"}`, UserPreferences{}, "preferences"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -52,14 +52,14 @@ func TestParseStoredPreferences(t *testing.T) {
 	tests := []struct {
 		name    string
 		stored  string
-		want    Preferences
+		want    UserPreferences
 		wantErr bool
 	}{
-		{"empty column", ``, Preferences{}, false},
-		{"empty object", `{}`, Preferences{}, false},
-		{"set", `{"base_currency":"SGD"}`, Preferences{BaseCurrency: "SGD"}, false},
-		{"unknown keys ignored", `{"theme":"dark","base_currency":"THB","x":{"y":[1]}}`, Preferences{BaseCurrency: "THB"}, false},
-		{"corrupt", `{bad`, Preferences{}, true},
+		{"empty column", ``, UserPreferences{}, false},
+		{"empty object", `{}`, UserPreferences{}, false},
+		{"set", `{"base_currency":"SGD"}`, UserPreferences{BaseCurrency: "SGD"}, false},
+		{"unknown keys ignored", `{"theme":"dark","base_currency":"THB","x":{"y":[1]}}`, UserPreferences{BaseCurrency: "THB"}, false},
+		{"corrupt", `{bad`, UserPreferences{}, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -74,12 +74,12 @@ func TestParseStoredPreferences(t *testing.T) {
 func TestPreferencesJSON(t *testing.T) {
 	tests := []struct {
 		name       string
-		p          Preferences
+		p          UserPreferences
 		wantAPI    string
 		wantStored string
 	}{
-		{"default", Preferences{}, `{"base_currency":"` + DefaultBaseCurrency + `"}`, `{}`},
-		{"set", Preferences{BaseCurrency: "EUR"}, `{"base_currency":"EUR"}`, `{"base_currency":"EUR"}`},
+		{"default", UserPreferences{}, `{"base_currency":"` + DefaultBaseCurrency + `"}`, `{}`},
+		{"set", UserPreferences{BaseCurrency: "EUR"}, `{"base_currency":"EUR"}`, `{"base_currency":"EUR"}`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -95,7 +95,7 @@ func TestPreferencesJSON(t *testing.T) {
 }
 
 func TestDefaultBaseCurrencySupported(t *testing.T) {
-	if _, err := (Preferences{BaseCurrency: DefaultBaseCurrency}).Normalize(); err != nil {
+	if _, err := (UserPreferences{BaseCurrency: DefaultBaseCurrency}).Normalize(); err != nil {
 		t.Fatalf("default %s is not a supported currency: %v", DefaultBaseCurrency, err)
 	}
 }
