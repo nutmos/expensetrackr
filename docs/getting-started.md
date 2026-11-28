@@ -85,7 +85,6 @@ On start the server creates or upgrades the schema (see
 | `-addr` | `EXPENSE_ADDR` | `127.0.0.1:8080`   | Keep on 127.0.0.1 unless it is behind TLS (`:8080` would expose it on all interfaces) |
 | `-database-url` | `EXPENSE_DATABASE_URL` | none (required) | Postgres URL (`postgres://user:pass@host:5432/db?sslmode=…`) or key=value string. The server exits with a clear message if it is missing or unreachable; the password is never logged |
 | `-fx-url` | `EXPENSE_FX_URL` | `https://api.frankfurter.dev/v1` | Frankfurter exchange-rate API for cross-currency transfers ([docs/exchange-rates.md](exchange-rates.md)) |
-| `-encryption-key-file` | `EXPENSE_ENCRYPTION_KEY_FILE` | (none) | File holding the key that encrypts personal data in the database; or put the key itself in `EXPENSE_ENCRYPTION_KEY` (no flag, so it stays out of process lists). Off when neither is set. Keep a copy of the key: see [Encryption at rest](encryption.md) |
 | `-trusted-proxies` | `EXPENSE_TRUSTED_PROXIES` | (none) | Comma-separated IPs/CIDR ranges of reverse proxies (e.g. Caddy) whose `X-Real-IP`/`X-Forwarded-For` and `X-Forwarded-Proto` headers are believed, for the client address (login throttling) and the session cookie's `Secure` flag ([docs/deploy.md](deploy.md)) |
 
 Set `GIN_MODE=release` to silence Gin's debug output.
