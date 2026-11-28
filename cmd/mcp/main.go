@@ -16,15 +16,9 @@ import (
 	"syscall"
 	_ "time/tzdata" // TZ=Asia/Bangkok works in the zoneinfo-less Docker image (date filters)
 
+	"github.com/nutmos/expensetrackr/pkg/helper"
 	"github.com/nutmos/expensetrackr/pkg/mcp"
 )
-
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
 
 func main() {
 	// stdout carries the protocol; everything else goes to stderr.
@@ -32,7 +26,7 @@ func main() {
 	log.SetPrefix("expense-mcp: ")
 	log.SetFlags(0)
 
-	baseURL := flag.String("url", envOr("EXPENSETRACKR_URL", "http://127.0.0.1:8080"), "expensetrackr server URL (env EXPENSETRACKR_URL)")
+	baseURL := flag.String("url", helper.EnvOr("EXPENSETRACKR_URL", "http://127.0.0.1:8080"), "expensetrackr server URL (env EXPENSETRACKR_URL)")
 	readOnly := flag.Bool("read-only", os.Getenv("EXPENSETRACKR_MCP_READ_ONLY") == "1", "expose only the read tools (env EXPENSETRACKR_MCP_READ_ONLY=1)")
 	version := flag.Bool("version", false, "print the version and exit")
 	flag.Usage = func() {

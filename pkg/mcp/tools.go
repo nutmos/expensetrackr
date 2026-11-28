@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/nutmos/expensetrackr/pkg/common_type"
+	"github.com/nutmos/expensetrackr/pkg/helper"
 )
 
 // Tool is one MCP tool.
@@ -107,18 +109,16 @@ func (d *decimal) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
-
 // pathUID checks a uid before it is put into a URL path.
 func pathUID(name, uid string) (string, error) {
 	uid = strings.TrimSpace(uid)
 	if uid == "" {
 		return "", fmt.Errorf("%s is required", name)
 	}
-	if !uuidRe.MatchString(uid) {
-		return "", fmt.Errorf("%s must be a UUID (a uid from a list or get tool), got %q", name, uid)
+	if u := common_type.NormalizeUID(uid); u.Valid() {
+		return u.String(), nil
 	}
-	return strings.ToLower(uid), nil
+	return "", fmt.Errorf("%s must be a UUID (a uid from a list or get tool), got %q", name, uid)
 }
 
 func setIf(q url.Values, key, val string) {
@@ -559,7 +559,7 @@ func mergeUpdate(cur map[string]any, changes map[string]string) (map[string]stri
 	for k, v := range changes {
 		body[k] = v
 	}
-	typ := strings.ToLower(strings.TrimSpace(body["type"]))
+	typ := helper.Normalize(body["type"])
 	if typ != "balance_adjustment" && typ != "beginning_balance" {
 		delete(body, "adjustment_direction") // let the API reject an explicit one
 		if v, ok := changes["adjustment_direction"]; ok {

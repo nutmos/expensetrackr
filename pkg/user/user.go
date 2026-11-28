@@ -20,6 +20,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/nutmos/expensetrackr/pkg/helper"
 	"github.com/nutmos/expensetrackr/pkg/validate"
 )
 
@@ -84,7 +85,7 @@ type Input struct {
 // NormalizeEmail trims and lowercases an address and checks it is a bare
 // addr-spec (no display name). "" means "no email".
 func NormalizeEmail(s string) (string, string) {
-	e := strings.ToLower(strings.TrimSpace(s))
+	e := helper.Normalize(s)
 	if e == "" {
 		return "", ""
 	}
@@ -100,7 +101,7 @@ func NormalizeEmail(s string) (string, string) {
 
 // NormalizeUsername lowercases and checks a username. "" means "none".
 func NormalizeUsername(s string) (string, string) {
-	u := strings.ToLower(strings.TrimSpace(s))
+	u := helper.Normalize(s)
 	if u == "" {
 		return "", ""
 	}

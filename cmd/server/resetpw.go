@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/nutmos/expensetrackr/pkg/auth"
+	"github.com/nutmos/expensetrackr/pkg/helper"
 	"github.com/nutmos/expensetrackr/pkg/store"
 	"github.com/nutmos/expensetrackr/pkg/user"
 )
@@ -32,7 +33,7 @@ const resetPasswordTimeout = time.Minute
 func runResetPassword(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet(resetPasswordCmd, flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbURL := fs.String("database-url", envOr("EXPENSE_DATABASE_URL", ""), "Postgres connection URL (env EXPENSE_DATABASE_URL; required)")
+	dbURL := fs.String("database-url", helper.EnvOr("EXPENSE_DATABASE_URL", ""), "Postgres connection URL (env EXPENSE_DATABASE_URL; required)")
 	fromStdin := fs.Bool("password-stdin", false, "read the new password from the first line of standard input instead of generating one")
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, `Usage: expense-server %s [flags] USERNAME
@@ -56,7 +57,7 @@ Flags:
 		fs.Usage()
 		return 2
 	}
-	username := strings.ToLower(strings.TrimSpace(fs.Arg(0)))
+	username := helper.Normalize(fs.Arg(0))
 	if *dbURL == "" {
 		fmt.Fprintln(stderr, "reset-password: no database: set -database-url or EXPENSE_DATABASE_URL")
 		return 2

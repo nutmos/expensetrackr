@@ -14,16 +14,10 @@ import (
 
 	"github.com/nutmos/expensetrackr/pkg/api"
 	"github.com/nutmos/expensetrackr/pkg/fx"
+	"github.com/nutmos/expensetrackr/pkg/helper"
 	"github.com/nutmos/expensetrackr/pkg/store"
 	"github.com/nutmos/expensetrackr/pkg/web"
 )
-
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
 
 // shutdownTimeout bounds how long in-flight requests get to finish on SIGINT/SIGTERM.
 const shutdownTimeout = 5 * time.Second
@@ -60,10 +54,10 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == resetPasswordCmd {
 		os.Exit(runResetPassword(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
-	addr := flag.String("addr", envOr("EXPENSE_ADDR", "127.0.0.1:8080"), "listen address (env EXPENSE_ADDR); use :8080 to listen on all interfaces")
-	dbURL := flag.String("database-url", envOr("EXPENSE_DATABASE_URL", ""), "Postgres connection URL, e.g. postgres://user:pass@host:5432/db?sslmode=disable (env EXPENSE_DATABASE_URL; required)")
-	fxURL := flag.String("fx-url", envOr("EXPENSE_FX_URL", fx.DefaultBaseURL), "Frankfurter exchange-rate API base URL (env EXPENSE_FX_URL)")
-	trusted := flag.String("trusted-proxies", envOr("EXPENSE_TRUSTED_PROXIES", ""), "comma-separated IPs/CIDR ranges of reverse proxies whose X-Real-IP/X-Forwarded-For and X-Forwarded-Proto headers are trusted, e.g. the Docker network Caddy runs on (env EXPENSE_TRUSTED_PROXIES; empty = none)")
+	addr := flag.String("addr", helper.EnvOr("EXPENSE_ADDR", "127.0.0.1:8080"), "listen address (env EXPENSE_ADDR); use :8080 to listen on all interfaces")
+	dbURL := flag.String("database-url", helper.EnvOr("EXPENSE_DATABASE_URL", ""), "Postgres connection URL, e.g. postgres://user:pass@host:5432/db?sslmode=disable (env EXPENSE_DATABASE_URL; required)")
+	fxURL := flag.String("fx-url", helper.EnvOr("EXPENSE_FX_URL", fx.DefaultBaseURL), "Frankfurter exchange-rate API base URL (env EXPENSE_FX_URL)")
+	trusted := flag.String("trusted-proxies", helper.EnvOr("EXPENSE_TRUSTED_PROXIES", ""), "comma-separated IPs/CIDR ranges of reverse proxies whose X-Real-IP/X-Forwarded-For and X-Forwarded-Proto headers are trusted, e.g. the Docker network Caddy runs on (env EXPENSE_TRUSTED_PROXIES; empty = none)")
 	flag.Parse()
 
 	proxies, err := api.ParseTrustedProxies(*trusted)

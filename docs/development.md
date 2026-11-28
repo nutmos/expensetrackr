@@ -139,7 +139,7 @@ pkg/money/                         exact amounts: decimal string <-> integer min
   currency.go                      ISO 4217 codes -> minor-unit digits
   decimal.go                       DecimalInput (JSON string or number, kept as text)
 pkg/validate/                      ValidationError (422) and RequestError (400)
-pkg/helper/                        small shared helpers with no project deps (WithSearchPath)
+pkg/helper/                        small shared helpers with no project deps (WithSearchPath, Normalize, EnvOr)
 pkg/transaction/                   transaction domain model + validation (no I/O)
   transaction.go                   Transaction, CreateInput, Validate, ParseTimestamp
   transfer.go                      ConvertTransfer: cross-currency fields of a transfer (rate lookup injected)

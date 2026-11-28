@@ -4,9 +4,8 @@
 package category
 
 import (
-	"strings"
-
 	"github.com/nutmos/expensetrackr/pkg/common_type"
+	"github.com/nutmos/expensetrackr/pkg/helper"
 )
 
 // Type is the kind of category.
@@ -26,7 +25,7 @@ func (t Type) Valid() bool { return t == TypeExpense || t == TypeIncome }
 
 // ParseType normalizes s; ok is false for unknown or empty values.
 func ParseType(s string) (Type, bool) {
-	t := Type(strings.ToLower(strings.TrimSpace(s)))
+	t := Type(helper.Normalize(s))
 	return t, t.Valid()
 }
 

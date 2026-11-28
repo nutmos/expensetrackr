@@ -12,6 +12,7 @@ import (
 	"github.com/nutmos/expensetrackr/pkg/balance"
 	"github.com/nutmos/expensetrackr/pkg/category"
 	"github.com/nutmos/expensetrackr/pkg/common_type"
+	"github.com/nutmos/expensetrackr/pkg/helper"
 	"github.com/nutmos/expensetrackr/pkg/money"
 )
 
@@ -30,7 +31,7 @@ func ParseTimestamp(s string) (time.Time, error) {
 }
 
 // normalizeType trims and lower-cases a type as sent by a client.
-func normalizeType(s string) Type { return Type(strings.ToLower(strings.TrimSpace(s))) }
+func normalizeType(s string) Type { return Type(helper.Normalize(s)) }
 
 // fieldError is a ValidationError for a single field.
 func fieldError(field, msg string) error {
@@ -306,7 +307,7 @@ func (in CreateInput) validate(fixed Type) (Transaction, error) {
 
 	dir := ""
 	if in.AdjustmentDirection != nil {
-		dir = strings.ToLower(strings.TrimSpace(*in.AdjustmentDirection))
+		dir = helper.Normalize(*in.AdjustmentDirection)
 	}
 	if !tt.HasDirection() || !okType {
 		if dir != "" {

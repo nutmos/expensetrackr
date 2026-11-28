@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/nutmos/expensetrackr/pkg/common_type"
+	"github.com/nutmos/expensetrackr/pkg/helper"
 	"github.com/nutmos/expensetrackr/pkg/money"
 	"github.com/nutmos/expensetrackr/pkg/validate"
 )
@@ -52,7 +53,7 @@ func provided(d *money.DecimalInput) bool {
 }
 
 // normalizeType trims and lower-cases a type as sent by a client.
-func normalizeType(s string) Type { return Type(strings.ToLower(strings.TrimSpace(s))) }
+func normalizeType(s string) Type { return Type(helper.Normalize(s)) }
 
 // Validate checks the input and returns a normalized Balance (without ID and
 // timestamps), or a *validate.ValidationError listing every invalid field.

@@ -7,6 +7,7 @@ import (
 
 	"github.com/nutmos/expensetrackr/pkg/balance"
 	"github.com/nutmos/expensetrackr/pkg/common_type"
+	"github.com/nutmos/expensetrackr/pkg/helper"
 	"github.com/nutmos/expensetrackr/pkg/store"
 
 	"github.com/gin-gonic/gin"
@@ -64,7 +65,7 @@ func (s *Server) createBalance(c *gin.Context) {
 }
 
 func (s *Server) listBalances(c *gin.Context) {
-	typ := balance.Type(strings.ToLower(strings.TrimSpace(c.Query("type"))))
+	typ := balance.Type(helper.Normalize(c.Query("type")))
 	payableOnly := queryFlag(c, "payable")
 	includeHidden := queryFlag(c, "include_hidden")
 	if typ != "" && payableOnly {
