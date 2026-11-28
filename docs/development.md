@@ -100,6 +100,15 @@ can `docker pull ghcr.io/nutmos/expensetrackr:latest` without logging in.
 Visibility is managed in the package settings (your profile → Packages →
 `expensetrackr` → Package settings), not by the workflow.
 
+## Branch cleanup (CI)
+
+[`.github/workflows/cleanup-branch.yml`](../.github/workflows/cleanup-branch.yml)
+deletes a pull request's branch when the pull request is **merged**. It keeps
+the branch when the pull request was closed without merging, when the branch
+is in a fork, is the default or a protected branch, or is the base of another
+open pull request. A branch that is already gone is not an error. It uses the
+built-in `GITHUB_TOKEN` (`contents: write`); no secrets are needed.
+
 ## Code layout
 
 Paths are relative to the repo root (the module root).
