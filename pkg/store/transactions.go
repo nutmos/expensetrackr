@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"math/big"
 	"strconv"
 	"strings"
 	"time"
@@ -189,14 +190,28 @@ func (s *Store) List(ctx context.Context, userUID string, f ListFilter) ([]trans
 		p := arg(f.BalanceUID)
 		query += ` AND (balance_uid = ` + p + ` OR to_balance_uid = ` + p + `)`
 	}
-	for _, term := range SearchTerms(f.Search) {
-		query += ` AND ` + searchCond(term, arg)
+	// Search: in SQL, unless personal data is stored encrypted (#192), when
+	// the note and the balance and category names can only be matched after
+	// decryption; the rows are then filtered here, below (matcher), with the
+	// same rules, and LIMIT is applied while filtering.
+	terms := SearchTerms(f.Search)
+	var matcher *searchMatcher
+	if len(terms) > 0 && s.keys.Enabled() {
+		m, err := s.newSearchMatcher(ctx, userUID, terms)
+		if err != nil {
+			return nil, err
+		}
+		matcher = m
+	} else {
+		for _, term := range terms {
+			query += ` AND ` + searchCond(term, arg)
+		}
 	}
 	if f.After != nil {
 		query += ` AND (spent_at_utc, id) < (` + arg(time.Unix(f.After.SpentAtUnix, 0).UTC()) + `, ` + arg(f.After.ID) + `)`
 	}
 	query += ` ORDER BY spent_at_utc DESC, id DESC`
-	if f.Limit > 0 {
+	if f.Limit > 0 && matcher == nil {
 		query += ` LIMIT ` + arg(f.Limit)
 	}
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -211,9 +226,101 @@ func (s *Store) List(ctx context.Context, userUID string, f ListFilter) ([]trans
 		if err != nil {
 			return nil, err
 		}
+		if matcher != nil && !matcher.match(e) {
+			continue
+		}
 		out = append(out, e)
+		if matcher != nil && f.Limit > 0 && len(out) >= f.Limit {
+			break
+		}
 	}
 	return out, rows.Err()
+}
+
+// searchMatcher is searchCond evaluated in Go, on decrypted rows: used when
+// personal data is stored encrypted. Every term must match one of the same
+// fields, case-insensitively; a number term also matches an amount exactly.
+type searchMatcher struct {
+	terms    []string          // lower case
+	numbers  []*big.Rat        // per term: its value if it is a number, else nil
+	balances map[string]string // balance uid -> current name, lower case
+	cats     map[string]string // category uid -> name, lower case
+}
+
+func (s *Store) newSearchMatcher(ctx context.Context, userUID string, terms []string) (*searchMatcher, error) {
+	m := &searchMatcher{balances: map[string]string{}, cats: map[string]string{}}
+	for _, t := range terms {
+		m.terms = append(m.terms, strings.ToLower(t))
+		var r *big.Rat
+		if n, ok := searchNumber(t); ok {
+			r, _ = new(big.Rat).SetString(strings.TrimSuffix(n, "."))
+		}
+		m.numbers = append(m.numbers, r)
+	}
+	bals, err := s.ListBalances(ctx, userUID, "")
+	if err != nil {
+		return nil, err
+	}
+	for _, b := range bals {
+		m.balances[string(b.UID)] = strings.ToLower(b.Name)
+	}
+	cats, _, err := s.readUserCategories(ctx, s.db, userUID)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range cats {
+		m.cats[string(c.UID)] = strings.ToLower(c.Name)
+	}
+	return m, nil
+}
+
+func (m *searchMatcher) match(e transaction.Transaction) bool {
+	str := func(p *string) string {
+		if p == nil {
+			return ""
+		}
+		return *p
+	}
+	var to, cat string
+	if e.ToBalanceUID != nil {
+		to = string(*e.ToBalanceUID)
+	}
+	if e.CategoryUID != nil {
+		cat = m.cats[string(*e.CategoryUID)]
+	}
+	fields := []string{
+		strings.ToLower(e.Note), strings.ToLower(e.Account), strings.ToLower(str(e.ToAccount)),
+		strings.ToLower(str(e.ImportRef)), strings.ReplaceAll(string(e.Type), "_", " "),
+		strings.ToLower(e.Currency), strings.ToLower(str(e.ToCurrency)), strings.ToLower(str(e.ForeignCurrency)),
+		m.balances[string(e.BalanceUID)], m.balances[to], cat,
+	}
+	amounts := []*string{&e.Amount, e.ToAmount, e.ForeignAmount}
+	for i, t := range m.terms {
+		if !m.matchTerm(t, m.numbers[i], fields, amounts) {
+			return false
+		}
+	}
+	return true
+}
+
+func (m *searchMatcher) matchTerm(t string, n *big.Rat, fields []string, amounts []*string) bool {
+	for _, f := range fields {
+		if f != "" && strings.Contains(f, t) {
+			return true
+		}
+	}
+	if n == nil {
+		return false
+	}
+	for _, a := range amounts {
+		if a == nil {
+			continue
+		}
+		if v, ok := new(big.Rat).SetString(*a); ok && v.Cmp(n) == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // MaxSearchTerms is the most words a search may have.

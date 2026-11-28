@@ -97,6 +97,10 @@ the server recognises a missing or wrong key at startup.
 
 Because names are encrypted, the balance list is sorted by name in the
 server rather than in SQL (type first, then name ignoring case).
+For the same reason, a transaction search (`q`) is matched in the server
+after decryption, with the same rules as without encryption: the other
+filters, the order and paging stay in SQL, but every row they select is read
+and decrypted to be matched, so a search is slower on a large history.
 
 ## Change the key (rotation)
 
