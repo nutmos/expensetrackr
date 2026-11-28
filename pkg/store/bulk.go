@@ -198,7 +198,7 @@ func (s *Store) CreateBulk(ctx context.Context, userUID string, items []BulkItem
 			if _, err := tx.ExecContext(ctx, `SAVEPOINT bulk_item`); err != nil {
 				return fmt.Errorf("bulk insert: %w", err)
 			}
-			next, err := s.insertTx(ctx, tx, userUID, e, now)
+			next, err := insertTx(ctx, tx, userUID, e, now)
 			if err != nil {
 				for _, q := range []string{`ROLLBACK TO bulk_item`, `RELEASE bulk_item`} {
 					if _, rerr := tx.ExecContext(ctx, q); rerr != nil {
@@ -232,7 +232,7 @@ func (s *Store) CreateBulk(ctx context.Context, userUID string, items []BulkItem
 			}
 		}
 		for _, uid := range touched {
-			b, err := s.balanceByUIDTx(ctx, tx, userUID, uid)
+			b, err := balanceByUIDTx(ctx, tx, userUID, uid)
 			if errors.Is(err, ErrNotFound) {
 				continue
 			}

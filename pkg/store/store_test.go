@@ -316,3 +316,24 @@ func TestUpdateNotFound(t *testing.T) {
 		t.Errorf("got %v, want ErrNotFound", err)
 	}
 }
+
+// TestOpenRefusesEncryptedDatabase: a database encrypted at rest by an
+// earlier build (encryption_state has a row) is refused, not read as plain
+// text; an unencrypted v10 database opens normally.
+func TestOpenRefusesEncryptedDatabase(t *testing.T) {
+	url := testURL(t)
+	st, err := Open(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if SchemaVersion != 10 {
+		t.Errorf("SchemaVersion %d, want 10 (v10 must stay so existing databases open)", SchemaVersion)
+	}
+	if _, err := st.db.Exec(`INSERT INTO encryption_state (id, key_id, check_value, updated_at) VALUES (1, 'abcd1234', 'enc1:x', now())`); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	if _, err := Open(url); !errors.Is(err, ErrEncryptedDatabase) {
+		t.Fatalf("Open: %v, want ErrEncryptedDatabase", err)
+	}
+}

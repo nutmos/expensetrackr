@@ -40,7 +40,7 @@ func (s *Store) Create(ctx context.Context, userUID string, e *transaction.Trans
 	var next transaction.Transaction
 	err := s.inTx(ctx, "insert transaction", func(tx *sql.Tx) error {
 		var err error
-		next, err = s.insertTx(ctx, tx, userUID, *e, s.nowRFC3339())
+		next, err = insertTx(ctx, tx, userUID, *e, s.nowRFC3339())
 		return err
 	})
 	if err != nil {
@@ -54,7 +54,7 @@ func (s *Store) Create(ctx context.Context, userUID string, e *transaction.Trans
 // tx, applies its balance effects and moves the beginning balances of its
 // balances back to its date when it is earlier. A duplicate (balance_uid, import_ref) is a
 // *DuplicateImportRefError.
-func (s *Store) insertTx(ctx context.Context, tx *sql.Tx, userUID string, e transaction.Transaction, now string) (transaction.Transaction, error) {
+func insertTx(ctx context.Context, tx *sql.Tx, userUID string, e transaction.Transaction, now string) (transaction.Transaction, error) {
 	scale, ok := money.MinorUnits(e.Currency)
 	if !ok {
 		return e, fmt.Errorf("unknown currency %q", e.Currency)
@@ -65,10 +65,6 @@ func (s *Store) insertTx(ctx context.Context, tx *sql.Tx, userUID string, e tran
 	}
 	next := e
 	next.UID, next.CreatedAt, next.UpdatedAt, next.Version, next.AdjustsBalances = uid, now, nil, 1, true
-	account, toAccount, note, err := s.sealTxText(next)
-	if err != nil {
-		return e, err
-	}
 	var id int64
 	err = writeChecked(ctx, tx, next, "insert transaction", func() error {
 		return tx.QueryRowContext(ctx,
@@ -78,14 +74,14 @@ func (s *Store) insertTx(ctx context.Context, tx *sql.Tx, userUID string, e tran
 			                           gain_loss_minor, entire_asset_sale)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 1, true, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
 			 RETURNING id`,
-			append(append(append(append([]any{next.UID, userUID, string(next.Type), next.AmountMinor, scale, next.Currency, next.BalanceUID, account, next.ToBalanceUID, toAccount, next.CategoryUID, next.SpentAt, spentUTC(next), note, next.CreatedAt},
+			append(append(append(append([]any{next.UID, userUID, string(next.Type), next.AmountMinor, scale, next.Currency, next.BalanceUID, next.Account, next.ToBalanceUID, next.ToAccount, next.CategoryUID, next.SpentAt, spentUTC(next), next.Note, next.CreatedAt},
 				fxArgs(next)...), next.ImportRef), foreignArgs(next)...), next.InterestAmountMinor, next.FeeAmountMinor, next.GainLossMinor, next.EntireAssetSale)...).Scan(&id)
 	})
 	if err != nil {
 		return e, err
 	}
 	next.ID = id
-	if err := s.applyBalanceEffects(ctx, tx, userUID, nil, &next, now); err != nil {
+	if err := applyBalanceEffects(ctx, tx, userUID, nil, &next, now); err != nil {
 		return e, err
 	}
 	if err := hideSoldAsset(ctx, tx, userUID, next, now); err != nil {
@@ -207,7 +203,7 @@ func (s *Store) List(ctx context.Context, userUID string, f ListFilter) ([]trans
 
 	out := []transaction.Transaction{}
 	for rows.Next() {
-		e, err := s.scan(rows)
+		e, err := scan(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -311,7 +307,7 @@ func (s *Store) ListPage(ctx context.Context, userUID string, f ListFilter) (ite
 // (including when the id belongs to another user).
 func (s *Store) Get(ctx context.Context, userUID string, id int64) (transaction.Transaction, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT `+selectCols+` FROM transactions WHERE id = $1 AND user_uid = $2`, id, userUID)
-	e, err := s.scan(row)
+	e, err := scan(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return transaction.Transaction{}, ErrNotFound
 	}
@@ -322,7 +318,7 @@ func (s *Store) Get(ctx context.Context, userUID string, id int64) (transaction.
 // ErrNotFound (including when the uid belongs to another user).
 func (s *Store) GetByUID(ctx context.Context, userUID string, uid common_type.UID) (transaction.Transaction, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT `+selectCols+` FROM transactions WHERE uid = $1 AND user_uid = $2`, uid, userUID)
-	e, err := s.scan(row)
+	e, err := scan(row)
 	if errors.Is(err, sql.ErrNoRows) || isInvalidText(err) { // not a UUID: no such transaction
 		return transaction.Transaction{}, ErrNotFound
 	}
@@ -351,12 +347,12 @@ func (s *Store) UpdateWith(ctx context.Context, userUID string, id int64, opts W
 		var typ, buid string
 		if err := tx.QueryRowContext(ctx, `SELECT type, balance_uid FROM transactions WHERE id = $1 AND user_uid = $2`, id, userUID).Scan(&typ, &buid); err == nil &&
 			typ == string(transaction.BeginningBalance) {
-			if _, err := s.lockBalanceUIDs(ctx, tx, userUID, []string{buid}); err != nil {
+			if _, err := lockBalanceUIDs(ctx, tx, userUID, []string{buid}); err != nil {
 				return err
 			}
 		}
 
-		cur, err := s.scan(tx.QueryRowContext(ctx, `SELECT `+selectCols+` FROM transactions WHERE id = $1 AND user_uid = $2 FOR UPDATE`, id, userUID))
+		cur, err := scan(tx.QueryRowContext(ctx, `SELECT `+selectCols+` FROM transactions WHERE id = $1 AND user_uid = $2 FOR UPDATE`, id, userUID))
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -409,10 +405,6 @@ func (s *Store) UpdateWith(ctx context.Context, userUID string, id int64, opts W
 		next.ID, next.UID, next.CreatedAt, next.UpdatedAt = cur.ID, cur.UID, cur.CreatedAt, &now
 		next.Version, next.AdjustsBalances = cur.Version+1, cur.AdjustsBalances
 
-		account, toAccount, note, err := s.sealTxText(next)
-		if err != nil {
-			return err
-		}
 		var n int64
 		err = writeChecked(ctx, tx, next, "update transaction", func() error {
 			res, err := tx.ExecContext(ctx,
@@ -423,8 +415,8 @@ func (s *Store) UpdateWith(ctx context.Context, userUID string, id int64, opts W
 			        interest_amount_minor = $25, fee_amount_minor = $26, adjustment_direction = $27,
 			        gain_loss_minor = $28, entire_asset_sale = $29
 			 WHERE id = $30 AND version = $31`,
-				append(append(append(append([]any{string(next.Type), next.AmountMinor, scale, next.Currency, next.BalanceUID, account, next.ToBalanceUID, toAccount, next.CategoryUID,
-					next.SpentAt, spentUTC(next), note, now, next.Version}, fxArgs(next)...), next.ImportRef), foreignArgs(next)...), next.InterestAmountMinor, next.FeeAmountMinor, directionArg(next),
+				append(append(append(append([]any{string(next.Type), next.AmountMinor, scale, next.Currency, next.BalanceUID, next.Account, next.ToBalanceUID, next.ToAccount, next.CategoryUID,
+					next.SpentAt, spentUTC(next), next.Note, now, next.Version}, fxArgs(next)...), next.ImportRef), foreignArgs(next)...), next.InterestAmountMinor, next.FeeAmountMinor, directionArg(next),
 					next.GainLossMinor, next.EntireAssetSale, id, cur.Version)...)
 			if err != nil {
 				return err
@@ -438,7 +430,7 @@ func (s *Store) UpdateWith(ctx context.Context, userUID string, id int64, opts W
 		if n != 1 {
 			return ErrVersionConflict
 		}
-		if err := s.applyBalanceEffects(ctx, tx, userUID, &cur, &next, now); err != nil {
+		if err := applyBalanceEffects(ctx, tx, userUID, &cur, &next, now); err != nil {
 			return err
 		}
 		if err := hideSoldAsset(ctx, tx, userUID, next, now); err != nil {
@@ -464,7 +456,7 @@ func (s *Store) UpdateWith(ctx context.Context, userUID string, id int64, opts W
 func (s *Store) DeleteWith(ctx context.Context, userUID string, id int64, opts WriteOptions) error {
 	return s.inTx(ctx, "delete transaction", func(tx *sql.Tx) error {
 
-		cur, err := s.scan(tx.QueryRowContext(ctx, `SELECT `+selectCols+` FROM transactions WHERE id = $1 AND user_uid = $2 FOR UPDATE`, id, userUID))
+		cur, err := scan(tx.QueryRowContext(ctx, `SELECT `+selectCols+` FROM transactions WHERE id = $1 AND user_uid = $2 FOR UPDATE`, id, userUID))
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -480,7 +472,7 @@ func (s *Store) DeleteWith(ctx context.Context, userUID string, id int64, opts W
 		if _, err := tx.ExecContext(ctx, `DELETE FROM transactions WHERE id = $1`, id); err != nil {
 			return fmt.Errorf("delete transaction: %w", err)
 		}
-		if err := s.applyBalanceEffects(ctx, tx, userUID, &cur, nil, s.nowRFC3339()); err != nil {
+		if err := applyBalanceEffects(ctx, tx, userUID, &cur, nil, s.nowRFC3339()); err != nil {
 			return err
 		}
 		return nil
@@ -607,7 +599,7 @@ func spentUTC(e transaction.Transaction) time.Time {
 	return e.SpentTime.Truncate(time.Second).UTC()
 }
 
-func (s *Store) scan(r scanner) (transaction.Transaction, error) {
+func scan(r scanner) (transaction.Transaction, error) {
 	var e transaction.Transaction
 	var scale int
 	var created time.Time
@@ -627,18 +619,15 @@ func (s *Store) scan(r scanner) (transaction.Transaction, error) {
 		}
 		return e, fmt.Errorf("scan transaction: %w", err)
 	}
-	if toName.Valid {
-		e.ToAccount = &toName.String
-	}
-	if err := s.openTxText(&e); err != nil {
-		return e, fmt.Errorf("scan transaction %d: %w", e.ID, err)
-	}
 	e.Amount = money.FormatAmount(e.AmountMinor, scale)
 	e.CreatedAt, e.UpdatedAt = ts(created), nullTS(updated)
 	e.Type = transaction.Type(typ)
 	if toUID.Valid {
 		to := transaction.UID(toUID.String)
 		e.ToBalanceUID = &to
+	}
+	if toName.Valid {
+		e.ToAccount = &toName.String
 	}
 	if catUID.Valid {
 		cat := transaction.UID(catUID.String)
@@ -686,28 +675,4 @@ func (s *Store) scan(r scanner) (transaction.Transaction, error) {
 		e.SpentTime = t
 	}
 	return e, nil
-}
-
-// sealTxText returns the stored (encrypted) account, to_account and note of
-// e; to_account is nil for NULL.
-func (s *Store) sealTxText(e transaction.Transaction) (account string, toAccount any, note string, err error) {
-	if account, err = s.seal(e.Account); err != nil {
-		return
-	}
-	if toAccount, err = s.sealPtr(e.ToAccount); err != nil {
-		return
-	}
-	note, err = s.seal(e.Note)
-	return
-}
-
-// openTxText decrypts e's account, to_account and note in place.
-func (s *Store) openTxText(e *transaction.Transaction) error {
-	if err := s.open(&e.Account, "account"); err != nil {
-		return err
-	}
-	if err := s.open(e.ToAccount, "to_account"); err != nil {
-		return err
-	}
-	return s.open(&e.Note, "note")
 }
