@@ -46,9 +46,6 @@ match the Go JSON shapes.
   row per user (issue #34) and concurrency.
 - [Authentication](auth.md): username/password login, sessions,
   first-run setup, public vs protected routes, CSRF and throttling.
-- [Encryption at rest](encryption.md): AES-256-GCM encryption of notes,
-  names, descriptions and categories in the database
-  (`EXPENSE_ENCRYPTION_KEY`), what stays in clear, and key rotation.
 - [Exchange rates](exchange-rates.md): cross-currency transfers,
   Frankfurter / ECB rates, caching, failure behaviour.
 - [Bulk import](bulk-import.md): `POST /api/transactions/bulk` (up to 500

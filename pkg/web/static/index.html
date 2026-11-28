@@ -213,10 +213,15 @@
             <small class="err" data-for="interest_amount"></small>
             <small class="err" data-for="fee_amount"></small>
           </div>
+          <label id="received-field" hidden><span>Total received</span>
+            <input id="sale_received" type="text" inputmode="decimal" autocomplete="off" placeholder="Principal + gain / loss">
+            <small class="muted">The money the account receives: the principal plus the gain (or minus the loss). Type it to work out the gain or loss for you.</small>
+            <small class="err" id="sale-received-err"></small>
+          </label>
           <div class="field" id="sale-field" hidden>
             <span class="field-label">Gain / loss (optional)</span>
             <input id="gain_loss" data-signed name="gain_loss" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 50 or -20" aria-label="Gain or loss">
-            <small class="muted">Positive for a gain, negative for a loss. The asset goes down by the principal; the account receives the principal plus the gain (or minus the loss). Counted as income or expense in reports. <span id="sale-total"></span></small>
+            <small class="muted">Positive for a gain, negative for a loss. The asset goes down by the principal; the account receives the principal plus the gain (or minus the loss). Counted as income or expense in reports. Filled in from the total received, or type it to update that total.</small>
             <small class="err" data-for="gain_loss"></small>
           </div>
           <div class="field" id="foreign-field" hidden>
