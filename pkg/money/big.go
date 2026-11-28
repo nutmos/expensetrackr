@@ -30,10 +30,9 @@ func FormatBigAmount(minor *big.Int, exponent int) string {
 // zero; stored amounts only ever gain digits when a currency table changes.
 func RescaleMinor(v *big.Int, from, to int) *big.Int {
 	out := new(big.Int).Set(v)
-	switch {
-	case to > from:
+	if to > from {
 		out.Mul(out, new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(to-from)), nil))
-	case to < from:
+	} else if to < from {
 		out.Quo(out, new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(from-to)), nil))
 	}
 	return out

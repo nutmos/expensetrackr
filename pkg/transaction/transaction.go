@@ -308,16 +308,15 @@ func (in CreateInput) validate(fixed Type) (Transaction, error) {
 	if in.AdjustmentDirection != nil {
 		dir = strings.ToLower(strings.TrimSpace(*in.AdjustmentDirection))
 	}
-	switch {
-	case !tt.HasDirection() || !okType:
+	if !tt.HasDirection() || !okType {
 		if dir != "" {
 			fields["adjustment_direction"] = "is only allowed when editing a balance_adjustment or beginning_balance"
 		}
-	case dir == "":
+	} else if dir == "" {
 		fields["adjustment_direction"] = "is required for " + article(tt) + " " + strings.ReplaceAll(string(tt), "_", " ") + " (increase or decrease)"
-	case dir != string(Increase) && dir != string(Decrease):
+	} else if dir != string(Increase) && dir != string(Decrease) {
 		fields["adjustment_direction"] = "must be increase or decrease"
-	default:
+	} else {
 		d := Direction(dir)
 		exp.AdjustmentDirection = &d
 	}
@@ -377,10 +376,9 @@ func validateForeign(in CreateInput, tt Type, cur string, fields map[string]stri
 		return
 	}
 	exponent, known := money.MinorUnits(fc)
-	switch {
-	case !known:
+	if !known {
 		fields["foreign_currency"] = fmt.Sprintf("%q is not a recognised ISO 4217 currency code", in.ForeignCurrency)
-	case fc == cur:
+	} else if fc == cur {
 		fields["foreign_currency"] = "must differ from currency (omit foreign_amount and foreign_currency for a transaction in its own currency)"
 	}
 	if rawAmt == "" {

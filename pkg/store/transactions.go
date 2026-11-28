@@ -236,13 +236,11 @@ func searchNumber(term string) (string, bool) {
 	dot := false
 	digits := 0
 	for i, r := range n {
-		switch {
-		case r >= '0' && r <= '9':
+		if r >= '0' && r <= '9' {
 			digits++
-		case r == '.' && !dot:
+		} else if r == '.' && !dot {
 			dot = true
-		case r == '-' && i == 0:
-		default:
+		} else if r != '-' || i != 0 { // only a leading minus sign is allowed
 			return "", false
 		}
 	}

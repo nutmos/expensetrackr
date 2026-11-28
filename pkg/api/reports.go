@@ -80,10 +80,9 @@ func echoTime(c *gin.Context, t *time.Time, name string) *string {
 func (s *Server) balanceTransactionsReport(c *gin.Context) {
 	fields := map[string]string{}
 	uid := common_type.NormalizeUID(c.Query("balance_uid"))
-	switch {
-	case strings.TrimSpace(c.Query("balance_uid")) == "":
+	if strings.TrimSpace(c.Query("balance_uid")) == "" {
 		fields["balance_uid"] = "is required"
-	case !uid.Valid():
+	} else if !uid.Valid() {
 		fields["balance_uid"] = "must be a UUID (the uid of a balance)"
 	}
 	from, to := parseTimeRange(c, fields)

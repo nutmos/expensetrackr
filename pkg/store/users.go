@@ -42,14 +42,13 @@ const userCols = `id, uid, username, email, email_verified_at, display_name, pre
 // mapUserErr maps constraint violations on users and user_identities to the
 // store's errors (by constraint name, see schema.go).
 func mapUserErr(err error) error {
-	switch {
-	case isUniqueViolation(err, "users_username_uq"):
+	if isUniqueViolation(err, "users_username_uq") {
 		return ErrDuplicateUsername
-	case isUniqueViolation(err, "users_email_uq"):
+	} else if isUniqueViolation(err, "users_email_uq") {
 		return ErrDuplicateEmail
-	case isUniqueViolation(err, "user_identities_provider_subject_uq"):
+	} else if isUniqueViolation(err, "user_identities_provider_subject_uq") {
 		return ErrDuplicateIdentity
-	case isForeignKeyViolation(err):
+	} else if isForeignKeyViolation(err) {
 		return ErrNotFound // identity for a user that does not exist
 	}
 	return err

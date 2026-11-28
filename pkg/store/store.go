@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -147,13 +148,10 @@ func CreateTestSchema(url string) (schemaURL string, drop func() error, err erro
 // withSearchPath adds search_path=schema to a postgres URL or key=value
 // connection string.
 func withSearchPath(url, schema string) string {
-	if len(url) > 11 && (url[:11] == "postgres://" || (len(url) > 13 && url[:13] == "postgresql://")) {
+	if strings.HasPrefix(url, "postgres://") || strings.HasPrefix(url, "postgresql://") {
 		sep := "?"
-		for _, r := range url {
-			if r == '?' {
-				sep = "&"
-				break
-			}
+		if strings.Contains(url, "?") {
+			sep = "&"
 		}
 		return url + sep + "search_path=" + schema
 	}

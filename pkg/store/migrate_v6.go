@@ -21,11 +21,9 @@ func allowAdjustmentEdits(ctx context.Context, tx *sql.Tx) error {
 	err := tx.QueryRowContext(ctx, `SELECT conname FROM pg_constraint
 		WHERE conrelid = 'transactions'::regclass AND contype = 'c'
 		  AND pg_get_constraintdef(oid) LIKE '%balance_adjustment%' AND pg_get_constraintdef(oid) LIKE '%balance_applied%'`).Scan(&name)
-	switch {
-	case errors.Is(err, sql.ErrNoRows): // already gone
-	case err != nil:
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("find adjustment check: %w", err)
-	default:
+	} else if err == nil { // on sql.ErrNoRows the check is already gone
 		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE transactions DROP CONSTRAINT %q`, name)); err != nil {
 			return fmt.Errorf("drop adjustment check: %w", err)
 		}

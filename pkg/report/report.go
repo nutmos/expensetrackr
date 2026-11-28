@@ -226,14 +226,12 @@ func BuildIncomeExpense(rows []FlowRow, names map[common_type.UID]string) []Curr
 // categorySortKey orders equal totals: named categories by name, then
 // unknown ones by uid, then "no category" last.
 func categorySortKey(c CategoryAmount) string {
-	switch {
-	case c.CategoryName != nil:
+	if c.CategoryName != nil {
 		return "0" + *c.CategoryName
-	case c.CategoryUID != nil:
+	} else if c.CategoryUID != nil {
 		return "1" + string(*c.CategoryUID)
-	default:
-		return "2"
 	}
+	return "2"
 }
 
 // ---- Assets & liabilities ---------------------------------------------------
@@ -290,10 +288,9 @@ func BuildAssetsLiabilities(items []balance.Balance) []CurrencyPosition {
 	sums := map[string]*acc{}
 	for _, b := range items {
 		var v *int64
-		switch {
-		case b.Type.IsAsset():
+		if b.Type.IsAsset() {
 			v = b.BalanceMinor
-		case b.Type.IsLiability():
+		} else if b.Type.IsLiability() {
 			v = b.DebtMinor
 		}
 		if v == nil {
