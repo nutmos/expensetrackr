@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"math/big"
 	"strconv"
 	"strings"
 	"time"
@@ -189,14 +190,22 @@ func (s *Store) List(ctx context.Context, userUID string, f ListFilter) ([]trans
 		p := arg(f.BalanceUID)
 		query += ` AND (balance_uid = ` + p + ` OR to_balance_uid = ` + p + `)`
 	}
-	for _, term := range SearchTerms(f.Search) {
-		query += ` AND ` + searchCond(term, arg)
+	terms := SearchTerms(f.Search)
+	// With encryption at rest the note, the balance names and the category
+	// names are stored encrypted, so SQL cannot match them: the rows are
+	// searched here after decryption instead (searchInGo), and the limit is
+	// applied after that.
+	inGo := len(terms) > 0 && s.keys.Enabled()
+	if !inGo {
+		for _, term := range terms {
+			query += ` AND ` + searchCond(term, arg)
+		}
 	}
 	if f.After != nil {
 		query += ` AND (spent_at_utc, id) < (` + arg(time.Unix(f.After.SpentAtUnix, 0).UTC()) + `, ` + arg(f.After.ID) + `)`
 	}
 	query += ` ORDER BY spent_at_utc DESC, id DESC`
-	if f.Limit > 0 {
+	if f.Limit > 0 && !inGo {
 		query += ` LIMIT ` + arg(f.Limit)
 	}
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -213,7 +222,110 @@ func (s *Store) List(ctx context.Context, userUID string, f ListFilter) ([]trans
 		}
 		out = append(out, e)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if inGo {
+		return s.searchInGo(ctx, userUID, out, terms, f.Limit)
+	}
+	return out, nil
+}
+
+// searchInGo keeps the rows of items (decrypted, newest first) that match
+// every search word, at most limit of them (0: all). It matches like
+// searchCond does in SQL: case-insensitive substrings of the note, the
+// balance names (snapshot and current), the category name, the import
+// reference, the type and the currency codes, and for a number the amounts
+// exactly.
+func (s *Store) searchInGo(ctx context.Context, userUID string, items []transaction.Transaction, terms []string, limit int) ([]transaction.Transaction, error) {
+	bals, err := s.ListBalances(ctx, userUID, "")
+	if err != nil {
+		return nil, err
+	}
+	balName := make(map[string]string, len(bals))
+	for _, b := range bals {
+		balName[string(b.UID)] = b.Name
+	}
+	cats, err := s.ListCategories(ctx, userUID, "")
+	if err != nil {
+		return nil, err
+	}
+	catName := make(map[string]string, len(cats))
+	for _, c := range cats {
+		catName[string(c.UID)] = c.Name
+	}
+	out := []transaction.Transaction{}
+	for _, e := range items {
+		texts := []string{e.Note, e.Account, strings.ReplaceAll(string(e.Type), "_", " "), e.Currency, balName[string(e.BalanceUID)]}
+		for _, p := range []*string{e.ToAccount, e.ImportRef, e.ToCurrency, e.ForeignCurrency} {
+			if p != nil {
+				texts = append(texts, *p)
+			}
+		}
+		if e.ToBalanceUID != nil {
+			texts = append(texts, balName[string(*e.ToBalanceUID)])
+		}
+		if e.CategoryUID != nil {
+			texts = append(texts, catName[string(*e.CategoryUID)])
+		}
+		amounts := []string{e.Amount}
+		for _, p := range []*string{e.ToAmount, e.ForeignAmount} {
+			if p != nil {
+				amounts = append(amounts, *p)
+			}
+		}
+		if matchesAll(terms, texts, amounts) {
+			out = append(out, e)
+			if limit > 0 && len(out) == limit {
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+// matchesAll reports whether every term is a case-insensitive substring of
+// one of texts or, for a number, equal to one of amounts.
+func matchesAll(terms, texts, amounts []string) bool {
+	for _, term := range terms {
+		if !matchesTerm(term, texts, amounts) {
+			return false
+		}
+	}
+	return true
+}
+
+func matchesTerm(term string, texts, amounts []string) bool {
+	lt := strings.ToLower(term)
+	for _, t := range texts {
+		if t != "" && strings.Contains(strings.ToLower(t), lt) {
+			return true
+		}
+	}
+	n, ok := searchNumber(term)
+	if !ok {
+		return false
+	}
+	want, ok := parseRat(n)
+	if !ok {
+		return false
+	}
+	for _, a := range amounts {
+		if got, ok := parseRat(a); ok && got.Cmp(want) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// parseRat parses a plain decimal such as "120", ".5" or "12." exactly.
+func parseRat(v string) (*big.Rat, bool) {
+	v = strings.TrimSuffix(v, ".")
+	if strings.HasPrefix(v, ".") || strings.HasPrefix(v, "-.") {
+		v = strings.Replace(v, ".", "0.", 1)
+	}
+	r, ok := new(big.Rat).SetString(v)
+	return r, ok
 }
 
 // MaxSearchTerms is the most words a search may have.
