@@ -219,6 +219,8 @@
   // Escape on a form page = Cancel (onEscape is the form's cancel handler).
   document.addEventListener("keydown", (ev) => {
     if (ev.key !== "Escape" || !current || !current.route.onEscape) return;
+    // Escape in an open dialog (e.g. Delete balance) only closes the dialog.
+    if (document.querySelector("dialog[open]")) return;
     current.route.onEscape();
   });
 

@@ -311,7 +311,7 @@ tr.is-hidden td { color: var(--muted); }
 #b-delete-dialog::backdrop { background: rgba(15, 23, 42, 0.35); }
 #b-delete-dialog h3 { margin-top: 0; }
 #b-delete-dialog button.danger { padding: 8px 14px; font-size: inherit; border-color: var(--err); }
-#delete-btn { padding: 8px 14px; font-size: inherit; border-color: var(--err); margin-left: auto; }
+#delete-btn, #b-delete-btn { padding: 8px 14px; font-size: inherit; border-color: var(--err); margin-left: auto; }
 
 /* Create account: username (i) hint and live password checklist (#150). */
 .auth-card .field { margin-bottom: 12px; }
