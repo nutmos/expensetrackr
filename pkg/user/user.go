@@ -58,13 +58,21 @@ type User struct {
 	UpdatedAt       *string         `json:"updated_at"`
 }
 
-func (u *User) SetDisplayName(displayName string) error {
+func (u *User) SetDisplayName(displayName string, validations ...func(string) error) error {
 	name := strings.TrimSpace(displayName)
 	if name == "" {
 		return fmt.Errorf("is required")
-	} else if utf8.RuneCountInString(name) > MaxDisplayNameLen {
+	}
+	if utf8.RuneCountInString(name) > MaxDisplayNameLen {
 		return fmt.Errorf("must be at most %d characters", MaxDisplayNameLen)
 	}
+
+	for _, v := range validations {
+		if err := v(name); err != nil {
+			return err
+		}
+	}
+
 	u.DisplayName = name
 	return nil
 }
