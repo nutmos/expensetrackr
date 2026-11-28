@@ -196,6 +196,16 @@ paths:
           in: query
           description: Only transactions that use this balance, as source (`balance_uid`) or destination (`to_balance_uid`).
           schema: { $ref: '#/components/schemas/Uid' }
+        - name: q
+          in: query
+          description: |
+            Search: words separated by spaces (at most 10). Every word must appear, case-insensitively,
+            in at least one of: the note, the source or destination balance name (as stored on the
+            transaction, or the balance's current name), the category name, `import_ref`, the type
+            (e.g. `asset sale`) or a currency code. A word that is a number (`120`, `120.50`,
+            `1,250.50`) also matches `amount`, `to_amount` or `foreign_amount` exactly. `%` and `_`
+            are matched literally.
+          schema: { type: string, maxLength: 200, example: lunch food }
         - name: limit
           in: query
           description: Maximum number of rows per page.

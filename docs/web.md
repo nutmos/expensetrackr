@@ -113,8 +113,12 @@ confirmations use human labels instead. For example, an edit page is titled
 
 **Transactions**
 
-- The list is newest first, with a date filter (whole days in the device's time
-  zone), a Type filter and per-currency totals. Expenses and income are summed
+- The list is newest first, with a **Search** box, a date filter (whole days in
+  the device's time zone), a Type filter and per-currency totals. Search finds
+  transactions where every word appears in the note, a balance name, the
+  category name, the import reference, the type or a currency, or where a
+  number equals the amount (see `q` in [API](api.md)); it combines with the
+  other filters and is kept in the URL (`/transactions?q=lunch`). Expenses and income are summed
   separately (returns on investment count as income, the interest and fees of a debt
   repayment as spent); transfers, asset purchases, debt principal and balance
   adjustments are excluded from both. A repayment's interest and fees are shown
