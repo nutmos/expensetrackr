@@ -3,18 +3,22 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
-// Migration 9 -> 10: encryption at rest (issue #192, encryption.go).
+// Migration 9 -> 10: encryption at rest (issue #192).
+//
+// Encryption at rest has since been removed. This step stays so databases
+// already at v10 still open and new ones reach the same schema; the table
+// stays empty and Open refuses a database where it is not
+// (checkNotEncrypted). What it did:
 //
 //   - encryption_state: at most one row (id = 1), present once the database
 //     is encrypted: the id of the key that encrypted it and a known value
 //     sealed with that key (to recognise a wrong key at startup).
 //   - user_categories.categories may also be a jsonb string: the sealed JSON
 //     text of the array, when encryption is on.
-//
-// Nothing is encrypted here: the store does that at Open when it has a key.
 func addEncryptionState(ctx context.Context, tx *sql.Tx) error {
 	var catCheck string
 	if err := tx.QueryRowContext(ctx, `SELECT conname FROM pg_constraint
@@ -34,6 +38,24 @@ func addEncryptionState(ctx context.Context, tx *sql.Tx) error {
 		updated_at  timestamptz NOT NULL
 	)`); err != nil {
 		return fmt.Errorf("create encryption_state: %w", err)
+	}
+	return nil
+}
+
+// ErrEncryptedDatabase is returned by Open for a database that was encrypted
+// at rest (by a build that had the feature, with a key). This build stores
+// and reads plain text only, so it would show ciphertext; it refuses instead.
+var ErrEncryptedDatabase = errors.New("the database was encrypted at rest (EXPENSE_ENCRYPTION_KEY), which this version no longer supports; restore a backup taken before encryption or decrypt it with the earlier build")
+
+// checkNotEncrypted fails with ErrEncryptedDatabase when encryption_state has
+// a row, i.e. the stored text is ciphertext.
+func checkNotEncrypted(ctx context.Context, db *sql.DB) error {
+	var encrypted bool
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM encryption_state)`).Scan(&encrypted); err != nil {
+		return fmt.Errorf("read encryption_state: %w", err)
+	}
+	if encrypted {
+		return ErrEncryptedDatabase
 	}
 	return nil
 }
