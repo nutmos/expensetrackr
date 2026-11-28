@@ -10,6 +10,7 @@
 package user
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/mail"
 	"regexp"
@@ -58,7 +59,17 @@ type User struct {
 	UpdatedAt       *string         `json:"updated_at"`
 }
 
-func (u *User) SetDisplayName(displayName string, validations ...func(string) error) error {
+// The Set* methods validate and normalize one field each, and assign it only
+// when it is valid. Their error text is a bare message ("is required", "must
+// be ..."), meant to be stored under the field's key in a
+// validate.ValidationError (see Input.Validate).
+
+// SetDisplayName trims surrounding whitespace from displayName and sets it as
+// u.DisplayName. It fails if the trimmed name is empty or longer than
+// MaxDisplayNameLen runes (characters, not bytes). Any extra validators run
+// in order on the trimmed name after the built-in checks; the first error
+// they return is returned unchanged. On any error u is not modified.
+func (u *User) SetDisplayName(displayName string, validators ...func(string) error) error {
 	name := strings.TrimSpace(displayName)
 	if name == "" {
 		return fmt.Errorf("is required")
@@ -67,7 +78,7 @@ func (u *User) SetDisplayName(displayName string, validations ...func(string) er
 		return fmt.Errorf("must be at most %d characters", MaxDisplayNameLen)
 	}
 
-	for _, v := range validations {
+	for _, v := range validators {
 		if err := v(name); err != nil {
 			return err
 		}
@@ -77,6 +88,12 @@ func (u *User) SetDisplayName(displayName string, validations ...func(string) er
 	return nil
 }
 
+// SetUsername normalizes *username with NormalizeUsername (trimmed,
+// lowercased, must match usernameRE) and sets u.Username to the result.
+// A nil username, or one that is empty after trimming, means "no username":
+// it passes validation and leaves u.Username as it was (nil for a new User).
+// It does not clear a username that is already set. On error u is not
+// modified.
 func (u *User) SetUsername(username *string) error {
 	if username != nil {
 		if v, msg := NormalizeUsername(*username); msg != "" {
@@ -88,6 +105,11 @@ func (u *User) SetUsername(username *string) error {
 	return nil
 }
 
+// SetEmail normalizes *email with NormalizeEmail (trimmed, lowercased, at
+// most MaxEmailLen bytes, a bare address such as name@example.com with a
+// dot in the domain) and sets u.Email to the result. Like SetUsername, a nil
+// or blank email passes and leaves u.Email unchanged. On error u is not
+// modified.
 func (u *User) SetEmail(email *string) error {
 	if email != nil {
 		if v, msg := NormalizeEmail(*email); msg != "" {
@@ -99,6 +121,28 @@ func (u *User) SetEmail(email *string) error {
 	return nil
 }
 
+// SetPreferences decodes userPrefs with DecodePreferences and sets
+// u.Preferences. Empty input or JSON null gives the zero UserPreferences.
+//
+// If decoding fails, it returns DecodePreferences' error unchanged and does
+// not modify u. Validation problems come back as a *validate.ValidationError
+// whose Fields are keyed relative to the preferences object (for example
+// "base_currency"), or under "preferences" for a problem with the whole
+// object (not a JSON object, too large). Callers that build a user-level
+// ValidationError should prefix those keys with "preferences." (see
+// Input.Validate).
+func (u *User) SetPreferences(userPrefs json.RawMessage) error {
+	prefs, err := DecodePreferences(userPrefs)
+	if err != nil {
+		return err
+	}
+	u.Preferences = prefs
+	return nil
+}
+
+// SetStatus sets u.Status.
+//
+// NOTE: it currently ignores s and always sets StatusActive.
 func (u *User) SetStatus(s Status) {
 	u.Status = StatusActive
 }

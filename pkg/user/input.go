@@ -49,19 +49,19 @@ func (in Input) Validate() (User, error) {
 		fieldsErr["email"] = err.Error()
 	}
 
-	prefs, err := DecodePreferences(in.Preferences)
-	var ve *validate.ValidationError
-	if errors.As(err, &ve) {
-		for k, v := range ve.Fields {
-			if k != "preferences" {
-				k = "preferences." + k
+	if err := u.SetPreferences(in.Preferences); err != nil {
+		var ve *validate.ValidationError
+		if errors.As(err, &ve) {
+			for k, v := range ve.Fields {
+				if k != "preferences" {
+					k = "preferences." + k
+				}
+				fieldsErr[k] = v
 			}
-			fieldsErr[k] = v
+		} else {
+			return User{}, err
 		}
-	} else if err != nil {
-		return User{}, err
 	}
-	u.Preferences = prefs
 
 	u.SetStatus(StatusActive)
 
