@@ -189,14 +189,26 @@ func (s *Store) List(ctx context.Context, userUID string, f ListFilter) ([]trans
 		p := arg(f.BalanceUID)
 		query += ` AND (balance_uid = ` + p + ` OR to_balance_uid = ` + p + `)`
 	}
-	for _, term := range SearchTerms(f.Search) {
-		query += ` AND ` + searchCond(term, arg)
+	terms := SearchTerms(f.Search)
+	// Encrypted text can't be searched in SQL: match the words in Go on the
+	// decrypted rows instead (search.go), and apply the limit after that.
+	goSearch := len(terms) > 0 && s.keys.Enabled()
+	var names searchNames
+	if goSearch {
+		var err error
+		if names, err = s.loadSearchNames(ctx, userUID); err != nil {
+			return nil, err
+		}
+	} else {
+		for _, term := range terms {
+			query += ` AND ` + searchCond(term, arg)
+		}
 	}
 	if f.After != nil {
 		query += ` AND (spent_at_utc, id) < (` + arg(time.Unix(f.After.SpentAtUnix, 0).UTC()) + `, ` + arg(f.After.ID) + `)`
 	}
 	query += ` ORDER BY spent_at_utc DESC, id DESC`
-	if f.Limit > 0 {
+	if f.Limit > 0 && !goSearch {
 		query += ` LIMIT ` + arg(f.Limit)
 	}
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -211,7 +223,13 @@ func (s *Store) List(ctx context.Context, userUID string, f ListFilter) ([]trans
 		if err != nil {
 			return nil, err
 		}
+		if goSearch && !matchSearch(e, terms, names) {
+			continue
+		}
 		out = append(out, e)
+		if f.Limit > 0 && len(out) == f.Limit {
+			break
+		}
 	}
 	return out, rows.Err()
 }
@@ -259,7 +277,8 @@ func searchNumber(term string) (string, bool) {
 // import reference, the type (e.g. "asset sale") and the currency codes. A
 // word that is a number also matches the amount, the amount received and the
 // foreign currency amount exactly (120 finds 120.00). Placeholders are added
-// with arg; $1 is the user uid.
+// with arg; $1 is the user uid. Plain text only: with encryption at rest,
+// matchSearch applies the same rules in Go.
 func searchCond(term string, arg func(any) string) string {
 	p := arg("%" + likeEscaper.Replace(term) + "%")
 	like := func(col string) string { return col + ` ILIKE ` + p + ` ESCAPE '\'` }
