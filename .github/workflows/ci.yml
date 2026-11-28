@@ -123,3 +123,25 @@ jobs:
       - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.15.0
+
+  # The one check the `main` ruleset requires (.github/rulesets/main.json,
+  # issue #210): it fails when any job above failed or was cancelled, so a
+  # pull request with a failing build, test, vet, format or lint run cannot
+  # be merged. Requiring this single check (instead of each job) keeps the
+  # ruleset valid when jobs are added or renamed.
+  ci-passed:
+    name: CI passed
+    if: always()
+    needs: [build, docker, fmt-check, vet, test, race, lint]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check job results
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          failed=$(echo "$RESULTS" | jq -r '[to_entries[] | select(.value.result != "success") | .key] | join(", ")')
+          if [ -n "$failed" ]; then
+            echo "::error::Jobs did not succeed: $failed"
+            exit 1
+          fi

@@ -73,6 +73,28 @@ and never touch the development data. Without `EXPENSE_TEST_DATABASE_URL`
 (e.g. plain `go test` without the Makefile) those tests are **skipped** with a
 message; in CI (`CI=true`) a missing URL is a failure instead.
 
+## Merging requires a passing CI
+
+The **CI** workflow ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml))
+ends with a **CI passed** job that depends on every other job (build, Docker
+image, format check, vet, tests, race tests, lint). It runs even when one of
+them fails and fails itself unless all of them succeeded (a failed, cancelled
+or skipped job counts as a failure).
+
+The ruleset in [`.github/rulesets/main.json`](../.github/rulesets/main.json)
+makes **CI passed** a required status check on the default branch, so GitHub
+refuses to merge a pull request until it is green. Rulesets are repository
+settings, not files GitHub reads from the repo, so apply it once:
+
+1. **Settings → Rules → Rulesets → New ruleset → Import a ruleset**.
+2. Pick `.github/rulesets/main.json` and click **Create**.
+
+Only this one check is required, so adding, removing or renaming a CI job
+needs no settings change: just keep it in the `needs:` list of `ci-passed`.
+With the ruleset active, commits must also pass CI before they can be pushed
+straight to `main`; add yourself under **Bypass list** if you need to push
+directly.
+
 ## Container image (CI)
 
 [`.github/workflows/publish-image.yml`](../.github/workflows/publish-image.yml)
