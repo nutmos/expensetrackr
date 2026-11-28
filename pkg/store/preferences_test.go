@@ -21,31 +21,31 @@ func TestUserPreferencesRoundTrip(t *testing.T) {
 		name       string
 		write      func() error
 		wantColumn string // "" = don't check
-		want       user.Preferences
+		want       user.UserPreferences
 	}{
-		{"new user stores {}", func() error { return nil }, `{}`, user.Preferences{}},
+		{"new user stores {}", func() error { return nil }, `{}`, user.UserPreferences{}},
 		{"set via UpdateUser", func() error {
 			_, err := st.UpdateUser(ctx, u.ID, func(cur user.User) (user.User, error) {
-				cur.Preferences = user.Preferences{BaseCurrency: "THB"}
+				cur.Preferences = user.UserPreferences{BaseCurrency: "THB"}
 				return cur, nil
 			})
 			return err
-		}, `{"base_currency":"THB"}`, user.Preferences{BaseCurrency: "THB"}},
+		}, `{"base_currency":"THB"}`, user.UserPreferences{BaseCurrency: "THB"}},
 		{"unknown keys in the row are tolerated", func() error {
 			_, err := st.db.ExecContext(ctx, `UPDATE users SET preferences = '{"theme":"dark","base_currency":"EUR"}' WHERE id = $1`, u.ID)
 			return err
-		}, "", user.Preferences{BaseCurrency: "EUR"}},
+		}, "", user.UserPreferences{BaseCurrency: "EUR"}},
 		{"missing keys are tolerated", func() error {
 			_, err := st.db.ExecContext(ctx, `UPDATE users SET preferences = '{"theme":"dark"}' WHERE id = $1`, u.ID)
 			return err
-		}, "", user.Preferences{}},
+		}, "", user.UserPreferences{}},
 		{"reset stores {}", func() error {
 			_, err := st.UpdateUser(ctx, u.ID, func(cur user.User) (user.User, error) {
-				cur.Preferences = user.Preferences{}
+				cur.Preferences = user.UserPreferences{}
 				return cur, nil
 			})
 			return err
-		}, `{}`, user.Preferences{}},
+		}, `{}`, user.UserPreferences{}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
