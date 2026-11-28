@@ -29,8 +29,6 @@ Repository variables (or secrets) used by the workflow:
 | `LIGHTSAIL_CLOUDFLARE` | no | `true` when `LIGHTSAIL_DOMAIN` is proxied by Cloudflare |
 | `CLOUDFLARE_ORIGIN_CERT` | no (secret) | Cloudflare Origin CA certificate (PEM) |
 | `CLOUDFLARE_ORIGIN_KEY` | no (secret) | Its private key (PEM) |
-| `EXPENSE_ENCRYPTION_KEY` | no (secret) | Encrypts personal data in the database ([Encryption at rest](encryption.md)); `expense-server generate-encryption-key` makes one. Kept on the instance in `~/expensetrackr/app.env` (mode 600), so a later deploy without the secret keeps using it. **Keep your own copy**: the data cannot be read without it |
-| `EXPENSE_ENCRYPTION_OLD_KEYS` | no (secret) | Earlier keys, comma-separated, while [rotating](encryption.md#change-the-key-rotation) |
 
 ## Behind the Cloudflare proxy
 

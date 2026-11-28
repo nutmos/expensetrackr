@@ -22,9 +22,7 @@ CREATE TABLE meta (
 ```
 
 - `categories` is a JSON array of the same objects the API returns:
-  `{"uid","name","type","description","created_at","updated_at"}`. With
-  [encryption at rest](encryption.md) on, it holds a JSON **string** instead:
-  that array's JSON text, encrypted.
+  `{"uid","name","type","description","created_at","updated_at"}`.
 - The row is created **lazily** on a user's first category write. A user
   without a row simply has no categories.
 - Deleting a user deletes the row (`ON DELETE CASCADE`).

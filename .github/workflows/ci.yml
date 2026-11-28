@@ -85,11 +85,6 @@ jobs:
         with:
           go-version-file: go.mod
       - run: make test
-      # The store and API tests again, with encryption at rest on
-      # (docs/encryption.md): every encrypted column goes through its
-      # seal/open path.
-      - name: Test with encryption at rest
-        run: EXPENSE_TEST_ENCRYPTION_KEY="$(openssl rand -base64 32)" go test ./pkg/store/... ./pkg/api/...
 
   race:
     name: Test (race detector)

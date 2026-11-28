@@ -13,14 +13,6 @@
 #   CF_ORIGIN_KEY       certificate; served instead of a Let's Encrypt one
 #                       (Cloudflare SSL/TLS mode "Full (strict)")
 #
-# Optional, encryption at rest (docs/encryption.md):
-#
-#   EXPENSE_ENCRYPTION_KEY       key that encrypts personal data in the
-#                                database; once set, it is kept in app.env
-#                                (mode 600) next to this script, so a later
-#                                deploy without it keeps using it
-#   EXPENSE_ENCRYPTION_OLD_KEYS  earlier keys, comma-separated, while rotating
-#
 # Three containers on one Docker network, no compose needed:
 #
 #   expensetrackr-db     postgres, data in the "expensetrackr-pgdata" volume
@@ -76,22 +68,6 @@ fi
 # shellcheck disable=SC1091
 source .env
 
-# Encryption key(s) for the app (docker run --env-file). A key given to this
-# run replaces the stored one; without one, the stored file is reused, since
-# an encrypted database does not start without its key.
-if [[ -n "${EXPENSE_ENCRYPTION_KEY:-}" ]]; then
-  echo "==> Storing the encryption key (app.env)"
-  (
-    umask 077
-    printf 'EXPENSE_ENCRYPTION_KEY=%s\n' "$EXPENSE_ENCRYPTION_KEY" > app.env
-    if [[ -n "${EXPENSE_ENCRYPTION_OLD_KEYS:-}" ]]; then
-      printf 'EXPENSE_ENCRYPTION_OLD_KEYS=%s\n' "$EXPENSE_ENCRYPTION_OLD_KEYS" >> app.env
-    fi
-  )
-elif [[ ! -f app.env ]]; then
-  ( umask 077; : > app.env )
-fi
-
 # --- Registry login (ghcr.io, short-lived token from the workflow) ----------
 if [[ -n "${GHCR_TOKEN:-}" ]]; then
   echo "$GHCR_TOKEN" | docker login ghcr.io -u "${GHCR_USER:-github}" --password-stdin >/dev/null
@@ -142,7 +118,6 @@ run_app() {
   docker run -d --name "$APP" --network "$NET" --restart unless-stopped \
     -e EXPENSE_DATABASE_URL="postgres://expense:${POSTGRES_PASSWORD}@${DB}:5432/expense?sslmode=disable" \
     -e EXPENSE_TRUSTED_PROXIES="$NET_SUBNETS" \
-    --env-file app.env \
     "$1" >/dev/null
 }
 
