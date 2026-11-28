@@ -7,7 +7,6 @@ import (
 
 	"github.com/nutmos/expensetrackr/pkg/balance"
 	"github.com/nutmos/expensetrackr/pkg/common_type"
-	"github.com/nutmos/expensetrackr/pkg/helper"
 	"github.com/nutmos/expensetrackr/pkg/store"
 
 	"github.com/gin-gonic/gin"
@@ -65,7 +64,7 @@ func (s *Server) createBalance(c *gin.Context) {
 }
 
 func (s *Server) listBalances(c *gin.Context) {
-	typ := balance.Type(helper.Normalize(c.Query("type")))
+	typ := balance.ParseType(c.Query("type"))
 	payableOnly := queryFlag(c, "payable")
 	includeHidden := queryFlag(c, "include_hidden")
 	if typ != "" && payableOnly {
@@ -74,12 +73,8 @@ func (s *Server) listBalances(c *gin.Context) {
 		return
 	}
 	if typ != "" && !typ.Valid() {
-		names := make([]string, len(balance.Types))
-		for i, t := range balance.Types {
-			names[i] = string(t)
-		}
 		c.JSON(http.StatusBadRequest, errorBody{Error: "invalid query parameters",
-			Fields: map[string]string{"type": "must be one of " + strings.Join(names, ", ")}})
+			Fields: map[string]string{"type": "must be one of " + balance.TypeList()}})
 		return
 	}
 	var (
@@ -96,13 +91,7 @@ func (s *Server) listBalances(c *gin.Context) {
 		return
 	}
 	if !includeHidden {
-		shown := items[:0]
-		for _, b := range items {
-			if !b.Hidden {
-				shown = append(shown, b)
-			}
-		}
-		items = shown
+		items = balance.Filter(items, balance.Shown)
 	}
 	c.JSON(http.StatusOK, gin.H{"balances": items, "count": len(items), "totals": balance.ComputeTotals(items)})
 }
@@ -127,6 +116,16 @@ func (s *Server) balanceConflict(c *gin.Context, uid common_type.UID) {
 	writeVersionConflict(c, "balance", cur, cur.Version)
 }
 
+// writeBalanceWriteError answers a failed write to balance uid: 409 with the
+// current balance on a version conflict, otherwise the mapped error.
+func (s *Server) writeBalanceWriteError(c *gin.Context, uid common_type.UID, err error) {
+	if errors.Is(err, store.ErrVersionConflict) {
+		s.balanceConflict(c, uid)
+		return
+	}
+	writeBalanceError(c, err)
+}
+
 // saveBalance runs a manual update with optimistic locking and writes the
 // response: 200 + ETag, 409 on a stale version, or the mapped error.
 func (s *Server) saveBalance(c *gin.Context, cur balance.Balance, opts store.WriteOptions, fn func(existing balance.Balance) (balance.Balance, error)) {
@@ -135,12 +134,8 @@ func (s *Server) saveBalance(c *gin.Context, cur balance.Balance, opts store.Wri
 		return
 	}
 	updated, err := s.Store.UpdateBalanceWith(c.Request.Context(), sessionUserUID(c), cur.ID, opts, fn)
-	if errors.Is(err, store.ErrVersionConflict) {
-		s.balanceConflict(c, cur.UID)
-		return
-	}
 	if err != nil {
-		writeBalanceError(c, err)
+		s.writeBalanceWriteError(c, cur.UID, err)
 		return
 	}
 	setETag(c, updated.Version)
@@ -187,12 +182,8 @@ func (s *Server) deleteBalance(c *gin.Context) {
 		return
 	}
 	n, err := s.Store.DeleteBalanceWith(c.Request.Context(), sessionUserUID(c), cur.ID, store.WriteOptions{Version: version})
-	if errors.Is(err, store.ErrVersionConflict) {
-		s.balanceConflict(c, cur.UID)
-		return
-	}
 	if err != nil {
-		writeBalanceError(c, err)
+		s.writeBalanceWriteError(c, cur.UID, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"deleted_transactions": n})
@@ -217,12 +208,8 @@ func (s *Server) setBalanceHidden(c *gin.Context, hidden bool) {
 		return
 	}
 	b, err := s.Store.SetBalanceHidden(c.Request.Context(), sessionUserUID(c), cur.ID, store.WriteOptions{Version: version}, hidden)
-	if errors.Is(err, store.ErrVersionConflict) {
-		s.balanceConflict(c, cur.UID)
-		return
-	}
 	if err != nil {
-		writeBalanceError(c, err)
+		s.writeBalanceWriteError(c, cur.UID, err)
 		return
 	}
 	setETag(c, b.Version)

@@ -1,15 +1,13 @@
 // Package balance models account balances: payment accounts and other assets
 // (which have a balance) and credit cards and other liabilities (which have a
 // debt and a limit). Amounts are integer minor units, like expenses.
+//
+// Files: type.go (types and kinds), balance.go (the record and its derived
+// fields), delta.go (moving a balance by a transaction), totals.go (sums per
+// currency), input.go and validate.go (the API payload and its checks).
 package balance
 
 import (
-	"errors"
-	"fmt"
-	"math"
-	"math/big"
-	"sort"
-
 	"github.com/nutmos/expensetrackr/pkg/common_type"
 	"github.com/nutmos/expensetrackr/pkg/money"
 )
@@ -57,131 +55,43 @@ type Balance struct {
 func (b *Balance) SetAmounts(scale int, bal, debt, limit *int64) {
 	b.Scale = scale
 	b.Kind = b.Type.Kind()
-	b.Balance, b.BalanceMinor = nil, nil
-	b.Debt, b.DebtMinor, b.Limit, b.LimitMinor = nil, nil, nil, nil
-	b.Available, b.AvailableMinor, b.OverLimit = nil, nil, nil
-	format := func(v int64) *string { s := money.FormatAmount(v, scale); return &s }
-	if bal != nil {
-		v := *bal
-		b.BalanceMinor, b.Balance = &v, format(v)
-	}
-	if debt != nil {
-		v := *debt
-		b.DebtMinor, b.Debt = &v, format(v)
-	}
-	if limit != nil {
-		v := *limit
-		b.LimitMinor, b.Limit = &v, format(v)
-	}
+	b.BalanceMinor, b.Balance = b.amount(bal)
+	b.DebtMinor, b.Debt = b.amount(debt)
+	b.LimitMinor, b.Limit = b.amount(limit)
+	b.AvailableMinor, b.Available, b.OverLimit = nil, nil, nil
 	if debt != nil && limit != nil {
 		over := *debt > *limit
 		b.OverLimit = &over
 		// ApplyValueDelta keeps limit - debt within int64; a value that still
 		// doesn't fit is left out rather than wrapped around.
 		if avail, ok := subChecked(*limit, *debt); ok {
-			b.AvailableMinor, b.Available = &avail, format(avail)
+			b.AvailableMinor, b.Available = b.amount(&avail)
 		}
 	}
 }
 
-// ErrOverflow is returned by ApplyValueDelta when the result does not fit.
-var ErrOverflow = errors.New("amount out of range")
-
-// ApplyValueDelta changes the balance's value by delta minor units (same
-// currency and scale as the balance). Value is the balance of an asset and
-// minus the debt of a liability, so a positive delta raises an asset's
-// balance or lowers a liability's debt (possibly below zero: in credit). The
-// derived fields (available, over_limit) are recomputed.
-//
-// It returns ErrOverflow, leaving b unchanged, when the new balance or debt,
-// or a liability's available amount (limit - debt), would not fit in int64.
-func (b *Balance) ApplyValueDelta(delta int64) error {
-	if b.Type.IsAsset() && b.BalanceMinor != nil {
-		v, ok := addChecked(*b.BalanceMinor, delta)
-		if !ok {
-			return ErrOverflow
-		}
-		b.SetAmounts(b.Scale, &v, nil, nil)
-	} else if b.Type.IsLiability() && b.DebtMinor != nil && b.LimitMinor != nil {
-		if delta == math.MinInt64 {
-			return ErrOverflow
-		}
-		v, ok := addChecked(*b.DebtMinor, -delta)
-		if !ok {
-			return ErrOverflow
-		}
-		limit := *b.LimitMinor
-		if _, ok := subChecked(limit, v); !ok {
-			return ErrOverflow
-		}
-		b.SetAmounts(b.Scale, nil, &v, &limit)
-	} else {
-		return fmt.Errorf("balance %q has no amount for type %q", b.UID, b.Type)
+// amount copies v and formats it at b.Scale; nil stays nil.
+func (b *Balance) amount(v *int64) (*int64, *string) {
+	if v == nil {
+		return nil, nil
 	}
-	return nil
+	n, s := *v, money.FormatAmount(*v, b.Scale)
+	return &n, &s
 }
 
-func addChecked(a, b int64) (int64, bool) {
-	c := a + b
-	if (b > 0 && c < a) || (b < 0 && c > a) {
-		return 0, false
-	}
-	return c, true
-}
+// IsPayable reports whether b can pay for a transaction (see Type.IsPayable).
+func (b Balance) IsPayable() bool { return b.Type.IsPayable() }
 
-// subChecked returns a - b and whether it fits in int64.
-func subChecked(a, b int64) (int64, bool) {
-	c := a - b
-	if (b > 0 && c > a) || (b < 0 && c < a) {
-		return 0, false
-	}
-	return c, true
-}
-
-// Totals aggregates balances of one currency.
-type Totals struct {
-	Currency        string `json:"currency"`
-	Assets          string `json:"assets"`           // sum of balances (asset types)
-	Liabilities     string `json:"liabilities"`      // sum of debts (liability types)
-	Net             string `json:"net"`              // assets - liabilities
-	CreditLimit     string `json:"credit_limit"`     // sum of limits (liability types)
-	AvailableCredit string `json:"available_credit"` // credit_limit - liabilities
-}
-
-// ComputeTotals sums per currency, exactly in minor units. Currencies are
-// returned in alphabetical order. No exchange-rate conversion is done. Sums
-// use arbitrary precision, so they are exact even past the int64 range of a
-// single amount.
-func ComputeTotals(items []Balance) []Totals {
-	type acc struct {
-		scale               int
-		assets, debt, limit big.Int
-	}
-	sums := map[string]*acc{}
+// Filter returns the balances for which keep is true, in order, in a new slice.
+func Filter(items []Balance, keep func(Balance) bool) []Balance {
+	out := make([]Balance, 0, len(items))
 	for _, b := range items {
-		a := sums[b.Currency]
-		if a == nil {
-			a = &acc{scale: b.Scale}
-			sums[b.Currency] = a
-		}
-		if b.BalanceMinor != nil {
-			a.assets.Add(&a.assets, big.NewInt(*b.BalanceMinor))
-		}
-		if b.DebtMinor != nil {
-			a.debt.Add(&a.debt, big.NewInt(*b.DebtMinor))
-		}
-		if b.LimitMinor != nil {
-			a.limit.Add(&a.limit, big.NewInt(*b.LimitMinor))
+		if keep(b) {
+			out = append(out, b)
 		}
 	}
-	out := make([]Totals, 0, len(sums))
-	for cur, a := range sums {
-		f := func(v *big.Int) string { return money.FormatBigAmount(v, a.scale) }
-		out = append(out, Totals{
-			Currency: cur, Assets: f(&a.assets), Liabilities: f(&a.debt), Net: f(new(big.Int).Sub(&a.assets, &a.debt)),
-			CreditLimit: f(&a.limit), AvailableCredit: f(new(big.Int).Sub(&a.limit, &a.debt)),
-		})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Currency < out[j].Currency })
 	return out
 }
+
+// Shown reports whether b is not hidden; use it with Filter.
+func Shown(b Balance) bool { return !b.Hidden }

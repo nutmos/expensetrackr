@@ -147,14 +147,21 @@ pkg/transaction/                   transaction domain model + validation (no I/O
 pkg/category/                      category domain model (Type expense|income, Input, Validate)
 pkg/user/                          user profile model: Input, Validate, ApplyPatch, Preferences (typed JSON settings), Identity
 pkg/balance/                       balance domain model + per-type validation (no I/O)
-  balance.go                       Type, Balance, Input, Validate, ComputeTotals
+  type.go                          Type, Kind, ParseType, IsAsset / IsLiability / IsPayable, TypeList
+  balance.go                       Balance, SetAmounts (derived fields), Filter, Shown
+  delta.go                         ApplyValueDelta: move a balance by a transaction (overflow-checked)
+  totals.go                        Totals, ComputeTotals (exact per-currency sums)
+  input.go                         Input (POST/PUT payload), Balance.Input
+  validate.go                      Input.Validate, Input.ValidateUpdate (type is immutable)
 pkg/report/                        reports (no I/O): Catalog, BuildIncomeExpense, BuildAssetsLiabilities, BuildBalanceTransactions (docs/reports.md)
 pkg/store/                         persistence (Postgres via pgx, database/sql)
   store.go                         Store, Open, Close; errors shared by every table (ErrNotFound, ErrVersionConflict, ...), WriteOptions
   transactions.go                  table "transactions": Create, List, Get(ByUID), UpdateWith, DeleteWith
   effects.go                       applyBalanceEffects: move balances for a transaction write (same DB transaction)
   reports.go                       SumFlows: aggregate income / expense rows for the income & expense report
-  balances.go                      table "balances": CreateBalance, ListBalances, GetBalance, UpdateBalance(With), DeleteBalance(With)
+  balances.go                      table "balances": CreateBalance, ListBalances, GetBalance, UpdateBalance(With), SetBalanceHidden
+  balance_delete.go                DeleteBalance(With): remove a balance with its transactions, reversing their effects
+  balance_scan.go                  balance columns and row scanning
   adjustments.go                   balance_adjustment transactions recorded by manual balance edits
   beginning_balance.go             beginning_balance transactions: recorded with each balance, kept its earliest transaction
   categories.go                    table "user_categories" (one JSON row per user): CreateCategory, ListCategories, GetCategoryByUID, UpdateCategory, DeleteCategory

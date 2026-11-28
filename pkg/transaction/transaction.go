@@ -64,9 +64,7 @@ func ParseFilterType(s string) (Type, bool) {
 
 // IsPayableType reports whether a balance of this type can be used as a payment
 // account on a transaction (payment accounts and credit cards only).
-func IsPayableType(t balance.Type) bool {
-	return t == balance.TypePaymentAccount || t == balance.TypeCreditCard
-}
+func IsPayableType(t balance.Type) bool { return t.IsPayable() }
 
 // SourceAllowed reports whether a balance type may be used as balance_uid for
 // a transaction type:
